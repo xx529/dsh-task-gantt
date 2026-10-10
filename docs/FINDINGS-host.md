@@ -477,12 +477,15 @@ ALL CHECKS PASSED
 
 ---
 
-## 10. 质量门实测
+## 10. 质量门实测（**task-2 交付当时**的快照，2026-10-11 00:25；**非最终尺寸**）
+
+> ⚠️ 本节的产物尺寸是**那一次构建**的历史记录。F2 修复后产物又变了，
+> **最终已提交产物的权威尺寸**见 §12.2（`wc -c` 实测）。
 
 ```bash
 cd /Users/lzx/Documents/GitHub/dsh-task-gantt
 pnpm run typecheck      # tsc -p tsconfig.json --noEmit  → 0 error（2026-10-11 00:25）
-pnpm run build          # → lib/index.js 37.8kb + lib/client.js 67.5kb
+pnpm run build          # → lib/index.js 37.8kb + lib/client.js 67.5kb（该次构建的尺寸，非最终）
 ```
 
 `lib/index.js` 产物形状（逐字）：
@@ -505,6 +508,8 @@ export {
 npx esbuild src/host/index.ts --bundle --format=esm --platform=node \
   --target=node20 --external:'@deepseek-ai/*' --outfile=/tmp/host-half-check.js
 # → 退出码 0，产物 38599 字节
+#   ⚠️ 这是「单独打包 host 半」的检查产物，**不等于 lib/index.js**（后者还含 client 半的入口与共享代码）。
+#   最终 lib/index.js 尺寸见 §12.2。
 ```
 
 ---
@@ -548,10 +553,10 @@ ok  : an unmatched task gets an empty history, never an invented timestamp
    否则每一处容错测试都得写双重 `as`，类型在说谎。
    `IndexedEvent.event` 同步改为 `unknown`。
 
-### 11.3 质量门最终结果（2026-10-11 00:30）
+### 11.3 质量门快照（2026-10-11 00:30，**非最终**；最终全绿见 §12.2）
 
 ```bash
-pnpm run build       # ✅ lib/index.js 39.2kb + lib/client.js 69.1kb
+pnpm run build       # ✅ lib/index.js 39.2kb + lib/client.js 69.1kb（该次构建的尺寸，非最终）
 pnpm run test        # ✅ 10 files / 249 passed, 1 skipped
 node --experimental-strip-types src/host/dev-verify.mts   # ✅ ALL CHECKS PASSED（20 条断言）
 pnpm run typecheck   # ⚠️ 3 error，全部在 tests/host-fold.spec.ts（verify 的文件），src/** 0 error

@@ -221,7 +221,7 @@ DSH desktop host `0.2.0-rc.2`
 | 9 | `pnpm run build` (first run, 00:22) | **FAILED** for the same reason (esbuild cannot parse two in-flight files). Superseded by rows 6 and 12 |
 | 10 | `node scripts/verify-build.mjs` on a `format: 'iife'` client build | `FAIL … the client factory returned undefined` — see `scripts/build.mjs` |
 | 11 | `node scripts/verify-build.mjs` on a `format: 'cjs'` client build | `[verify-build] OK` — host half ESM with `name/inject/apply`, client factory invoked once and returned its exports |
-| 12 | `pnpm run build` + `node scripts/verify-build.mjs` (final, current sources) | build emitted `lib/index.js` 37.8 kB / `lib/client.js` 69.1 kB; verify `OK`. The bundle's only `require`s are `react` (×3) and `react/jsx-runtime` (×2) — React is **not** inlined, and `grep -c "react.element\|Symbol.for(\"react"` = 0 |
+| 12 | `pnpm run build` + `node scripts/verify-build.mjs` (an **intermediate** run, 00:32 — superseded by rows 23–24; those sizes were real at the time, not the shipped ones) | build emitted `lib/index.js` 37.8 kB / `lib/client.js` 69.1 kB; verify `OK`. The bundle's only `require`s are `react` (×3) and `react/jsx-runtime` (×2) — React is **not** inlined, and `grep -c "react.element\|Symbol.for(\"react"` = 0 |
 | 13 | `pnpm run pack:check` | `Tarball Contents`: `cordis.patch.yml`, `docs/INSTALL.md`, `icon.svg`, `lib/client.js`, `lib/client.js.map`, `lib/index.d.ts`, `lib/index.js`, `lib/index.js.map`, `locale/en.json`, `locale/zh.json`, `LICENSE`, `package.json`, `README.md`, `README.zh.md` — the manifest, both code halves, the artwork **and both locale files** all travel with the package |
 | 14 | `python3 -c "yaml.safe_load(open('cordis.patch.yml'))"` | one top-level array, exactly one `insert` row with exactly the keys `id`/`name` and both `dsh-task-gantt` — the "plain insert" shape `dshmarket`'s hot mount supports (`src/verify.ts`, `parseSimplePatch`) |
 | 15 | collision sweep: every `cordis.patch.yml` under `~/.dsh/profiles/web/node_modules/**` + the profile's own patch | 17 distinct loader-row ids in the live profile; `dsh-task-gantt` is **not** among them. (A duplicate row id makes cordis refuse the whole tree — the market uninstalls such a package outright: `dshmarket/src/install.ts`, `validateAddedPlugins` → `conflictingEntryIds`.) |
@@ -236,7 +236,7 @@ DSH desktop host `0.2.0-rc.2`
 | 24 | `pnpm run check` on the committed tree | **`exit=0`** — the whole documented gate green end to end: `Test Files 14 passed (14)` / `Tests 338 passed \| 1 skipped (339)`, `verify:build` OK, `verify:meta` OK, freshness diff `exit=0` |
 
 **Final gate, all green:** `pnpm run typecheck` 0 errors · `pnpm run test`
-338 passed · `pnpm run build` → `lib/index.js` 39.2 kB + `lib/client.js` 70.3 kB ·
+338 passed · `pnpm run build` → `lib/index.js` 39.6 KiB (40 502 B) + `lib/client.js` 70.3 KiB (71 996 B) ·
 `verify-build` OK · `verify-meta` OK · bundle `require`s are only `react` (×3) and
 `react/jsx-runtime` (×2), so React stays the host's singleton.
 
