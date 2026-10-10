@@ -1,0 +1,10 @@
+packages:
+  - .
+
+# esbuild's install script fetches the platform binary shim; the build script
+# depends on it, so the script is explicitly allowed for this repository only.
+allowBuilds:
+  esbuild: true
+
+# Keep the store inside the repo so the checkout stays self-contained.
+storeDir: ./.pnpm-store
