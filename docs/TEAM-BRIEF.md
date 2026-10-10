@@ -231,6 +231,40 @@ cd ~/.dsh && dsh plugin --profile web add "link:/Users/lzx/Documents/GitHub/dsh-
 # 然后重启 dsh web，浏览器硬刷新，打开右侧栏 → + → 任务甘特图
 ```
 
+## 7.1 上架插件市场的官方路径（Lead 已查证）
+
+📖 一手出处：`https://github.com/awesome-dsh-plugin/awesome-dsh-plugin` 的 `contributing.md`（本机已 clone 到 `/tmp/awesome-dsh-plugin`）+ `scripts/check-submission.mjs`。
+市场客户端（`dshmarket@1.10.1`）的登记表来自 `https://awesome-dsh-plugin.com/plugins.json`，源仓库就是上面那个（📖 `~/.dsh/profiles/web/node_modules/dshmarket/src/registry.ts` 的 `REGISTRY_URL`）。
+
+**上架方式 = 向 `awesome-dsh-plugin/awesome-dsh-plugin` 提一个只新增一个 YAML 文件的 PR**：
+
+```yaml
+# data/plugins/<owner>__<repo>.yml   ← 文件名必须是这个形状
+url: https://github.com/xx529/dsh-task-gantt
+name: xx529/dsh-task-gantt
+category: ui
+description:
+  en: 'One-line description ending with a period.'
+  zh: '一句话描述，以句号结尾。'
+```
+
+**CI 硬性门槛**（📖 `scripts/check-submission.mjs`，违反必被拒）：
+1. 仓库 `package.json` 必须声明 **`dsh.bundle`**（⚠️ 只声明 `dsh.client` 是最常见的被拒原因，那样**无法通过 `dsh plugin add` 安装**）；本仓库两者都有，见 §2.1。
+2. 仓库**创建满 1 天**（`MIN_AGE_DAYS = 1`）；**没有**提交数门槛。
+3. 仓库存在、未归档，且不是 DSH 本体。
+4. 仓库要有**真实可用的代码**（占位/README-only 仓库不收）。
+5. 仓库需加 GitHub topic **`dsh-plugin`**。
+6. 一个 PR 最多新增 3 个条目（`MAX_ENTRIES_PER_PR = 3`）。
+7. 描述只讲功能、不带营销词；含 `: `（冒号+空格）时必须给 YAML 加引号。
+8. （可选）`description.zh` 不是必填，维护者会补。
+
+**市场客户端安装语义**（📖 `dshmarket/src/install.ts`）：安装后按 profile 的 `package.json → dsh.profile.bundles` 判定，只有 `dsh.bundle` 的包才会被正常 boot 路径激活；没有 `dsh.bundle` 的纯客户端插件走市场自己的 shim 挂载。
+
+**对本仓库的推论**：
+- 安装命令优先给 **GitHub 直装**（bundle 通道，`lib/` 已提交所以无需构建）：
+  `cd ~/.dsh && dsh plugin --profile web add "dsh-task-gantt@github:xx529/dsh-task-gantt"`
+- `dsh-better-sidebar` 是**可选前置**，不是 `dependencies`（否则会被一起装成硬依赖）；README 里要求用户先装它。
+
 ## 8. 官方文档出处
 
 - 外部插件接入指南（唯一权威）：`/tmp/dsh-better-sidebar-src/docs/external-plugin-guide.md`
