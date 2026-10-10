@@ -227,14 +227,16 @@ DSH desktop host `0.2.0-rc.2`
 | 15 | collision sweep: every `cordis.patch.yml` under `~/.dsh/profiles/web/node_modules/**` + the profile's own patch | 17 distinct loader-row ids in the live profile; `dsh-task-gantt` is **not** among them. (A duplicate row id makes cordis refuse the whole tree — the market uninstalls such a package outright: `dshmarket/src/install.ts`, `validateAddedPlugins` → `conflictingEntryIds`.) |
 | 16 | constraint audit over `package.json` | `cordis` in dependencies/peer/optional: **none**; `@deepseek-ai/dsh-*` in peerDependencies: **none**; `install`-class scripts: **none**; `peerDependencies = {"@deepseek-ai/cordis":"^4.0.0"}` |
 | 17 | `pnpm run typecheck` (final) | **0 errors** (`tsc -p tsconfig.json --noEmit`). The mid-edit failures in rows 8–9 are gone |
-| 18 | `pnpm run test` (final) | `Test Files 11 passed (11)` / `Tests 288 passed \| 1 skipped (289)` |
+| 18 | `pnpm run test` (final) | `Test Files 14 passed (14)` / `Tests 338 passed \| 1 skipped (339)` |
 | 19 | `node -e "import.meta.resolve('dsh-task-gantt/locale/en.json', …)"` from inside the package | resolves → `/Users/lzx/Documents/GitHub/dsh-task-gantt/locale/en.json`. Node's **self-reference** rule makes this the same resolution path the host takes |
 | 20 | `node scripts/verify-meta.mjs` with `"./locale/*.json"` removed from `exports` (temporarily) | `FAIL … does not resolve (ERR_PACKAGE_PATH_NOT_EXPORTED)` → the check really does test the `exports` entry, not the file on disk. Restored afterwards (`git diff --stat package.json` = the intended edits only) |
 | 21 | `node scripts/verify-meta.mjs` | `[verify-meta] OK`: `dsh-task-gantt/locale/en.json` resolves through `exports`; dictionaries `en, zh` both carry non-empty `meta.title` + `meta.description`; `dsh-task-gantt/package.json` resolves (fallback); `icon ./icon.svg` → `image/svg+xml`, 2277 bytes (limit 262144) |
 | 22 | final manifest cross-check | `main`, `exports["./client"]`, `icon`, both locale files and `cordis.patch.yml` all exist; `peerDependencies` is exactly `{"@deepseek-ai/cordis":"^4.0.0"}`; no `cordis` outside it; no `install`-class scripts |
+| 23 | **post-commit acceptance** on `f7a7263` (clean tree): `pnpm run build && node scripts/verify-build.mjs && node scripts/verify-meta.mjs && git diff --exit-code HEAD -- lib` | the rebuild is byte-identical (`git status --porcelain` empty afterwards), `[verify-build] OK`, `[verify-meta] OK`, and the F1/F7 gate finally reads **`exit=0`** — the committed artifacts match the sources |
+| 24 | `pnpm run check` on the committed tree | **`exit=0`** — the whole documented gate green end to end: `Test Files 14 passed (14)` / `Tests 338 passed \| 1 skipped (339)`, `verify:build` OK, `verify:meta` OK, freshness diff `exit=0` |
 
-**Final gate, all green (00:32):** `pnpm run typecheck` 0 errors · `pnpm run test`
-288 passed · `pnpm run build` → `lib/index.js` 39.2 kB + `lib/client.js` 70.3 kB ·
+**Final gate, all green:** `pnpm run typecheck` 0 errors · `pnpm run test`
+338 passed · `pnpm run build` → `lib/index.js` 39.2 kB + `lib/client.js` 70.3 kB ·
 `verify-build` OK · `verify-meta` OK · bundle `require`s are only `react` (×3) and
 `react/jsx-runtime` (×2), so React stays the host's singleton.
 
