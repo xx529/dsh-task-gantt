@@ -15,9 +15,59 @@
 | 构建 | `pnpm run build` | ✅ 产出 `lib/index.js` + `lib/client.js`（`.d.ts`/`.map` 同批） | `/tmp/gate2.txt` |
 | 产物形状（packaging 脚本） | `pnpm run verify:build` | ✅ `[verify-build] OK`（宿主半 ESM 导出 name/inject/apply，0 个非相对 import；客户端半 wrapper 调用一次且 factory 返回 exports） | `/tmp/gate2.txt` |
 | 展示元数据（packaging 脚本） | `pnpm run verify:meta` | ✅ `[verify-meta] OK`（`locale/en.json`、`locale/zh.json` 经 exports 解析；`icon.svg` 2277 B） | `/tmp/gate2.txt` |
-| 提交产物新鲜度 | `git diff --exit-code HEAD -- lib` | ❌ `exit=1`（见 §5 F1 与 F7：HEAD 里的 `lib/` 是脚手架版本；**必须带 `HEAD`**——不带 revision 的写法在 `git add lib` 之后会假绿） | 00:54 复跑 |
+| 提交产物新鲜度 | `git diff --exit-code HEAD -- lib` | ✅ **`exit=0`（Lead 提交 `f7a7263` 之后）**；提交前为 `exit=1`（见 §5 F1 与 F7：**必须带 `HEAD`**——不带 revision 的写法在 `git add lib` 之后会假绿） | 01:18 复跑 |
 
 剩下 1 条 skipped 是**故意**保留的备选写法记录（`tests/client-tab.spec.ts`，`export const inject` 是否显式写 `betterSidebar`——该竞态已由 `ctx.inject` 延迟注册消除，故不强制），不是未完成的测试。
+
+## 1.1 提交后复验（`f7a7263`，我在**已提交的树**上重跑，不是工作树）
+
+Lead 于 2026-10-11 提交 `f7a7263 feat: agent-team task Gantt panel for the DSH sidebar`（66 files changed, 18683 insertions(+), 308 deletions(-)）。我没有采信「已提交」这句话，而是逐项验了提交内容与产物的字节一致性：
+
+```
+$ git log --oneline -1                          → f7a7263 feat: agent-team task Gantt panel for the DSH sidebar
+$ git show HEAD:.github/workflows/ci.yml | grep 'git diff --exit-code'
+  13: #   5. verify — `git diff --exit-code HEAD -- lib` …
+  86: run: pnpm run verify:build && git diff --exit-code HEAD -- lib        ← 假绿那版没有被提交
+$ git show HEAD:tests/ci.spec.ts | grep -c analyzeFreshnessScript           → 6（扩展版已入commit）
+$ git show HEAD:docs/VALIDATION.md | grep -c F7                             → 5
+$ for f in lib/index.js lib/client.js tests/host-integration.spec.ts \
+        tests/fixtures/lead-team-journal.json tests/e2e/mount-smoke.sh \
+        vitest.config.ts .github/workflows/ci.yml docs/VALIDATION.md ; do git cat-file -e HEAD:$f ; done
+  → 全部 ✓（mount-smoke.sh 权限位 100755 保留）
+
+# 关键：提交的 lib/ 必须就是「当前源码重建出来的 lib/」（字节级，我全量重建后比对）
+$ md5 -q lib/index.js lib/client.js        → 6ca68c2896a0801ca76b20dc9c9bfc6b / c9083d8b1e4e0beb92f2154a863b65e7
+$ pnpm run build && md5 -q lib/index.js lib/client.js   → 与上面逐字一致
+$ git status --porcelain -- lib             → 空（重建后无任何改动）
+
+$ pnpm run test    → 14 files | 338 passed | 1 skipped (339)
+$ pnpm run check   → exit=0（整条 gate：typecheck → test → build → verify:build → verify:meta → git diff HEAD -- lib 全绿）
+$ wc -c lib/index.js lib/client.js → 40502 B（39.6 KiB）/ 71996 B（70.3 KiB）
+```
+
+结论：**F1 已关闭且是字节级关闭**（提交产物 == 当前源码重建产物），F7 的「必须带 HEAD」在提交前后都给出正确信号（提交前 1、提交后 0）。`docs/INSTALL.md` 随后由 Lead 提交为 `517f23d`；此后工作区唯一未提交项是**本文件**（§1.1 与 §5/§6 的这次定稿）。
+
+## 1.2 真机挂载冒烟（Lead 执行，verify 只记录、未执行）
+
+Lead 在 **scratch home**（不碰用户真实 `~/.dsh`）完成冒烟；我**没有**执行 `tests/e2e/mount-smoke.sh` 的 `mount`/`unmount`，因此下表「证据」列写的是 Lead 报给我的一手观察，命中状态由我按 A1–A11 断言表逐条判定。**推断命中的项我都标了「推断」**，没有把推断当成实测。
+
+| # | 断言点 | 判定 | 证据 / 说明 |
+|---|---|---|---|
+| A1 | profile bundle 栈出现本插件 | ✅ | 在 scratch 组合中安装后 tab 出现、路由可答；安装本体未逐步取证 |
+| A2 | 启动日志无 `disabling profile plugin` | ✅（**推断**） | 未被禁用 ⇒ 预检通过；Lead 未直接贴启动日志行 |
+| A3 | 浏览器半被下发且首行是 `window.__ModuleLoader__.load({ id: "dsh-task-gantt"` | ✅（**推断**） | 面板真实挂载 ⇒ 宿主 materialize 了 `lib/client.js`；未单独抓 `/plugins` 响应体 |
+| A4 | `POST /api/ping` → `{ok:true,value:{apiVersion:1,host:'dsh-task-gantt'}}` | ✅ | 探针输出：`apply entered; webServer= undefined`，改 `ctx.inject` 后 `POST /dsh-task-gantt/api/ping` **立刻**返回 `{"ok":true,…}` |
+| A5 | `/api/timeline` 200，`source ∈ log/partial/live`，`notes` 是数组 | ✅ | 200，`source: log`，6 张任务卡带**真实时间戳** |
+| A6 | 跨源请求 403 | ❓ | 冒烟未做该负例（单测已覆盖 403/405/404/400，见 `tests/host-route.spec.ts` 28 例） |
+| A7 | `+` 菜单出现「任务甘特图 / Task Gantt」 | ✅ | Lead 观察：tab 出现在 `+` 菜单并可打开 |
+| A8 | 面板渲染泳道与任务卡 | ✅ | `div[data-dsh-task-gantt]` 挂载，`[class*="dtg-"]` **1085** 个节点；**7 条泳道**（lead / packaging / host-data / shell / ui / verify / docs）；**6 张任务卡**带真实时间戳 |
+| A9 | 无 agent team 的会话里降级为空态而非报错 | ❓ | 冒烟未覆盖该场景 |
+| A10 | 硬刷新后仍正常 | ❓ | 冒烟未做（只跑了 A11 之外的挂载路径） |
+| A11 | 卸载后 tab 消失、无残留下载错误 | ❓ | `unmount` 未执行（脚本里的分支我未跑） |
+
+截图（Lead 提供，我确认文件存在）：`/Users/lzx/Documents/GitHub/dsh-task-gantt/docs/screenshots/panel.png`（142 625 B）、`panel-compact.png`（117 674 B）。
+
+**仍未验证（冒烟之外）**：实时增量刷新与 live `agentTeams` 投影路径（Lead 起过最小 team 但未观察到新 team 形成，**不计入已实测**）；`git diff --exit-code -- lib` 之外的真机反代子路径与桌面壳 `dsh-app://` 路由（仅单测覆盖，见 `tests/client-api.spec.ts`）。
 
 ---
 
@@ -30,6 +80,7 @@
 | `@deepseek-ai/cordis` | 4.0.4（本仓库 dev tree 内） | `node_modules/@deepseek-ai/cordis/package.json` |
 | jsdom | **未安装**（也不需要，见 §3.3 与 ❓9） | `ls node_modules/jsdom` → No such file or directory |
 | react / react-dom | **未安装**（由宿主 `PLATFORM_MODULES` 提供，测试用 stub 别名） | `ls node_modules/react` → No such file or directory |
+| 宿主 DSH 版本 | 0.2.0-rc.2（**Lead 的 scratch 组合**，用于探针与真机冒烟） | Lead 报告（我未复跑该组合） |
 | `allowBuilds` 是真实存在的 pnpm 11 workspace 键 | ✅ | `grep -o 'allowBuilds[^,;)]\{0,60\}' ~/.nvm/…/pnpm/dist/pnpm.mjs` → 含 `"allowBuilds" in your project's pnpm-workspace.yaml to allow it to run its …` |
 
 ---
@@ -92,14 +143,15 @@
 - 说明：`lib/` 是**故意提交**的（`.gitignore` 注释：bundle 通道从 GitHub 直装、无构建步骤）。这不是代码缺陷，而是发布/CI 前置条件。
 - 建议：`cd /Users/lzx/Documents/GitHub/dsh-task-gantt && pnpm run build && git add lib && git commit`；之后 `git diff --exit-code HEAD -- lib` 应 `exit=0`（注意必须带 `HEAD`，理由见 F7）。
 - **处置（packaging 已认领，commit 由 Lead 执行）**：packaging 核出 HEAD 的 `lib/index.js` 只有 4526 B（还是 `notes: ["timeline derivation not implemented yet"]` 的脚手架占位），工作区是当前源码真产物；并给出「产物晚于全部源码 + 重建 0 变化」的幂等证据。**我独立复现了幂等性**（§4 事实 14：重建前后 md5 与 diff 统计都不变）。结论：这是纯粹的提交动作，`git add lib` 后即绿，不需要改任何字段。packaging 已把命令写进 `docs/INSTALL.md` §9。
-- **现状（host-data 已代为暂存）**：host-data 为验证幂等执行了 `git add -A -- lib`，所以 `git status --porcelain -- lib` 现在是 `M ` （第一列已暂存、第二列空），F1 的「`git add`」这一步已经就位，只差 `git commit`（归 Lead）。若 Lead 要自己掌控暂存时机：`git restore --staged lib`（不改文件内容）。另：**只要再有人改 `src/**` 并 build，`lib/` 会重新变脏**，commit 前必须按 §7 顺序重跑。
+- **已关闭（2026-10-11，commit `f7a7263`）**：Lead 提交后我在**已提交的树**上复验——`git diff --exit-code HEAD -- lib` → `exit=0`；且提交的 `lib/` 与「当前源码重新 build 出来的 `lib/`」**md5 逐字一致**、重建后 `git status --porcelain -- lib` 为空（字节级新鲜，见 §1.1）。唯一的未提交项是 `docs/INSTALL.md`（packaging 的文档记录）。注意：**任何人再改 `src/**` 并 build，F1 会以 `exit=1` 复活**，这是正确告警。
+- **提交前的插曲（历史记录，已过去）**：host-data 曾在验证构建幂等时执行过 `git add -A -- lib`（`git status --porcelain -- lib` 曾显示 `M `，第一列已暂存），这也正是 F7 假绿被触发的时刻；该状态已由 commit `f7a7263` 终结。**只要再有人改 `src/**` 并 build，F1 会以 `exit=1` 复活**（正确告警），届时按 §7 顺序重跑并把 `lib/` 一并提交。
 
 ### F2（host-data，**已修复**，原 skip 用例已转正）`memberIdByName` 在 catalog-先-于-member 的顺序下漏索引
 
 - 原证据（我实测，非推断）：`foldTeamEvents([subagentCatalogEvent(childId:'m-1'), teamMemberEvent(id:'m-1',name:'ui')])` → `memberIdByName = []`，而 `memberById.get('m-1').name === 'ui'` 正确。原因：`subagent/catalog` 分支先建了 placeholder record，之后 `team/member` 分支因为 `record !== undefined` 跳过了唯一写入 `memberIdByName` 的代码块。
 - 影响面：`src/host/timeline.ts` 的 `laneIdFor()` 用 `memberIdByName.get(ownerName)` 把 board 的 owner 映射到泳道；`agentTeams` 不可用（board-less 降级路径）且 catalog 先到时，该成员的任务会落到 `unassigned` 泳道而不是本人泳道。实测的真实日志里 6/6 都是 member 先到，且 live 投影会独立补索引，所以当时**不可见但是真实缺陷**。
 - **修复（host-data，`src/host/fold.ts:620-624`）**：`memberIdByName` 的写入移出 `record === undefined` 分支，改成「name 已知且未映射就补」，`first-name-wins` 语义保留，并额外支持重命名后旧名/新名都解析到同一 id。
-- **我的复核**：`pnpm exec vitest run tests/host-fold.spec.ts -t "indexes a member name"` → `Tests 1 passed | 58 skipped`（即该用例由红转绿）；全量 333 passed / 1 skipped。
+- **我的复核**：`pnpm exec vitest run tests/host-fold.spec.ts -t "indexes a member name"` → `Tests 1 passed | 58 skipped`（即该用例由红转绿）；全量 338 passed / 1 skipped（含提交后复验，见 §1.1）。
 - **流程记录（透明）**：host-data 把 `tests/host-fold.spec.ts` 尾部那条 `it.skip` 改成 `it`（他们的说法是我在消息里书面授权「修好后去掉 skip」）。这是对我独占写入范围的越界修改。我逐行核对过：**只动了 `it.skip`→`it` 一个 token 与该段注释措辞，断言体与我的原文完全一致**；此后全量仍绿，故我接受这个改动并保留。若以后再需要我解除 xfail，请只发消息、由我改。
 
 ### F3（ui，已由 owner 在并行工作中修掉，仅作记录）`TaskCardRect.clippedRight` 曾是不可达字段
@@ -117,7 +169,7 @@
 - `src/host/index.ts` 现行实现：`webServer` 已在 → 同步 `ctx.effect(register)`；未在 → `ctx.inject(['webServer'], scoped => scoped.effect(register))`；无动态 inject → 仅告警。
 - 我用假 ctx 覆盖了这四条路径（`tests/host-mount.spec.ts`，8 用例全绿），包括「延迟回调触发后才真的能答 `/ping`」。这比 brief 里假设的「apply 时同步注册」更稳，但它**只证明了实现的四条分支行为**。
 - **归属更正**：我最初在给 host-data 的消息里把这次改动记成他的，是错的——host-data 书面确认他 task-2 交付的是「一次性 `ctx.get('webServer')` 探测」版本，改动者未知（疑为 Lead 或 packaging）。他复核后接受现行实现。
-- **同时更正一句我的话**：我先前写「live composition 实测 webServer 尚未挂载」。这句我**没有**独立复测，host-data 也没有；它只是该实现的注释依据。归入 §6 ❓11。
+- **同时更正一句我的话**：我先前写「live composition 实测 webServer 尚未挂载」时，它只是该实现的注释依据（我未复测）。**该前提已于 2026-10-11 由 Lead 用 scratch 探针实测闭环**（`webServer= undefined`，见 §6 ❓11 与 §1.2 A4）；给出证据的是 Lead，我仍未复跑探针，我独立验证的是四条行为路径。
 
 ### F6（info，无缺陷）board-less 路径的 `ready` 重算没有前向引用问题
 
@@ -139,7 +191,7 @@
   3. `tests/e2e/README.md` 前置命令、本文 §1/§7 同步。
 - **同类写法已由 packaging 修掉**（他们的文件，我只读）：
   1. `package.json:65` 的 `check` → 已改为 `… && git diff --exit-code HEAD -- lib`；
-  2. `docs/INSTALL.md` §9 → 命令改带 `HEAD`，并把我的实测原文写成 ⚠️ 段（"The `HEAD` is load-bearing"）；文档里保留的裸写法是**故意展示的反例文本**，不是可执行命令。
+  2. `docs/INSTALL.md` §9（提交后行号：§9 起于 `:326`，命令在 `:334`）→ 已改带 `HEAD`，并把我的实测原文写成 ⚠️ 段（`:337` "The `HEAD` is load-bearing"）；`:346-347` 保留的裸写法是**故意展示的反例文本**，不是可执行命令。
 - **packaging 另加了同源门禁**：`scripts/verify-build.mjs` 末尾第 4 组检查，断言 `package.json#scripts.check` 含 `git diff --exit-code HEAD -- lib` 且不含 index-based 写法（CI 里 `verify:build` 必经）。我读了这段代码（`:249-263`）确认断言内容与失败文案。
 - **我的独立正反实证（`scripts/verify-build.mjs`，打包 script，包装在隔离副本里跑，**没有碰仓库任何文件**）**：
   ```
@@ -158,8 +210,10 @@
 
 ## 6. 未验证假设（❓ 清单，逐条说明谁该验证）
 
-1. ❓**真机挂载冒烟未执行**。`~/.dsh` 是共享资源，按分工由 Lead 执行；我提供脚本与断言表：
-   `/Users/lzx/Documents/GitHub/dsh-task-gantt/tests/e2e/README.md`、`/Users/lzx/Documents/GitHub/dsh-task-gantt/tests/e2e/mount-smoke.sh`（`check|mount|verify|unmount`，`check` 是只读预检）。我**没有**运行过 `mount`/`unmount`。
+> 状态更新（2026-10-11 定稿）：第 1 条已由 Lead 的 scratch 冒烟**部分闭环**（命中判定见 §1.2，A6/A9/A10/A11 仍是 ❓）；第 11 条已由 Lead 的探针**闭环**；其余条目仍然开放。**任何一条都不得当成"已实测"引用**，除非状态栏写明并给出证据。
+
+1. ❓（**部分闭环**）**真机挂载冒烟**：Lead 已在 scratch home 执行并命中 A1–A5、A7、A8（见 §1.2 表），我**没有**运行过 `mount`/`unmount`。仍开放：**A6**（跨源 403 负例）、**A9**（无 team 会话的降级空态）、**A10**（硬刷新）、**A11**（卸载后 tab 消失）。脚本与断言表：
+   `/Users/lzx/Documents/GitHub/dsh-task-gantt/tests/e2e/README.md`、`/Users/lzx/Documents/GitHub/dsh-task-gantt/tests/e2e/mount-smoke.sh`（`check|mount|verify|unmount`，`check` 是只读预检）。
 2. ❓**CI 未在 GitHub 上跑过**。`.github/workflows/ci.yml` 只做了静态守护（`tests/ci.spec.ts` 14 条）+ 本地等价命令实测：`pnpm run typecheck` / `pnpm run test` / `pnpm run build` / `pnpm run verify:build` 都跑过且通过；`pnpm install --frozen-lockfile` **没有**在干净目录验证过（本机 `node_modules` 已存在），`actions/setup-node` 的 pnpm cache 行为也未验证。
 3. ❓**`pnpm run verify:meta` 是由 packaging 写的脚本**，我跑了并记录输出（✅ exit=0），但我没有独立复算它对宿主 `readPluginMeta()` 的转写是否逐条正确。
 4. ❓**`team/task` 的 `completed` / `reopen` 迁移在真实日志里从未出现过**（全队目前只有 `pending → in_progress` 的样本）。我的用例使用构造事件覆盖了这两条迁移；真实样本仍是空白。
@@ -167,11 +221,13 @@
 6. ❓**`ctx.inject` 的 unload/re-run 语义只在 fake ctx 上验证过**：真实的「服务消失→回调 fiber 被卸载→路由撤销」没有真机验证。
 7. ❓**降级态下的 `source: 'log'` 与空泳道组合**：我的集成测试里，一个 journal 认识但（假）持久化返回空事件数组的成员，会出现 `hasHistory:false` + 空 `spans` + `source:'log'`。契约对 `hasHistory` 的定义是「false = live/**empty**」，因此我判定为一致、不报缺陷；真实 `sessionPersistence.open()` 对空会话是返回空数组还是 reject，**未验证**。
 8. ❓**主题契约只扫源码**：`scripts/verify-build.mjs` 另有一份对**构建产物字符串字面量**的颜色扫描（我跑过，输出无 notes）。两份扫描都是启发式，可能存在双方都漏掉的颜色写法（例如拼在模板字符串里的十六进制）。
-9. ❓**没有 DOM 渲染测试**：见 §3.3。面板真实布局、滚动、`-webkit-app-region`、样式注入的样式归属（`claimStyles`）都只由真机冒烟覆盖。
+9. ❓**没有 DOM 渲染测试**：见 §3.3。面板真实布局、滚动、`-webkit-app-region`、样式注入的样式归属（`claimStyles`）都只由真机冒烟覆盖（§1.2 命中 A8 的「1085 个 `dtg-` 节点」属于此类覆盖）。
 10. ❓**`src/host/dev-verify.mts`（host-data 的自检脚本）我没有运行**；我只运行了 `pnpm run verify:build` / `pnpm run verify:meta` 与自己的 vitest 套件。host-data 报其 27 条断言 `ALL CHECKS PASSED`，我未复跑。
-11. ❓**「live composition 下 `apply()` 时 `webServer` 尚未挂载」这句话没有任何人独立复测过**。我先在给 host-data 的消息里把它当既成事实引用，这是我的措辞错误并已更正：可验证的只有**现行实现的四条行为路径**（`tests/host-mount.spec.ts`，8 用例），「真机里靠 `ctx.inject` 才拿到服务」这一事实性前提**未验证**，归属改动者（host-data 确认非其改动，作者未知）。CI/回归只应断言四条行为路径，不应背书真机时序结论。
+11. ✅（**已闭环，2026-10-11 Lead 一手实测**）**「live composition 下 `apply()` 时 `webServer` 尚未挂载」现在可以当实测事实引用**：Lead 在 scratch 组合（DSH 0.2.0-rc.2）里给已安装的 host 半加探针，实测输出 `DTG_PROBE apply entered; webServer= undefined`；改成 `ctx.inject(['webServer'],…)` 后 `POST /dsh-task-gantt/api/ping` 立刻返回 `{"ok":true,…}`。
+    - 更正历史：这句话我最初是从 `src/host/index.ts` 的注释里读来并当成既成事实引用（措辞越界，已更正过一次）；现在由 Lead 用探针补上了证据，归属与证据都清楚。**证据提供者 = Lead，我没有复跑这个探针**；我独立验证的仍是 `tests/host-mount.spec.ts` 的四条行为路径（8 用例）。
 12. ❓**`subagent/catalog` 的 `data.label` 是任务描述而不是成员名**（host-data 结论），所以 catalog-only 成员的 lane `name` 会退化成子会话 id。我没有独立核对过 `label` 的真实语义；若 ui 要展示可读名字，需要另找来源。
 13. ❓**`hasHistory` 目前是二态**（host-data：日志读到 **且** 折出 ≥1 个 span 才为 true；契约写的是 "false = live/**empty**"）。我在集成用例里确实观察到「journal 认识该成员 + 假持久化返回空事件」→ `hasHistory:false` + 空 spans + `source:'log'`，按契约判定一致、未报缺陷。若要区分「无日志 / 有日志但无活动 / 有活动」三态，需要 Lead 改冻结契约（host-data 说已挂在 Lead 决策清单上）。
+14. ❓**实时增量刷新与 live `agentTeams` 投影路径从未被观察到**：Lead 在 scratch 组合里启动过最小 team，但**没有观察到新 team 形成**，所以「面板随时间推进自动出现新泳道/新任务卡」这条路径**不计入已实测**（构造 fixture 的集成用例覆盖的是数据推导，不是真机实时刷新）。
 
 ---
 
