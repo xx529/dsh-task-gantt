@@ -191,3 +191,91 @@ describe('package.json#scripts.check (the local equivalent of CI)', () => {
     expect(analyzeFreshnessScript(check)).toEqual([])
   })
 })
+
+/* ------------------------------------------------------------------------- */
+/* The pnpm pin vs the node matrix                                            */
+/* ------------------------------------------------------------------------- */
+
+/**
+ * The FIRST real GitHub run (38072615574) was red, and not for a code reason:
+ * `pnpm/action-setup@v4` with `version: 11` resolved to pnpm **11.28.5**, which
+ * requires Node >= 22.13 (it requires `node:sqlite`). The `node: '20'` matrix
+ * cell therefore died inside "Set up pnpm" —
+ * `ERR_UNKNOWN_BUILTIN_MODULE: No such built-in module: node:sqlite` — before
+ * installing anything, and that is the failure these assertions prevent from
+ * coming back.
+ *
+ * `engines.node` measured from the registry on 2026-10-11 (first-hand):
+ *   pnpm 11.28.5 → `>=22.13`      pnpm 10.34.6 → `>=18.12`      pnpm 12.11.2 → (latest, > 11)
+ * A RANGE is not enough either: the bare `11` is what silently resolved forward
+ * to 11.28.5, so the pin must be an exact version.
+ */
+const PNPM_MIN_NODE: Record<string, [number, number]> = { '10': [18, 12], '11': [22, 13] }
+
+/** Can this exact pnpm version run under node 20? */
+function pnpmRunsOnNode20(version: string): boolean {
+  // Not an exact `x.y.z` → a range or dist-tag, which may resolve anywhere.
+  if (!/^\d+\.\d+\.\d+$/.test(version)) return false
+  const floor = PNPM_MIN_NODE[/^(\d+)\./.exec(version)?.[1] as string]
+  // An unknown major (e.g. 12) is NOT assumed safe on the oldest supported node.
+  if (floor === undefined) return false
+  const [major, minor] = floor
+  return major < 20 || (major === 20 && minor === 0)
+}
+
+describe('pnpm pin vs the node matrix', () => {
+  const pnpmVersion = /pnpm\/action-setup@v\d[\s\S]{0,300}?version:\s*(\S+)/.exec(yaml)?.[1] ?? ''
+
+  it('pins an exact pnpm version (a range can resolve past the node floor)', () => {
+    expect(pnpmVersion, 'Set up pnpm must declare a version').not.toBe('')
+    expect(pnpmVersion, `"${pnpmVersion}" is a range or tag, not a reproducible version`).toMatch(/^\d+\.\d+\.\d+$/)
+  })
+
+  it('keeps that pnpm installable on the LOWEST node in the matrix', () => {
+    const hasNode20 = /node:\s*\[[^\]]*['"]?20['"]?/.test(yaml)
+    expect(hasNode20, 'this check only matters while node 20 is in the matrix').toBe(true)
+    expect(
+      pnpmRunsOnNode20(pnpmVersion),
+      `pnpm ${pnpmVersion} requires Node ${PNPM_MIN_NODE[/^(\d+)\./.exec(pnpmVersion)?.[1] as string]?.join('.') ?? '>20'}, so the node 20 cell would fail in "Set up pnpm" (run 38072615574)`,
+    ).toBe(true)
+  })
+
+  it('the predicate discriminates (otherwise the check above is vacuous)', () => {
+    expect(pnpmRunsOnNode20('10.34.6')).toBe(true)
+    expect(pnpmRunsOnNode20('10.5.2')).toBe(true)
+    // The exact failure that turned CI red:
+    expect(pnpmRunsOnNode20('11.28.5')).toBe(false)
+    expect(pnpmRunsOnNode20('11')).toBe(false)
+    expect(pnpmRunsOnNode20('latest')).toBe(false)
+    expect(pnpmRunsOnNode20('12.11.2')).toBe(false)
+  })
+
+  it('loads the built host half on node 20, after the build', () => {
+    const step = /if:\s*matrix\.node == '20'[\s\S]{0,120}?run:\s*node -e "([^"]+)"/.exec(yaml)
+    expect(step, "a node-20 step gated on matrix.node == '20' must exist").toBeTruthy()
+    const command = step?.[1] ?? ''
+    expect(command, 'the step must load the built host half').toContain("./lib/index.js")
+    expect(command, 'it must assert the exported apply()').toContain('typeof m.apply')
+    expect(command, 'it must assert the row name').toContain("m.name!=='dsh-task-gantt'")
+    const build = yaml.search(/run:\s*pnpm run build/)
+    expect(yaml.search(/Load the built host half/), 'the load check must run after the build').toBeGreaterThan(build)
+  })
+
+  it('keeps the long one-liner parseable as a plain YAML scalar', () => {
+    // This suite has no YAML dependency, so a syntax error in the one long
+    // `run:` value would slip past every assertion above and only surface on
+    // GitHub. The value is a PLAIN scalar, so it must not contain `: ` (which
+    // ends a plain scalar), must not contain a ` #` comment start, and must not
+    // begin with a flow-collection indicator. Verified against PyYAML and ruby
+    // psych on 2026-10-11: `node -e "…"` parses as one scalar and `version`
+    // parses as the string '10.34.6'.
+    const line = yaml.split('\n').find((candidate) => candidate.includes('node -e "import('))
+    expect(line, 'the one-liner must be present').toBeTruthy()
+    const value = (line as string).trim().replace(/^run:\s*/, '')
+    expect(value).not.toMatch(/:\s/)
+    expect(value).not.toMatch(/\s#/)
+    expect(value).not.toMatch(/^[{[>&*!|%@`"'#-]/)
+    expect(value.startsWith('node -e "')).toBe(true)
+    expect(value.endsWith('"')).toBe(true)
+  })
+})

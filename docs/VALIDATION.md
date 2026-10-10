@@ -11,7 +11,7 @@
 | 门 | 命令 | 结果 | 原始证据 |
 |---|---|---|---|
 | 类型检查 | `pnpm run typecheck` | ✅ `typecheck_exit=0`（`tsc -p tsconfig.json --noEmit`，无任何输出） | `/tmp/gate2.txt` |
-| 单测 | `pnpm run test` | ✅ `Test Files 14 passed (14)` / `Tests 338 passed | 1 skipped (339)`（2026-10-11 01:08 复跑；F2 修复后原 skip 已转绿见 §5 F2；F7 修复后 ci.spec 9→14） | 01:08 复跑 |
+| 单测 | `pnpm run test` | ✅ `Test Files 14 passed (14)` / `Tests 343 passed | 1 skipped (344)`（2026-10-11 02:04 复跑；ci.spec 9→14→18→19，见 §1.3） | 02:04 复跑 |
 | 构建 | `pnpm run build` | ✅ 产出 `lib/index.js` + `lib/client.js`（`.d.ts`/`.map` 同批） | `/tmp/gate2.txt` |
 | 产物形状（packaging 脚本） | `pnpm run verify:build` | ✅ `[verify-build] OK`（宿主半 ESM 导出 name/inject/apply，0 个非相对 import；客户端半 wrapper 调用一次且 factory 返回 exports） | `/tmp/gate2.txt` |
 | 展示元数据（packaging 脚本） | `pnpm run verify:meta` | ✅ `[verify-meta] OK`（`locale/en.json`、`locale/zh.json` 经 exports 解析；`icon.svg` 2277 B） | `/tmp/gate2.txt` |
@@ -71,6 +71,57 @@ Lead 在 **scratch home**（不碰用户真实 `~/.dsh`）完成冒烟；我**�
 
 ---
 
+## 1.3 GitHub CI 首次真跑：红了，根因是 pnpm 大版本 → 已修（我本地用 node 20 + pnpm 10 完整复现）
+
+**失败（Lead 一手，`gh run view 38072615574 --log-failed`）**
+```
+verify (node 20)  Set up pnpm   warn: This version of pnpm requires at least Node.js v22.13
+verify (node 20)  Set up pnpm   Error [ERR_UNKNOWN_BUILTIN_MODULE]: No such built-in module: node:sqlite
+verify (node 20)  Set up pnpm   Node.js v20.20.2
+```
+即 `pnpm/action-setup@v4` 的 `version: 11` 解析到 **pnpm 11.28.5**，而 pnpm 11 需要 Node ≥ 22.13（内部 `require('node:sqlite')`）→ **node 20 那一格连安装都没开始就挂了**。这也正是我 ❓2「CI 未跑过」的真实答案。
+
+**根因的一手数据（registry packument，非猜测）**
+```
+curl -sS https://registry.npmjs.org/pnpm | python3 …（取 engines）
+  最新 10.x = 10.34.6 → engines.node ">=18.12"     ← node 20 可跑
+  最新 11.x = 11.28.5 → engines.node ">=22.13"     ← 与失败日志完全对应
+  10.x 共 78 个版本；dist-tags.latest = 12.11.2
+lockfileVersion: '9.0'                              ← pnpm 10 完全兼容，无需重生成 lockfile
+```
+**另一个只有实测才能发现的坑**：`pnpm-workspace.yaml` 用的是 `allowBuilds`（esbuild 的 install 脚本靠它放行）。
+```
+grep -o "allowBuilds\|onlyBuiltDependencies" <pnpm dist>/pnpm.cjs | sort | uniq -c
+  pnpm 10.34.6 → allowBuilds 16, onlyBuiltDependencies 48   ← 支持
+  pnpm 10.5.2  → onlyBuiltDependencies 48（无 allowBuilds） ← 不支持
+```
+所以 pin 必须写**确切 10.34.6**，不能只写 `10`：早期 10.x 会忽略 `allowBuilds`，进而跳过 esbuild 的 install 脚本。
+
+**修复（我的文件）**
+- `.github/workflows/ci.yml`：`version: 11` → **`version: 10.34.6`**；保留 `node: ['20','22']` 矩阵（`engines.node: >=20` 与 build 的 `target: node20` 是本仓库的声明，不能靠删格来回避）；新增步骤 **`Load the built host half on node ${{ matrix.node }}`**（`if: matrix.node == '20'`，在 Build 之后）让该声明变成可执行检查；文件头写清 pin 的理由与实测数据。
+- `tests/ci.spec.ts`（14 → **19** 条）：新增 `describe('pnpm pin vs the node matrix')` → pin 必须是确切 `x.y.z`、必须能在矩阵最低的 node 下安装、`pnpmRunsOnNode20()` 反例标定（`10.34.6`✓ / `10.5.2`✓ / `11.28.5`✗ / `11`✗ / `latest`✗ / `12.11.2`✗）、load 步骤的存在/门控/断言/顺序。
+- **反证**：把 pin 改回 `11` 后 `tests/ci.spec.ts` → `2 failed | 16 passed`（`"11" is a range or tag, not a reproducible version`、`pnpm 11 requires Node … so the node 20 cell would fail in "Set up pnpm" (run 38072615574)`）；还原后 `18 passed`。
+
+**本地完整复现（等价于 CI 的整个 job，用的是 CI 日志里那个 node 版本）**
+```
+# 干净树 = 已提交的树；node 与 pnpm 都下到 /tmp，store 也在 /tmp（不碰 ~/.pnpm-store）
+$ curl -fsSL https://nodejs.org/dist/v20.20.2/node-v20.20.2-darwin-arm64.tar.gz | tar -xz -C /tmp/node20 --strip-components=1
+$ curl -fsSL https://registry.npmjs.org/pnpm/-/pnpm-10.34.6.tgz | tar -xz -C /tmp/pnpm10
+$ cd /tmp/ci-clean && git -C <repo> archive HEAD | tar -x      # 74 个文件
+$ PATH=/tmp/node20/bin:$PATH node /tmp/pnpm10/package/bin/pnpm.cjs install --frozen-lockfile --store-dir /tmp/pnpm-store
+  → node v20.20.2 / pnpm 10.34.6；resolved 68, downloaded 68；esbuild@0.25.12 与 0.28.2 的 postinstall 都执行并 Done；install_exit=0（37.5s）
+$ pnpm run typecheck   → exit=0
+$ pnpm run test        → 14 files | 338 passed | 1 skipped (339)     ← 干净树里是我的提交版（342 条是本轮 ci.spec 扩容之后）
+$ pnpm run build       → ⚡ Done in 111ms；lib/index.js + lib/client.js
+$ pnpm run verify:build → [verify-build] OK        $ pnpm run verify:meta → OK
+$ md5 对比 4 个 lib 产物（干净树重建 vs 已提交）→ index.js/client.js/index.js.map/client.js.map 全部一致（等价于 `git diff HEAD -- lib` 为空）
+$ node -e "import('./lib/index.js')…"（新加的那一步）→ host half loads on v20.20.2, exit=0
+  反证：把 /tmp/badcontract/lib/index.js 写成 name="wrong" → 该命令 exit=1 并打印 host half contract broken（非空转）
+```
+**另做了 YAML 解析校验（一次性，不进 CI）**：套件里没有 YAML 依赖，我把 ci.yml 交给真实解析器验证——`python3 -c "import yaml; yaml.safe_load(...)"` 与 `ruby -ryaml` 都能解析，且解析出的值是 `with.version = '10.34.6'`、`if = "matrix.node == '20'"`、load 步骤 run 长度 247、步骤顺序为 Checkout→Set up pnpm→Set up node→Install→Typecheck→Test→Build→Load→Verify→Verify meta。为避免再次出现「文本断言全过但 YAML 语法错」，我在 `tests/ci.spec.ts` 补了一条 plain-scalar 断言（不得含 `: `／` #`／以流式指示符开头）。
+
+**仍待验证**：GitHub 上的**重跑**结果（Lead 会 push 并盯）——本地等价命令已全绿，但「云端 runner 上的 setup-node cache、action 版本解析」只有真跑才算数。
+
 ## 2. 环境（实测值）
 
 | 事实 | 值 | 怎么测的 |
@@ -79,13 +130,14 @@ Lead 在 **scratch home**（不碰用户真实 `~/.dsh`）完成冒烟；我**�
 | vitest | 3.2.7 | `node -e "console.log(require('./node_modules/vitest/package.json').version)"` |
 | `@deepseek-ai/cordis` | 4.0.4（本仓库 dev tree 内） | `node_modules/@deepseek-ai/cordis/package.json` |
 | jsdom | **未安装**（也不需要，见 §3.3 与 ❓9） | `ls node_modules/jsdom` → No such file or directory |
-| react / react-dom | **未安装**（由宿主 `PLATFORM_MODULES` 提供，测试用 stub 别名） | `ls node_modules/react` → No such file or directory |
+| react / react-dom | **是本包 devDependency**（`^18.3.1`，于 `f7a7263` 加入；`node_modules/react` 存在，实测 18.3.1）。浏览器里由宿主 `PLATFORM_MODULES` 提供，产物只 `require` 不内联（`tests/bundle.spec.ts` 守住）；测试用 stub 别名是**为绕过 renderer**（真实 React 在无 renderer 时调用含 `useState` 的组件会抛 "Invalid hook call"），不是为了解析依赖 | `node -e "console.log(require('react').version)"` → `18.3.1`；`ls -d node_modules/react` 存在 |
 | 宿主 DSH 版本 | 0.2.0-rc.2（**Lead 的 scratch 组合**，用于探针与真机冒烟） | Lead 报告（我未复跑该组合） |
-| `allowBuilds` 是真实存在的 pnpm 11 workspace 键 | ✅ | `grep -o 'allowBuilds[^,;)]\{0,60\}' ~/.nvm/…/pnpm/dist/pnpm.mjs` → 含 `"allowBuilds" in your project's pnpm-workspace.yaml to allow it to run its …` |
+| `allowBuilds` 支持的 pnpm 版本 | **10.34.6 支持**（16 处）、**10.5.2 不支持**（只有 `onlyBuiltDependencies` 48 处）；11.x 支持 | `grep -o "allowBuilds\|onlyBuiltDependencies" <pnpm dist>/pnpm.cjs \| sort \| uniq -c`（对 corepack 缓存的 10.5.2 与下载的 10.34.6 各跑一次）→ 这条决定了 pin 必须写**确切** 10.34.6 而不是「10」 |
+| `allowBuilds` 是真实存在的 pnpm workspace 键（版本敏感，见下一行） | ✅ | `grep -o 'allowBuilds[^,;)]\{0,60\}' ~/.nvm/…/pnpm/dist/pnpm.mjs` → 含 `"allowBuilds" in your project's pnpm-workspace.yaml to allow it to run its …` |
 
 ---
 
-## 3. 我写的测试（14 个 spec / 331 用例）
+## 3. 我写的测试（14 个 spec / 344 用例：343 passed + 1 skipped）
 
 写入范围（本任务独占）：`/Users/lzx/Documents/GitHub/dsh-task-gantt/tests/**`、`/Users/lzx/Documents/GitHub/dsh-task-gantt/vitest.config.ts`、`/Users/lzx/Documents/GitHub/dsh-task-gantt/.github/workflows/**`、本文件。
 
@@ -105,12 +157,13 @@ Lead 在 **scratch home**（不碰用户真实 `~/.dsh`）完成冒烟；我**�
 | `/Users/lzx/Documents/GitHub/dsh-task-gantt/tests/client-api.spec.ts` | 14 | 路由解析：反代子路径 `https://h/dataops/proxy/3080/` 必须得到 `…/3080/dsh-task-gantt/api/timeline`（**保留页面前缀**）、`dsh-app://app/`、`__DSH_TRANSPORT__.streamBaseUrl` 优先、注入的 `routeBase` 最优先、无 base 时退回文档相对路径；`postJson` 信封/非 JSON（`ApiHttpError.status`）/`signal` 透传 |
 | `/Users/lzx/Documents/GitHub/dsh-task-gantt/tests/client-tab.spec.ts` | 15 (+1 skip) | 真实 `apply()` + 记录型服务：`registerTab` 恰好一次、id=`TAB_TYPE_ID`、title/description 取自词典、单实例（`single` 或等价的 `dedupeKey`）、图标渲染出 `currentColor` 且无颜色字面量、component 在 `visible:true/false` 下都能调用；**better-sidebar 晚到**时经 `ctx.inject` 回调补注册；无 `ctx.inject` 的老 ctx 只告警不抛；重复注册抛错被降级为告警 |
 | `/Users/lzx/Documents/GitHub/dsh-task-gantt/tests/bundle.spec.ts` | 16 | 产物守护：`lib/client.js` 首行 `window.__ModuleLoader__.load({ id: "dsh-task-gantt", factory: (require) => {`、末行 `return module.exports; } });`、`require("react")` 外置、**没有内联 React**、只有 1 次 `load`；`lib/index.js` 是 ESM 且 `export { apply, inject, name }`、0 个 `require(`、不含 `__ModuleLoader__`；两个 `.map` 是 v3；**按宿主 `CLIENT_CHUNK` 正则守住按需分块文件名**（见 §4 事实 11） |
-| `/Users/lzx/Documents/GitHub/dsh-task-gantt/tests/ci.spec.ts` | 14 | **两个门都守**：`.github/workflows/ci.yml`（先剥注释行，避免注释文字满足断言）→ ubuntu-latest、node 20/22、`--frozen-lockfile`、typecheck→test→build 顺序、`verify` 必须在 build 之后、build 之前不得出现任何 lib/ freshness diff、**freshness diff 必须带 `HEAD`**；`package.json#scripts.check` → 同一条 `analyzeFreshnessScript` 分析（HEAD-based、顺序、五步齐全），并对分析器本身做反例标定（index-based / 顺序反转 / 缺步骤都能识别） |
+| `/Users/lzx/Documents/GitHub/dsh-task-gantt/tests/ci.spec.ts` | 19 | **两个门都守**：`.github/workflows/ci.yml`（先剥注释行，避免注释文字满足断言）→ ubuntu-latest、node 20/22、`--frozen-lockfile`、typecheck→test→build 顺序、`verify` 必须在 build 之后、build 之前不得出现任何 lib/ freshness diff、**freshness diff 必须带 `HEAD`**；`package.json#scripts.check` → 同一条 `analyzeFreshnessScript` 分析（HEAD-based、顺序、五步齐全），并对分析器本身做反例标定（index-based / 顺序反转 / 缺步骤都能识别）；**pnpm pin** → 必须是确切 `x.y.z`、必须能在矩阵最低的 node 20 下安装（含反例标定：`10.34.6` ✓ / `11.28.5` ✗ / `11` ✗ / `latest` ✗ / `12.11.2` ✗），且 `Load the built host half` 步骤必须存在、限定 node 20、读 `./lib/index.js`、断言 `name`/`apply`、且在 build 之后；另守**长 one-liner 必须是可解析的 plain YAML scalar**（套件没有 YAML 依赖，这条挡的是「文本断言全过、GitHub 上 YAML 解析失败」） |
 
 ### 3.3 为什么不用 jsdom（决策与代价）
 
-- 宿主把 React 作为**平台模块**下发，本包不依赖 React；`vitest.config.ts` 把 `react` / `react/jsx-runtime` 别名到 `/Users/lzx/Documents/GitHub/dsh-task-gantt/tests/stubs/react.ts`，因此能**调用**组件函数并检查返回的元素树，但**不渲染**。
-- 因此：组件的**真实渲染**（滚动、点击、详情面板）由 ❓1 的真机冒烟覆盖，不由单测覆盖。`ui` 已提示：在 stub 下 `GanttChart` 的 viewport 恒为 `{width:0,height:0}`，所以几何断言都直接打在 `layoutTimeline` 上（这也是它设计成纯函数的原因）。
+- 宿主把 React 作为**平台模块**下发，产物只 `require` 不内联；`vitest.config.ts` 把 `react` / `react/jsx-runtime` 别名到 `/Users/lzx/Documents/GitHub/dsh-task-gantt/tests/stubs/react.ts`，因此能**调用**组件函数并检查返回的元素树，但**不渲染**。
+- ⚠️ **更正（2026-10-11）**：我早先写的理由是「React 不是本包依赖，不加别名就解析不到」——**这是错的**。`react`/`react-dom` 自 `f7a7263` 起就在 `devDependencies`（`^18.3.1`），`node_modules/react` 存在（实测 18.3.1）。我在干净树里做 `pnpm install --frozen-lockfile` 时看到它们被装出来，才发现这行是旧的。别名真正的动机是**正确性**：用真实 React 18.3.1 直接调用一个含 `useState` 的组件会抛 "Invalid hook call"（无 renderer 时 hooks 不合法，我实测过）；stub 让 hooks 返回惰性值，才能只做「调用 + 检查元素树」。`vitest.config.ts` 的注释已同步更正。
+- 因此：组件的**真实渲染**（滚动、点击、详情面板）由 §1.2 的真机冒烟覆盖，不由单测覆盖。`ui` 已提示：在 stub 下 `GanttChart` 的 viewport 恒为 `{width:0,height:0}`，所以几何断言都直接打在 `layoutTimeline` 上（这也是它设计成纯函数的原因）。
 
 ---
 
@@ -164,7 +217,7 @@ Lead 在 **scratch home**（不碰用户真实 `~/.dsh`）完成冒烟；我**�
 - `ui` 指出 `white-space: nowrap` 之类会被「颜色名一律红」误伤。我的扫描器**只对 paint 属性**（`color/background/border*/fill/stroke/box-shadow/…`）做颜色名判定，`white-space` 不在清单里；实测 `src/client/ui/styles.ts` 的 12 处 `white-space` 全部未触发（37 个主题用例全绿）。
 - 与官方口径的差异（已知并接受）：`dsh-better-sidebar/tests/theme.spec.ts:101-160` 只扫 `#hex`/`\brgba?\(` 与 `color:` 声明；我还额外扫颜色名和非主题 `var()`，更严。若以后出现误报，先看是不是 paint 属性的真实字面量。
 
-### F5（`src/host/index.ts`，**改动者未知**；行为已验证，真机前提未验证）宿主半的 `webServer` 时序
+### F5（`src/host/index.ts`，**改动者未知**；四条行为路径已验证，真机前提由 Lead 探针闭环）宿主半的 `webServer` 时序
 
 - `src/host/index.ts` 现行实现：`webServer` 已在 → 同步 `ctx.effect(register)`；未在 → `ctx.inject(['webServer'], scoped => scoped.effect(register))`；无动态 inject → 仅告警。
 - 我用假 ctx 覆盖了这四条路径（`tests/host-mount.spec.ts`，8 用例全绿），包括「延迟回调触发后才真的能答 `/ping`」。这比 brief 里假设的「apply 时同步注册」更稳，但它**只证明了实现的四条分支行为**。
@@ -214,7 +267,7 @@ Lead 在 **scratch home**（不碰用户真实 `~/.dsh`）完成冒烟；我**�
 
 1. ❓（**部分闭环**）**真机挂载冒烟**：Lead 已在 scratch home 执行并命中 A1–A5、A7、A8（见 §1.2 表），我**没有**运行过 `mount`/`unmount`。仍开放：**A6**（跨源 403 负例）、**A9**（无 team 会话的降级空态）、**A10**（硬刷新）、**A11**（卸载后 tab 消失）。脚本与断言表：
    `/Users/lzx/Documents/GitHub/dsh-task-gantt/tests/e2e/README.md`、`/Users/lzx/Documents/GitHub/dsh-task-gantt/tests/e2e/mount-smoke.sh`（`check|mount|verify|unmount`，`check` 是只读预检）。
-2. ❓**CI 未在 GitHub 上跑过**。`.github/workflows/ci.yml` 只做了静态守护（`tests/ci.spec.ts` 14 条）+ 本地等价命令实测：`pnpm run typecheck` / `pnpm run test` / `pnpm run build` / `pnpm run verify:build` 都跑过且通过；`pnpm install --frozen-lockfile` **没有**在干净目录验证过（本机 `node_modules` 已存在），`actions/setup-node` 的 pnpm cache 行为也未验证。
+2. ❓（**大幅收窄**）**GitHub CI**：已真跑一次并**红了**（run `38072615574`，node 20 格在 "Set up pnpm" 就挂：pnpm 11.28.5 需要 Node ≥ 22.13）→ 根因已定位并修复（pin `10.34.6` + node-20 加载检查 + 18 条守护），**见 §1.3**；`pnpm install --frozen-lockfile` 已在**干净树 + node 20.20.2 + pnpm 10.34.6 + 全新 store** 下实测 `exit=0`（含两个 esbuild postinstall），整条 job 的其余步骤也在该环境全绿。**仍待验证的只剩「云端重跑」本身**：`actions/setup-node` 的 pnpm cache 命中行为、`pnpm/action-setup@v4` 对 `10.34.6` 的解析、ubuntu runner 上的平台差异——这些只有 Lead push 后的真跑才算数。
 3. ❓**`pnpm run verify:meta` 是由 packaging 写的脚本**，我跑了并记录输出（✅ exit=0），但我没有独立复算它对宿主 `readPluginMeta()` 的转写是否逐条正确。
 4. ❓**`team/task` 的 `completed` / `reopen` 迁移在真实日志里从未出现过**（全队目前只有 `pending → in_progress` 的样本）。我的用例使用构造事件覆盖了这两条迁移；真实样本仍是空白。
 5. ❓**`dsh.client.inject` 非空的真实行为未验证**：本包按 brief §2.2 保持 `[]`。我从宿主 bundle 读出「未知名字被静默跳过」，但**没有**用真实 profile 跑过一次非空数组。
@@ -249,6 +302,24 @@ git diff --exit-code HEAD -- lib # 需要 lib/ 已提交（见 F1）；必须带
 ```bash
 pnpm exec vitest run tests/host-fold.spec.ts tests/host-integration.spec.ts   # 数据层
 pnpm exec vitest run tests/layout.spec.ts tests/theme.spec.ts tests/client-api.spec.ts tests/client-tab.spec.ts  # 浏览器半
+```
+
+**完整复现 CI 的 job（含最低 node 版本），不需要改本机环境** —— 这就是 §1.3 用的那套；注意 CI 的 pnpm 是 `10.34.6`、node 20 格是 `20`：
+
+```bash
+REPO=/Users/lzx/Documents/GitHub/dsh-task-gantt
+curl -fsSL https://nodejs.org/dist/v20.20.2/node-v20.20.2-darwin-arm64.tar.gz -o /tmp/node20.tgz
+mkdir -p /tmp/node20 && tar -xzf /tmp/node20.tgz -C /tmp/node20 --strip-components=1
+mkdir -p /tmp/pnpm10 && curl -fsSL https://registry.npmjs.org/pnpm/-/pnpm-10.34.6.tgz | tar -xz -C /tmp/pnpm10
+rm -rf /tmp/ci-clean && mkdir -p /tmp/ci-clean && git -C "$REPO" archive HEAD | tar -x -C /tmp/ci-clean
+cd /tmp/ci-clean
+export PATH=/tmp/node20/bin:$PATH
+PNPM="node /tmp/pnpm10/package/bin/pnpm.cjs"
+$PNPM install --frozen-lockfile --store-dir /tmp/pnpm-store   # 全新 store；应看到两个 esbuild postinstall Done
+$PNPM run typecheck && $PNPM run test && $PNPM run build && $PNPM run verify:build && $PNPM run verify:meta
+node -e "import('./lib/index.js').then((m)=>{if(typeof m.apply!=='function'||m.name!=='dsh-task-gantt')throw new Error('host half contract broken');console.log('host half loads on',process.version)}).catch((e)=>{console.error(e);process.exit(1)})"
+# 干净树没有 .git，freshness 等价检查：
+for f in index.js client.js index.js.map client.js.map; do diff <(md5 -q "$REPO/lib/$f") <(md5 -q "/tmp/ci-clean/lib/$f") && echo "✓ $f"; done
 ```
 
 真实日志 fixture 的来源（可重新生成）：

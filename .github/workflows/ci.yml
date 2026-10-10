@@ -10,13 +10,29 @@
 #   3. test      — the vitest suite (contract / manifest / theme / route /
 #                  bundle / i18n guards).
 #   4. build     — produces lib/index.js + lib/client.js.
-#   5. verify    — `git diff --exit-code HEAD -- lib`: the committed bundles must
+#   5. load      — node 20 (the declared minimum) must be able to import the
+#                  built host half. Makes `engines.node: >=20` and esbuild's
+#                  `target: node20` executable instead of a paper claim.
+#   6. verify    — `git diff --exit-code HEAD -- lib`: the committed bundles must
 #                  be exactly what the build produces. THIS STEP MUST RUN AFTER
 #                  THE BUILD. Running it first compares the previous build's
 #                  output against itself and always passes, which is how a stale
 #                  lib/ ships while CI stays green. `HEAD` is load-bearing: the
 #                  revision-less form compares against the INDEX and turns green
 #                  as soon as `lib/` is staged (see tests/ci.spec.ts).
+#
+# WHY pnpm IS PINNED TO AN EXACT 10.x — measured, not guessed:
+#   pnpm 11 requires Node >= 22.13 (it requires `node:sqlite`), so the node 20
+#   matrix cell dies in "Set up pnpm" before anything is installed. First real
+#   run 38072615574: `version: 11` resolved to 11.28.5 and node 20.20.2 failed
+#   with `ERR_UNKNOWN_BUILTIN_MODULE: No such module: node:sqlite`.
+#   Registry metadata (2026-10-11): pnpm 11.28.5 → engines.node `>=22.13`;
+#   pnpm 10.34.6 → engines.node `>=18.12`.
+#   The EXACT value matters for a second reason: `allowBuilds` in
+#   pnpm-workspace.yaml is understood by 10.34.6 but NOT by early 10.x
+#   (10.5.2 only knows `onlyBuiltDependencies`), and without it esbuild's
+#   install script is skipped. Verified locally on node 20.20.2 + pnpm 10.34.6:
+#   `pnpm install --frozen-lockfile` exits 0 and runs both esbuild postinstalls.
 name: CI
 
 on:
@@ -47,7 +63,11 @@ jobs:
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 11
+          # Exact, and MUST stay on 10.x while the matrix contains node 20:
+          # pnpm 11 needs Node >= 22.13 (see the header). Bumping this major
+          # without dropping node 20 breaks "Set up pnpm" on that cell —
+          # tests/ci.spec.ts fails on that combination.
+          version: 10.34.6
 
       - name: Set up node ${{ matrix.node }}
         uses: actions/setup-node@v4
@@ -66,6 +86,13 @@ jobs:
 
       - name: Build
         run: pnpm run build
+
+      - name: Load the built host half on node ${{ matrix.node }}
+        # Only meaningful on the declared minimum; the point is that
+        # `engines.node: >=20` and esbuild's `target: node20` are executable
+        # claims. `import()` works from `node -e` (CommonJS) in node 20.
+        if: matrix.node == '20'
+        run: node -e "import('./lib/index.js').then((m)=>{if(typeof m.apply!=='function'||m.name!=='dsh-task-gantt')throw new Error('host half contract broken');console.log('host half loads on',process.version)}).catch((e)=>{console.error(e);process.exit(1)})"
 
       - name: Verify the built artifacts and the committed bundles
         # `verify:build` executes the artifact contract (loader wrapper, factory
