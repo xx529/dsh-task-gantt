@@ -480,7 +480,7 @@ ALL CHECKS PASSED
 ## 10. 质量门实测（**task-2 交付当时**的快照，2026-10-11 00:25；**非最终尺寸**）
 
 > ⚠️ 本节的产物尺寸是**那一次构建**的历史记录。F2 修复后产物又变了，
-> **最终已提交产物的权威尺寸**见 §12.2（`wc -c` 实测）。
+> **最终已提交产物的权威尺寸**见 §12.2.1（`wc -c` 实测）。
 
 ```bash
 cd /Users/lzx/Documents/GitHub/dsh-task-gantt
@@ -509,7 +509,7 @@ npx esbuild src/host/index.ts --bundle --format=esm --platform=node \
   --target=node20 --external:'@deepseek-ai/*' --outfile=/tmp/host-half-check.js
 # → 退出码 0，产物 38599 字节
 #   ⚠️ 这是「单独打包 host 半」的检查产物，**不等于 lib/index.js**（后者还含 client 半的入口与共享代码）。
-#   最终 lib/index.js 尺寸见 §12.2。
+#   最终 lib/index.js 尺寸见 §12.2.1。
 ```
 
 ---
@@ -632,6 +632,25 @@ pnpm run test        # ✅ 14 files / 330 passed, 1 skipped, 0 failed
 pnpm run build       # ✅ lib/index.js + lib/client.js
 node --experimental-strip-types src/host/dev-verify.mts   # ✅ ALL CHECKS PASSED（27 条断言）
 ```
+
+#### 12.2.1 最终已提交产物的权威尺寸（`wc -c` 实测）
+
+上面几节里的 `kb` 数字都是**各自那次构建**的 esbuild 报告值；要引用产物大小请以本节为准：
+
+```bash
+$ wc -c lib/index.js lib/client.js
+   40502 lib/index.js      # 39.6 KiB
+   71996 lib/client.js     # 70.3 KiB
+  112498 total
+
+$ git show HEAD:lib/index.js | wc -c     # 40502   ← 与工作区逐字节相同
+$ git show HEAD:lib/client.js | wc -c    # 71996   ← 与工作区逐字节相同
+$ git diff --exit-code -- lib            # exit 0  ← 构建幂等，无未暂存残留
+```
+
+> 复核时间 2026-10-11 01:33。`lib/` 是构建产物且已提交，**任何 `src/**` 改动后重新 build 都会让这些数字失效**。
+> 同一次复核的其它门：`pnpm run typecheck` exit 0；`pnpm run test` **14 files / 338 passed | 1 skipped**；
+> `pnpm run build` exit 0。（测试用例数仍在增长，引用时请连时间一起引。）
 
 ---
 
