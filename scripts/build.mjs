@@ -53,13 +53,28 @@ const hostOptions = {
 /**
  * Client half: the module-loader wrapper is prepended, the bundle body carries
  * the factory's `require` verbatim, and the loader assigns `module.exports`.
+ *
+ * `format: 'cjs'` is load-bearing, not cosmetic. The wrapper pre-declares
+ * `var module`/`var exports` inside the factory (that is the format the host's
+ * `__ModuleLoader__` expects), so esbuild's *iife* runner detects CommonJS in
+ * the scope and SKIPS its `return __toCommonJS(index_exports)` epilogue: the
+ * bundle's real exports are written to the injected `module` object and the
+ * factory hands `undefined` back to the loader — the tab silently never
+ * appears. `cjs` emits that epilogue and is otherwise the same wrapper.
+ *
+ * Evidence (`node scripts/verify-build.mjs`, which asserts the factory's return
+ * value; the run is recorded in docs/INSTALL.md §6):
+ *   - `format: 'iife'` + `globalName` → FAIL "the client factory returned
+ *     undefined";
+ *   - `format: 'cjs'` → OK, factory returned exports (name/apply present).
+ * Reproduced against a pristine `git archive HEAD` tree, so it is independent
+ * of the work-in-progress sources.
  */
 const clientOptions = {
   entryPoints: [resolve(root, 'src/client/index.ts')],
   outfile: resolve(root, 'lib/client.js'),
   bundle: true,
-  format: 'iife',
-  globalName: '__dshTaskGanttModule',
+  format: 'cjs',
   platform: 'browser',
   target: 'es2020',
   sourcemap: true,

@@ -2,7 +2,22 @@
  * The plugin's own i18n: zh-CN + en, resolved from the page language.
  *
  * Deliberately dependency-free (no `@deepseek-ai/dsh-client-locale` peer): the
- * panel must load on a profile that composes nothing but better-sidebar.
+ * panel must load on a profile that composes nothing but better-sidebar, and the
+ * guide (§10) tells consumers not to reach into better-sidebar's internal `t()`.
+ *
+ * Locale source (TEAM-BRIEF §5): `document.documentElement.lang || navigator.language`.
+ * The DSH web shell keeps `documentElement.lang` in sync with the host locale —
+ * `@deepseek-ai/dsh-client-locale`'s `syncDocumentLanguage()` writes `'zh-CN'`
+ * for the `zh` snapshot and the raw language otherwise (verified in
+ * `/Applications/DeepSeek Harness.app/Contents/Resources/app.asar`), so reading
+ * it at call time follows a live language switch instead of freezing the
+ * language at module load.
+ *
+ * Adding a key means adding it to BOTH dictionaries; `MessageKey` is derived
+ * from `zh` and `en` is typed as a full `Record`, so a missing translation is a
+ * typecheck error rather than a silent English fallback.
+ *
+ * Owner: teammate `shell` — request new keys instead of editing this file.
  */
 
 export type Locale = 'zh' | 'en'
@@ -33,8 +48,15 @@ const zh = {
   taskReady: '可开始',
   taskWriteScopes: '写入范围',
   noTask: '暂无任务',
+  now: '现在',
+  zoomIn: '放大时间轴',
+  zoomOut: '缩小时间轴',
+  zoomReset: '重置缩放',
+  liveOnly: '实时状态（无历史时间）',
+  notes: '数据说明',
 } as const
 
+/** Every message key; both dictionaries must define all of them. */
 export type MessageKey = keyof typeof zh
 
 const en: Record<MessageKey, string> = {
@@ -63,12 +85,18 @@ const en: Record<MessageKey, string> = {
   taskReady: 'Ready',
   taskWriteScopes: 'Write scopes',
   noTask: 'No tasks',
+  now: 'Now',
+  zoomIn: 'Zoom in',
+  zoomOut: 'Zoom out',
+  zoomReset: 'Reset zoom',
+  liveOnly: 'Live state (no dated history)',
+  notes: 'Notes',
 }
 
-/** Detect the page locale once, at module scope. */
-export const locale: Locale = detectLocale()
+const DICTIONARIES: Record<Locale, Record<MessageKey, string>> = { zh, en }
 
-function detectLocale(): Locale {
+/** Detect the page locale from the document language, then the browser. */
+export function detectLocale(): Locale {
   const lang =
     (typeof document !== 'undefined' ? document.documentElement?.lang : '') ||
     (typeof navigator !== 'undefined' ? navigator.language : '') ||
@@ -76,15 +104,36 @@ function detectLocale(): Locale {
   return /^zh/i.test(lang) ? 'zh' : 'en'
 }
 
-/** Translate one key in the detected locale. */
-export function t(key: MessageKey): string {
-  return locale === 'zh' ? zh[key] : en[key]
+/**
+ * Locale snapshot taken at module load.
+ *
+ * @deprecated Prefer {@link t} or {@link currentLocale}: this value does not
+ * follow a live language switch. Kept for tests and simple imports.
+ */
+export const locale: Locale = detectLocale()
+
+/** The locale the page is in *right now*. */
+export function currentLocale(): Locale {
+  return detectLocale()
 }
 
-/** The full dictionary of the detected locale (for tests). */
+/** Translate one key in the page's current locale. */
+export function t(key: MessageKey): string {
+  return DICTIONARIES[detectLocale()][key]
+}
+
+/** Translate one key in an explicit locale. */
+export function translate(localeOverride: Locale, key: MessageKey): string {
+  return DICTIONARIES[localeOverride][key]
+}
+
+/** The full dictionary of the page's current locale (for tests). */
 export function messages(): Record<MessageKey, string> {
-  return locale === 'zh' ? { ...zh } : { ...en }
+  return { ...DICTIONARIES[detectLocale()] }
 }
 
 /** Both dictionaries, keyed by locale (for tests). */
-export const dictionaries = { zh, en } as const
+export const dictionaries: Record<Locale, Record<MessageKey, string>> = {
+  zh: { ...zh },
+  en: { ...en },
+}

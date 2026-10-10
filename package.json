@@ -32,6 +32,7 @@
       "default": "./lib/client.js"
     },
     "./cordis.patch.yml": "./cordis.patch.yml",
+    "./locale/*.json": "./locale/*.json",
     "./package.json": "./package.json"
   },
   "dsh": {
@@ -47,8 +48,10 @@
     "lib",
     "cordis.patch.yml",
     "icon.svg",
+    "locale/*.json",
     "README.md",
     "README.zh.md",
+    "docs/INSTALL.md",
     "LICENSE"
   ],
   "scripts": {
@@ -57,7 +60,9 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "check": "pnpm run typecheck && pnpm run test && pnpm run build && git diff --exit-code -- lib",
+    "verify:build": "node scripts/verify-build.mjs",
+    "verify:meta": "node scripts/verify-meta.mjs",
+    "check": "pnpm run typecheck && pnpm run test && pnpm run build && pnpm run verify:build && pnpm run verify:meta && git diff --exit-code HEAD -- lib",
     "pack:check": "pnpm pack --dry-run"
   },
   "peerDependencies": {
@@ -73,6 +78,8 @@
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "esbuild": "^0.25.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
   },

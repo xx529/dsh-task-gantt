@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Task Gantt",
+    "description": "Agent-team task Gantt chart in the right sidebar — teammates down the y-axis, real session time along the x-axis, task title and summary in every bar."
+  }
+}

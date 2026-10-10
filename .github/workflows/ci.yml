@@ -1,0 +1,89 @@
+# CI for dsh-task-gantt.
+#
+# Order matters, and `tests/ci.spec.ts` guards it:
+#
+#   1. install   — `--frozen-lockfile`: the lockfile is the resolution truth.
+#                  esbuild's install script is allowed in pnpm-workspace.yaml
+#                  (`allowBuilds`), which is what makes the platform binary
+#                  available to `scripts/build.mjs`.
+#   2. typecheck — `tsc --noEmit`, must be 0 errors.
+#   3. test      — the vitest suite (contract / manifest / theme / route /
+#                  bundle / i18n guards).
+#   4. build     — produces lib/index.js + lib/client.js.
+#   5. verify    — `git diff --exit-code HEAD -- lib`: the committed bundles must
+#                  be exactly what the build produces. THIS STEP MUST RUN AFTER
+#                  THE BUILD. Running it first compares the previous build's
+#                  output against itself and always passes, which is how a stale
+#                  lib/ ships while CI stays green. `HEAD` is load-bearing: the
+#                  revision-less form compares against the INDEX and turns green
+#                  as soon as `lib/` is staged (see tests/ci.spec.ts).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: verify (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['20', '22']
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - name: Set up node ${{ matrix.node }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm run typecheck
+
+      - name: Test
+        run: pnpm run test
+
+      - name: Build
+        run: pnpm run build
+
+      - name: Verify the built artifacts and the committed bundles
+        # `verify:build` executes the artifact contract (loader wrapper, factory
+        # returns exports, no inlined React, host half loadable as ESM);
+        # `git diff --exit-code HEAD -- lib` then proves the COMMITTED bundles
+        # are exactly what this build produced. Both must run AFTER the build:
+        # run first, the diff compares the previous build against itself and
+        # always passes, which is how a stale lib/ ships while CI stays green.
+        #
+        # `HEAD` is deliberate, not cosmetic: `git diff -- lib` (no revision)
+        # compares the WORKING TREE against the INDEX, so once anyone runs
+        # `git add lib` it reports clean while the committed artifact is still
+        # the old one — a false green in the one step whose job is to catch
+        # that. Measured 2026-10-11 with lib/ staged but not committed:
+        # `git diff --exit-code -- lib` → 0, `git diff --exit-code HEAD -- lib`
+        # → 1. `HEAD` compares against the commit, which is what a release
+        # ships and what this job checks out.
+        run: pnpm run verify:build && git diff --exit-code HEAD -- lib
+
+      - name: Verify plugin display metadata
+        run: pnpm run verify:meta

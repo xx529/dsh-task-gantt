@@ -1,0 +1,39 @@
+<svg width="36" height="36" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="dsh-task-gantt">
+  <!--
+    Plugin artwork for the DSH Plugins page + plugin_manager list.
+
+    Shape rules verified against the installed dsh-better-sidebar 0.22.1 and the
+    plugin-display contract it documents (/tmp/dsh-better-sidebar-src/AGENTS.md
+    item 11): `package.json#icon` is a 36×36, flat-fill, NO-stroke,
+    two-colour-gradient mark — DSH's own `PluginArtwork*` glyphs "carry their own
+    brand colors instead of riding currentColor", and a single-colour mark reads
+    as a flat block at the ~30px list-row size. There is no size/gradient
+    validation, so a wrong mark degrades silently to a one-line text row.
+    Compared side by side with ~/.dsh/profiles/web/node_modules/dsh-better-sidebar/icon.svg.
+
+    The mark itself: a session-time rail (blue gradient) with a live "now" edge
+    (teal gradient) and three task bars at different lengths — the chart the tab
+    draws: teammates down the y-axis, real session time along the x-axis,
+    `subject` + `description` inside every bar.
+
+    Brand colors are deliberately literal (not --dsw-* tokens): this file is
+    packaging metadata rendered by the host's plugin list, not panel chrome, and
+    the host contract explicitly expects fixed brand colors here. It is listed in
+    package.json `files` — the host reads it from the installed package.
+  -->
+  <defs>
+    <linearGradient id="rail" x1="5" y1="7" x2="31" y2="29" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#69B9FF" />
+      <stop offset="1" stop-color="#324DE2" />
+    </linearGradient>
+    <linearGradient id="now" x1="28" y1="7" x2="28" y2="29" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#45E7A4" />
+      <stop offset="1" stop-color="#05909D" />
+    </linearGradient>
+  </defs>
+  <rect x="4" y="7" width="28" height="22" rx="6" fill="url(#rail)" />
+  <rect x="26.5" y="7" width="5.5" height="22" rx="2.75" fill="url(#now)" />
+  <rect x="9" y="11.5" width="11" height="3" rx="1.5" fill="#FFFFFF" />
+  <rect x="9" y="17" width="15" height="3" rx="1.5" fill="#FFFFFF" fill-opacity="0.82" />
+  <rect x="9" y="22.5" width="7.5" height="3" rx="1.5" fill="#FFFFFF" fill-opacity="0.66" />
+</svg>

@@ -175,14 +175,21 @@ registerUpgrade(route: { path: string; handler: (req, socket, head) => void|Prom
 
 ### 3.4 任务状态迁移事件如何定位
 
-❓**待验证（本插件成败的关键一跳）**：shared task board 的 create/update 是 host 服务调用（`agentTeams.createTask` / `updateTask`），**不一定**在会话日志里留下 `team/*` 事件（✅ 实测本会话日志里**没有**任何 `team/*` 类型）。
+> ⚠️ **本节已被实测推翻并更正（Lead 复核 + host-data 一手取证）。** 原假设"会话日志里没有 `team/*`"**只对没有 team 的会话成立**：我最初扫的是本会话在**早期**的状态，那时还没有 team。
 
-因此 `src/host/timeline.ts` 必须按以下**优先级**取时间：
-1. 若日志里存在任务相关事件（`team/task-*`、`team/*`）→ 直接用（最权威）；
-2. 否则扫 `tool/call` / `tool/result`：命中任务看板工具（工具名形如 `team_task_create` / `team_task_update`，❓**待验证确切名字**——去 `~/.dsh` 或 DSH 包里查 `agentTeams` 注册的工具定义）→ 用 `tool/call.time` 作为 `created`/`claimed`/`completed` 的锚点，`tool/result` 里如果带 revision 也取；
-3. 都没有 → `history: []`，UI 只画当前状态（`source: 'live'` 语义）。
+✅ **事实（`team/task` 与 `team/member` 是一等会话事件）**：Lead 会话日志里存在 `team/task` / `team/member` / `team/message/queued|delivered`，每条都带 `time`（epoch ms）。实测：
+- 本会话（Lead）日志：`team/task` 15 条、`team/member` 12 条；6 个 teammate 日志里 **0 条**（板书只写在 Lead 自己的日志里）。
+- 事件形状：`{"type":"team/task","seq":485,"time":1791648711980,"data":{"version":2,"teamId":"session-…","task":{id,revision,subject,description,status,blockedBy,writeScopes,…}}}`；`team/member` 的 `data.member.id` **就是子会话 id**。
+- 工具名：`team_task_create` / `team_task_update`（工具行号见 `docs/FINDINGS-host.md`）。
+
+因此 `src/host/timeline.ts` 的**时间锚点优先级**（实现与该文件头一致）：
+1. **主路径**：Lead 日志的 `team/task` 事件的 `time` —— 权威且可回溯；
+2. **兜底**：某任务有看板记录但日志无 `team/task` → 扫 `tool/call` 的 `time` 定锚，`team_task_update.expected_revision`（CAS 前置条件）用来把迁移**归属到执行它的 teammate**（真实日志 6/6 正确）；用了这条要在 `notes` 里说明；
+3. 都拿不到 → `history: []`，UI 只画当前状态（`source: 'live'` 语义）。
 
 **禁止**发明时间戳：宁可 `history: []`，也不要拿"现在"顶上。
+
+❓**仍未验证**：`completed` / `reopen` 迁移在真实日志里**从未出现过**（全队任务只走到 `pending → in_progress`），其形状由构造事件覆盖。
 
 ## 4. 冻结的契约
 
@@ -264,6 +271,37 @@ description:
 - 安装命令优先给 **GitHub 直装**（bundle 通道，`lib/` 已提交所以无需构建）：
   `cd ~/.dsh && dsh plugin --profile web add "dsh-task-gantt@github:xx529/dsh-task-gantt"`
 - `dsh-better-sidebar` 是**可选前置**，不是 `dependencies`（否则会被一起装成硬依赖）；README 里要求用户先装它。
+
+## 7.2 真机挂载冒烟结果（Lead 执行，2026-10-11）
+
+环境：独立 scratch home（`DSH_HOME=/tmp/gantt-scratch-home`，**不碰用户 ~/.dsh**），DSH CLI **0.2.0-rc.2**（`npx --package @deepseek-ai/dsh@0.2.0-rc.2`），`dsh-better-sidebar@0.25.0`，本插件以 tarball 经 `dsh plugin --profile web add` 安装（bundle 通道，与用户安装路径一致）。
+
+| 断言 | 结果 | 证据 |
+|---|---|---|
+| 插件行进入组合树 | ✅ | `dsh --profile web --dump-config` 出现 `- id: dsh-task-gantt / name: dsh-task-gantt` |
+| 浏览器半被下发并执行 | ✅ | 页面里存在 `<style data-plugin="dsh-task-gantt">`（**实拍**，不是推断） |
+| **tab 出现在 `+` 菜单** | ✅ | 新建标签页菜单含「任务甘特图」 |
+| 面板挂载 | ✅ | `div[data-dsh-task-gantt]` 存在，`[class*="dtg-"]` 节点 **1085** 个 |
+| 纵轴 = teammate | ✅ | 7 条泳道：lead / packaging / host-data / shell / ui / verify / docs |
+| 横轴 = 真实时间 | ✅ | 刻度 00:10 / 00:20 / 00:30 / 00:40 + `now 00:47` |
+| 条内显示任务标题 + 简介 | ✅ | 6 张任务卡，标题如「打包与脚手架：构建产物形状、manifest、安装验证」，第二行为 `Owner: packaging。目标：…` |
+| 状态区分 | ✅ | 5 张已完成卡（宽 260px）+ verify 1 张进行中卡（宽 148px、泳道标「运行中」） |
+| 降级态如实标注 | ✅ | 无 agentTeams 时页脚显示 notes：`the agentTeams service is unavailable; the board is rebuilt from the session log alone` |
+| host 路由 | ✅ | `POST /dsh-task-gantt/api/ping` → `{"ok":true,...}`；`/api/timeline` → HTTP 200、`source:"log"`、7 lanes / 6 tasks |
+
+**由此确认（推翻一处团队内部假设）**：`webServer` 服务在 `apply()` 执行时**尚未挂载** —— 我加探针后实测输出 `apply entered; webServer= undefined`，改成 `ctx.inject(['webServer'], …)` 后路由立即注册成功。这条现在是 **Lead 一手实测**，可以对外引用。
+
+❓**仍未验证**：反代子路径（`https://host/<prefix>/`）下的路由解析只到单测级；桌面壳的 `dsh-app://` 基底只到单元级；**实时增量刷新与 live `agentTeams` 投影路径**只到单元/构造数据级 —— Lead 在 scratch 实例里提交了一次最小 team 任务（`spawn_teammate` ×2 + 共享任务 ×2）以补这一段，但受时间限制**未观察到新 team 形成**，因此这段不作为"已实测"写入交付。
+
+## 7.3 桌面 profile（用户当前环境）的安装路径
+
+`~/.dsh/profiles/desktop` 是**用户运行环境**，已装 `dsh-better-sidebar@0.25.0` 且 `@deepseek-ai/dsh-experimental-agent-team-profile` 在 bundles 里（即 live `agentTeams` 层是挂着的）。
+
+⚠️ **该 profile 不能用 CLI 安装**：实测 `dsh plugin --profile desktop add <pkg>` → `error: profile "desktop" is managed exclusively by the Electron application`。桌面 profile 的依赖改动由 **Electron 应用内的插件管理器 / 市场**代为执行。
+
+用户侧的安装方式（二选一）：
+1. 应用内「插件」页 / 侧卡片插件市场里安装（GitHub 源或本地 tarball）；
+2. 若应用提供「从文件安装 / 开发模式」，用 `pnpm pack` 产出的 tarball。
 
 ## 8. 官方文档出处
 

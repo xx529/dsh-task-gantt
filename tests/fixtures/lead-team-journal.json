@@ -1,0 +1,2391 @@
+{
+ "_note": "VERBATIM structure from a real DSH session log; long human text fields (subject/description/label) truncated to 90 chars for size. keys, seq, time, status, revision, ids, event ORDER and all turn/step events are untouched.",
+ "_source": "~/.dsh/sessions/--Users-lzx-Documents-GitHub-dsh-task-gantt--/session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99/session.v4.jsonl.zstd (unzstd -c), 647 lines: session header + every turn/step event + every team/* event + every team_task_* tool call",
+ "events": [
+  {
+   "type": "session",
+   "version": 4,
+   "id": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+   "createdAt": 1791647755015,
+   "cwd": "/Users/lzx/Documents/GitHub/dsh-task-gantt",
+   "isSeeded": false,
+   "delegationDepth": 0,
+   "agentPreset": "standard"
+  },
+  {
+   "type": "turn/start",
+   "seq": 5,
+   "time": 1791648140791,
+   "data": {
+    "turn": 1
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 7,
+   "time": 1791648140880,
+   "data": {
+    "turn": 1,
+    "step": 1
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 22,
+   "time": 1791648145155,
+   "data": {
+    "turn": 1,
+    "step": 1
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 23,
+   "time": 1791648145579,
+   "data": {
+    "turn": 1,
+    "step": 2
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 29,
+   "time": 1791648148798,
+   "data": {
+    "turn": 1,
+    "step": 2
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 30,
+   "time": 1791648149004,
+   "data": {
+    "turn": 1,
+    "step": 3
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 37,
+   "time": 1791648151776,
+   "data": {
+    "turn": 1,
+    "step": 3
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 38,
+   "time": 1791648151833,
+   "data": {
+    "turn": 1,
+    "step": 4
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 44,
+   "time": 1791648155423,
+   "data": {
+    "turn": 1,
+    "step": 4
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 45,
+   "time": 1791648155487,
+   "data": {
+    "turn": 1,
+    "step": 5
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 51,
+   "time": 1791648158121,
+   "data": {
+    "turn": 1,
+    "step": 5
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 52,
+   "time": 1791648158206,
+   "data": {
+    "turn": 1,
+    "step": 6
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 58,
+   "time": 1791648161509,
+   "data": {
+    "turn": 1,
+    "step": 6
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 59,
+   "time": 1791648161575,
+   "data": {
+    "turn": 1,
+    "step": 7
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 65,
+   "time": 1791648165065,
+   "data": {
+    "turn": 1,
+    "step": 7
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 66,
+   "time": 1791648165129,
+   "data": {
+    "turn": 1,
+    "step": 8
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 73,
+   "time": 1791648178064,
+   "data": {
+    "turn": 1,
+    "step": 8
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 75,
+   "time": 1791648178126,
+   "data": {
+    "turn": 1,
+    "step": 9
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 82,
+   "time": 1791648182258,
+   "data": {
+    "turn": 1,
+    "step": 9
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 83,
+   "time": 1791648182340,
+   "data": {
+    "turn": 1,
+    "step": 10
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 89,
+   "time": 1791648185449,
+   "data": {
+    "turn": 1,
+    "step": 10
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 90,
+   "time": 1791648185558,
+   "data": {
+    "turn": 1,
+    "step": 11
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 96,
+   "time": 1791648187978,
+   "data": {
+    "turn": 1,
+    "step": 11
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 97,
+   "time": 1791648188064,
+   "data": {
+    "turn": 1,
+    "step": 12
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 103,
+   "time": 1791648194980,
+   "data": {
+    "turn": 1,
+    "step": 12
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 104,
+   "time": 1791648195056,
+   "data": {
+    "turn": 1,
+    "step": 13
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 110,
+   "time": 1791648198295,
+   "data": {
+    "turn": 1,
+    "step": 13
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 111,
+   "time": 1791648198361,
+   "data": {
+    "turn": 1,
+    "step": 14
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 117,
+   "time": 1791648201240,
+   "data": {
+    "turn": 1,
+    "step": 14
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 118,
+   "time": 1791648201295,
+   "data": {
+    "turn": 1,
+    "step": 15
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 124,
+   "time": 1791648203624,
+   "data": {
+    "turn": 1,
+    "step": 15
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 125,
+   "time": 1791648203683,
+   "data": {
+    "turn": 1,
+    "step": 16
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 131,
+   "time": 1791648209871,
+   "data": {
+    "turn": 1,
+    "step": 16
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 132,
+   "time": 1791648210079,
+   "data": {
+    "turn": 1,
+    "step": 17
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 138,
+   "time": 1791648214144,
+   "data": {
+    "turn": 1,
+    "step": 17
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 139,
+   "time": 1791648214205,
+   "data": {
+    "turn": 1,
+    "step": 18
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 143,
+   "time": 1791648216624,
+   "data": {
+    "turn": 1,
+    "step": 18
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 144,
+   "time": 1791648216693,
+   "data": {
+    "turn": 1,
+    "step": 19
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 150,
+   "time": 1791648219412,
+   "data": {
+    "turn": 1,
+    "step": 19
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 151,
+   "time": 1791648219508,
+   "data": {
+    "turn": 1,
+    "step": 20
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 157,
+   "time": 1791648222157,
+   "data": {
+    "turn": 1,
+    "step": 20
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 158,
+   "time": 1791648222232,
+   "data": {
+    "turn": 1,
+    "step": 21
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 164,
+   "time": 1791648226185,
+   "data": {
+    "turn": 1,
+    "step": 21
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 165,
+   "time": 1791648226245,
+   "data": {
+    "turn": 1,
+    "step": 22
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 171,
+   "time": 1791648230175,
+   "data": {
+    "turn": 1,
+    "step": 22
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 172,
+   "time": 1791648230247,
+   "data": {
+    "turn": 1,
+    "step": 23
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 176,
+   "time": 1791648411520,
+   "data": {
+    "turn": 1,
+    "step": 23
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 177,
+   "time": 1791648411632,
+   "data": {
+    "turn": 1,
+    "step": 24
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 183,
+   "time": 1791648419309,
+   "data": {
+    "turn": 1,
+    "step": 24
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 184,
+   "time": 1791648419464,
+   "data": {
+    "turn": 1,
+    "step": 25
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 190,
+   "time": 1791648422644,
+   "data": {
+    "turn": 1,
+    "step": 25
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 191,
+   "time": 1791648422722,
+   "data": {
+    "turn": 1,
+    "step": 26
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 197,
+   "time": 1791648425376,
+   "data": {
+    "turn": 1,
+    "step": 26
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 198,
+   "time": 1791648425476,
+   "data": {
+    "turn": 1,
+    "step": 27
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 204,
+   "time": 1791648428987,
+   "data": {
+    "turn": 1,
+    "step": 27
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 205,
+   "time": 1791648429049,
+   "data": {
+    "turn": 1,
+    "step": 28
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 211,
+   "time": 1791648432987,
+   "data": {
+    "turn": 1,
+    "step": 28
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 212,
+   "time": 1791648433501,
+   "data": {
+    "turn": 1,
+    "step": 29
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 216,
+   "time": 1791648436553,
+   "data": {
+    "turn": 1,
+    "step": 29
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 217,
+   "time": 1791648436616,
+   "data": {
+    "turn": 1,
+    "step": 30
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 221,
+   "time": 1791648439213,
+   "data": {
+    "turn": 1,
+    "step": 30
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 222,
+   "time": 1791648439288,
+   "data": {
+    "turn": 1,
+    "step": 31
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 226,
+   "time": 1791648443670,
+   "data": {
+    "turn": 1,
+    "step": 31
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 227,
+   "time": 1791648443733,
+   "data": {
+    "turn": 1,
+    "step": 32
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 233,
+   "time": 1791648446985,
+   "data": {
+    "turn": 1,
+    "step": 32
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 234,
+   "time": 1791648447052,
+   "data": {
+    "turn": 1,
+    "step": 33
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 238,
+   "time": 1791648449714,
+   "data": {
+    "turn": 1,
+    "step": 33
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 239,
+   "time": 1791648449992,
+   "data": {
+    "turn": 1,
+    "step": 34
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 245,
+   "time": 1791648453205,
+   "data": {
+    "turn": 1,
+    "step": 34
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 246,
+   "time": 1791648453264,
+   "data": {
+    "turn": 1,
+    "step": 35
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 252,
+   "time": 1791648465070,
+   "data": {
+    "turn": 1,
+    "step": 35
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 253,
+   "time": 1791648465234,
+   "data": {
+    "turn": 1,
+    "step": 36
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 257,
+   "time": 1791648467800,
+   "data": {
+    "turn": 1,
+    "step": 36
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 258,
+   "time": 1791648467861,
+   "data": {
+    "turn": 1,
+    "step": 37
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 262,
+   "time": 1791648472044,
+   "data": {
+    "turn": 1,
+    "step": 37
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 263,
+   "time": 1791648472114,
+   "data": {
+    "turn": 1,
+    "step": 38
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 270,
+   "time": 1791648475435,
+   "data": {
+    "turn": 1,
+    "step": 38
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 271,
+   "time": 1791648475501,
+   "data": {
+    "turn": 1,
+    "step": 39
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 275,
+   "time": 1791648478936,
+   "data": {
+    "turn": 1,
+    "step": 39
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 276,
+   "time": 1791648478996,
+   "data": {
+    "turn": 1,
+    "step": 40
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 280,
+   "time": 1791648489597,
+   "data": {
+    "turn": 1,
+    "step": 40
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 281,
+   "time": 1791648489695,
+   "data": {
+    "turn": 1,
+    "step": 41
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 285,
+   "time": 1791648493036,
+   "data": {
+    "turn": 1,
+    "step": 41
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 286,
+   "time": 1791648493102,
+   "data": {
+    "turn": 1,
+    "step": 42
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 290,
+   "time": 1791648496025,
+   "data": {
+    "turn": 1,
+    "step": 42
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 291,
+   "time": 1791648496087,
+   "data": {
+    "turn": 1,
+    "step": 43
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 295,
+   "time": 1791648501380,
+   "data": {
+    "turn": 1,
+    "step": 43
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 296,
+   "time": 1791648501438,
+   "data": {
+    "turn": 1,
+    "step": 44
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 300,
+   "time": 1791648504719,
+   "data": {
+    "turn": 1,
+    "step": 44
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 301,
+   "time": 1791648505279,
+   "data": {
+    "turn": 1,
+    "step": 45
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 305,
+   "time": 1791648507859,
+   "data": {
+    "turn": 1,
+    "step": 45
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 306,
+   "time": 1791648507920,
+   "data": {
+    "turn": 1,
+    "step": 46
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 312,
+   "time": 1791648511970,
+   "data": {
+    "turn": 1,
+    "step": 46
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 313,
+   "time": 1791648512030,
+   "data": {
+    "turn": 1,
+    "step": 47
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 319,
+   "time": 1791648515753,
+   "data": {
+    "turn": 1,
+    "step": 47
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 320,
+   "time": 1791648515834,
+   "data": {
+    "turn": 1,
+    "step": 48
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 326,
+   "time": 1791648519007,
+   "data": {
+    "turn": 1,
+    "step": 48
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 327,
+   "time": 1791648519069,
+   "data": {
+    "turn": 1,
+    "step": 49
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 331,
+   "time": 1791648525604,
+   "data": {
+    "turn": 1,
+    "step": 49
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 332,
+   "time": 1791648525669,
+   "data": {
+    "turn": 1,
+    "step": 50
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 336,
+   "time": 1791648529721,
+   "data": {
+    "turn": 1,
+    "step": 50
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 337,
+   "time": 1791648529798,
+   "data": {
+    "turn": 1,
+    "step": 51
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 343,
+   "time": 1791648532372,
+   "data": {
+    "turn": 1,
+    "step": 51
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 344,
+   "time": 1791648532547,
+   "data": {
+    "turn": 1,
+    "step": 52
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 348,
+   "time": 1791648564316,
+   "data": {
+    "turn": 1,
+    "step": 52
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 349,
+   "time": 1791648564383,
+   "data": {
+    "turn": 1,
+    "step": 53
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 353,
+   "time": 1791648571402,
+   "data": {
+    "turn": 1,
+    "step": 53
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 354,
+   "time": 1791648571465,
+   "data": {
+    "turn": 1,
+    "step": 54
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 358,
+   "time": 1791648574417,
+   "data": {
+    "turn": 1,
+    "step": 54
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 359,
+   "time": 1791648574487,
+   "data": {
+    "turn": 1,
+    "step": 55
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 363,
+   "time": 1791648578284,
+   "data": {
+    "turn": 1,
+    "step": 55
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 364,
+   "time": 1791648578357,
+   "data": {
+    "turn": 1,
+    "step": 56
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 368,
+   "time": 1791648593800,
+   "data": {
+    "turn": 1,
+    "step": 56
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 369,
+   "time": 1791648593874,
+   "data": {
+    "turn": 1,
+    "step": 57
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 373,
+   "time": 1791648599572,
+   "data": {
+    "turn": 1,
+    "step": 57
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 374,
+   "time": 1791648599669,
+   "data": {
+    "turn": 1,
+    "step": 58
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 378,
+   "time": 1791648602629,
+   "data": {
+    "turn": 1,
+    "step": 58
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 379,
+   "time": 1791648602684,
+   "data": {
+    "turn": 1,
+    "step": 59
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 383,
+   "time": 1791648609367,
+   "data": {
+    "turn": 1,
+    "step": 59
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 384,
+   "time": 1791648609460,
+   "data": {
+    "turn": 1,
+    "step": 60
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 390,
+   "time": 1791648612499,
+   "data": {
+    "turn": 1,
+    "step": 60
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 391,
+   "time": 1791648612617,
+   "data": {
+    "turn": 1,
+    "step": 61
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 397,
+   "time": 1791648618002,
+   "data": {
+    "turn": 1,
+    "step": 61
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 398,
+   "time": 1791648618143,
+   "data": {
+    "turn": 1,
+    "step": 62
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 402,
+   "time": 1791648625291,
+   "data": {
+    "turn": 1,
+    "step": 62
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 403,
+   "time": 1791648625356,
+   "data": {
+    "turn": 1,
+    "step": 63
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 408,
+   "time": 1791648645356,
+   "data": {
+    "turn": 1,
+    "step": 63
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 409,
+   "time": 1791648645507,
+   "data": {
+    "turn": 1,
+    "step": 64
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 415,
+   "time": 1791648652829,
+   "data": {
+    "turn": 1,
+    "step": 64
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 416,
+   "time": 1791648652893,
+   "data": {
+    "turn": 1,
+    "step": 65
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 422,
+   "time": 1791648657911,
+   "data": {
+    "turn": 1,
+    "step": 65
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 423,
+   "time": 1791648657994,
+   "data": {
+    "turn": 1,
+    "step": 66
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 427,
+   "time": 1791648661190,
+   "data": {
+    "turn": 1,
+    "step": 66
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 428,
+   "time": 1791648661308,
+   "data": {
+    "turn": 1,
+    "step": 67
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 432,
+   "time": 1791648664216,
+   "data": {
+    "turn": 1,
+    "step": 67
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 433,
+   "time": 1791648664452,
+   "data": {
+    "turn": 1,
+    "step": 68
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 437,
+   "time": 1791648666950,
+   "data": {
+    "turn": 1,
+    "step": 68
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 438,
+   "time": 1791648667098,
+   "data": {
+    "turn": 1,
+    "step": 69
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 442,
+   "time": 1791648669705,
+   "data": {
+    "turn": 1,
+    "step": 69
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 443,
+   "time": 1791648669858,
+   "data": {
+    "turn": 1,
+    "step": 70
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 449,
+   "time": 1791648673905,
+   "data": {
+    "turn": 1,
+    "step": 70
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 450,
+   "time": 1791648674110,
+   "data": {
+    "turn": 1,
+    "step": 71
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 454,
+   "time": 1791648677444,
+   "data": {
+    "turn": 1,
+    "step": 71
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 455,
+   "time": 1791648677567,
+   "data": {
+    "turn": 1,
+    "step": 72
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 459,
+   "time": 1791648684776,
+   "data": {
+    "turn": 1,
+    "step": 72
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 460,
+   "time": 1791648684891,
+   "data": {
+    "turn": 1,
+    "step": 73
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 464,
+   "time": 1791648689890,
+   "data": {
+    "turn": 1,
+    "step": 73
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 465,
+   "time": 1791648690029,
+   "data": {
+    "turn": 1,
+    "step": 74
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 469,
+   "time": 1791648696258,
+   "data": {
+    "turn": 1,
+    "step": 74
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 470,
+   "time": 1791648696551,
+   "data": {
+    "turn": 1,
+    "step": 75
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 476,
+   "time": 1791648700332,
+   "data": {
+    "turn": 1,
+    "step": 75
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 477,
+   "time": 1791648700459,
+   "data": {
+    "turn": 1,
+    "step": 76
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 481,
+   "time": 1791648703492,
+   "data": {
+    "turn": 1,
+    "step": 76
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 482,
+   "time": 1791648703664,
+   "data": {
+    "turn": 1,
+    "step": 77
+   }
+  },
+  {
+   "type": "tool/call",
+   "seq": 484,
+   "time": 1791648711965,
+   "data": {
+    "turn": 1,
+    "step": 77,
+    "callId": "call_00_ET_bqJ1Vc9QwUtYty9tKcRk6410",
+    "name": "team_task_create",
+    "arguments": "{\"subject\": \"打包与脚手架：构建产物形状、manifest、安装验证\", \"description\": \"Owner: packaging。\\n目标：让 dsh-task-gantt 成为一个可被 DSH web profile 正确发现、挂载、并从 GitHub 直装的插件包。\\n\\n必读…\", \"write_scopes\": [\"package.json\", \"scripts/\", \"tsconfig.json\", \"cordis.patch.yml\", \"dsh.plugin.json\", \"icon.svg\", \"docs/INSTALL.md\"]}"
+   }
+  },
+  {
+   "type": "team/task",
+   "seq": 485,
+   "time": 1791648711980,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "task": {
+     "id": "task-1",
+     "revision": 1,
+     "subject": "打包与脚手架：构建产物形状、manifest、安装验证",
+     "description": "Owner: packaging。\n目标：让 dsh-task-gantt 成为一个可被 DSH web profile 正确发现、挂载、并从 GitHub 直装的插件包。\n\n必读…",
+     "status": "pending",
+     "blockedBy": [],
+     "writeScopes": [
+      "package.json",
+      "scripts",
+      "tsconfig.json",
+      "cordis.patch.yml",
+      "dsh.plugin.json",
+      "icon.svg",
+      "docs/INSTALL.md"
+     ]
+    }
+   }
+  },
+  {
+   "type": "tool/call",
+   "seq": 487,
+   "time": 1791648711989,
+   "data": {
+    "turn": 1,
+    "step": 77,
+    "callId": "call_01_ET_4rUx8x9gkbBEmPFMOtqN1670",
+    "name": "team_task_create",
+    "arguments": "{\"subject\": \"host 半数据层：会话日志 → 甘特图时间轴\", \"description\": \"Owner: host-data。\\n目标：实现 /Users/lzx/Documents/GitHub/dsh-task-gantt/src/host/timeline.ts 的 …\", \"write_scopes\": [\"src/host/\", \"docs/FINDINGS-host.md\"]}"
+   }
+  },
+  {
+   "type": "team/task",
+   "seq": 488,
+   "time": 1791648711995,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "task": {
+     "id": "task-2",
+     "revision": 1,
+     "subject": "host 半数据层：会话日志 → 甘特图时间轴",
+     "description": "Owner: host-data。\n目标：实现 /Users/lzx/Documents/GitHub/dsh-task-gantt/src/host/timeline.ts 的 …",
+     "status": "pending",
+     "blockedBy": [],
+     "writeScopes": [
+      "src/host",
+      "docs/FINDINGS-host.md"
+     ]
+    }
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 490,
+   "time": 1791648712002,
+   "data": {
+    "turn": 1,
+    "step": 77
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 491,
+   "time": 1791648712173,
+   "data": {
+    "turn": 1,
+    "step": 78
+   }
+  },
+  {
+   "type": "tool/call",
+   "seq": 493,
+   "time": 1791648720426,
+   "data": {
+    "turn": 1,
+    "step": 78,
+    "callId": "call_00_ET_0OO3T5anpr6W3cQb3Stq1462",
+    "name": "team_task_create",
+    "arguments": "{\"description\": \"Owner: shell。\\n目标：让「任务甘特图」tab 真的出现在 dsh-better-sidebar 的 + 菜单里，并在宿主存在的每种降级路径下都不崩。\\n\\n必读：docs/…\", \"subject\": \"client 外壳：tab 注册、样式注入、生命周期\", \"write_scopes\": [\"src/client/index.ts\", \"src/client/i18n.ts\", \"src/client/panel-style.ts\", \"src/client/env.d.ts\"]}"
+   }
+  },
+  {
+   "type": "team/task",
+   "seq": 494,
+   "time": 1791648720436,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "task": {
+     "id": "task-3",
+     "revision": 1,
+     "subject": "client 外壳：tab 注册、样式注入、生命周期",
+     "description": "Owner: shell。\n目标：让「任务甘特图」tab 真的出现在 dsh-better-sidebar 的 + 菜单里，并在宿主存在的每种降级路径下都不崩。\n\n必读：docs/…",
+     "status": "pending",
+     "blockedBy": [],
+     "writeScopes": [
+      "src/client/index.ts",
+      "src/client/i18n.ts",
+      "src/client/panel-style.ts",
+      "src/client/env.d.ts"
+     ]
+    }
+   }
+  },
+  {
+   "type": "tool/call",
+   "seq": 496,
+   "time": 1791648720443,
+   "data": {
+    "turn": 1,
+    "step": 78,
+    "callId": "call_01_ET_lOZMjGWkIctHXXJI4iZh2345",
+    "name": "team_task_create",
+    "arguments": "{\"description\": \"Owner: ui。\\n目标：把 TimelineResponse 画成一张真正的甘特图，纵轴 teammate、横轴时间、条内显示任务标题与简介。\\n\\n必读：docs/TEAM-BR…\", \"subject\": \"甘特图 UI：泳道、时间轴、任务卡与详情\", \"write_scopes\": [\"src/client/api.ts\", \"src/client/ui/\"]}"
+   }
+  },
+  {
+   "type": "team/task",
+   "seq": 497,
+   "time": 1791648720450,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "task": {
+     "id": "task-4",
+     "revision": 1,
+     "subject": "甘特图 UI：泳道、时间轴、任务卡与详情",
+     "description": "Owner: ui。\n目标：把 TimelineResponse 画成一张真正的甘特图，纵轴 teammate、横轴时间、条内显示任务标题与简介。\n\n必读：docs/TEAM-BR…",
+     "status": "pending",
+     "blockedBy": [],
+     "writeScopes": [
+      "src/client/api.ts",
+      "src/client/ui"
+     ]
+    }
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 499,
+   "time": 1791648720457,
+   "data": {
+    "turn": 1,
+    "step": 78
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 500,
+   "time": 1791648720524,
+   "data": {
+    "turn": 1,
+    "step": 79
+   }
+  },
+  {
+   "type": "tool/call",
+   "seq": 502,
+   "time": 1791648729813,
+   "data": {
+    "turn": 1,
+    "step": 79,
+    "callId": "call_00_ET_GbZ4FzIPkAEwPBkdiXmw0296",
+    "name": "team_task_create",
+    "arguments": "{\"description\": \"Owner: verify。\\n目标：独立验证（不是重述作者的说法），并守住回归。\\n\\n必读：docs/TEAM-BRIEF.md 全部。\\n\\n交付物：\\n1. vitest.config…\", \"subject\": \"验证：单测、契约守护、CI 与真机冒烟脚本\", \"write_scopes\": [\"tests/\", \"vitest.config.ts\", \".github/workflows/\", \"docs/VALIDATION.md\"]}"
+   }
+  },
+  {
+   "type": "team/task",
+   "seq": 503,
+   "time": 1791648729826,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "task": {
+     "id": "task-5",
+     "revision": 1,
+     "subject": "验证：单测、契约守护、CI 与真机冒烟脚本",
+     "description": "Owner: verify。\n目标：独立验证（不是重述作者的说法），并守住回归。\n\n必读：docs/TEAM-BRIEF.md 全部。\n\n交付物：\n1. vitest.config…",
+     "status": "pending",
+     "blockedBy": [],
+     "writeScopes": [
+      "tests",
+      "vitest.config.ts",
+      ".github/workflows",
+      "docs/VALIDATION.md"
+     ]
+    }
+   }
+  },
+  {
+   "type": "tool/call",
+   "seq": 505,
+   "time": 1791648729831,
+   "data": {
+    "turn": 1,
+    "step": 79,
+    "callId": "call_01_ET_hMiasG2BcKyqWHAjNWXi0221",
+    "name": "team_task_create",
+    "arguments": "{\"description\": \"Owner: docs。\\n目标：让仓库既能让用户装上用上，也能满足插件市场上架要求。\\n\\n必读：docs/TEAM-BRIEF.md、docs/INSTALL.md（packagin…\", \"subject\": \"文档与上架材料：README/DESIGN/MARKET\", \"write_scopes\": [\"README.md\", \"README.zh.md\", \"docs/DESIGN.md\", \"docs/MARKET.md\", \"docs/SCREENSHOTS.md\"]}"
+   }
+  },
+  {
+   "type": "team/task",
+   "seq": 506,
+   "time": 1791648729839,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "task": {
+     "id": "task-6",
+     "revision": 1,
+     "subject": "文档与上架材料：README/DESIGN/MARKET",
+     "description": "Owner: docs。\n目标：让仓库既能让用户装上用上，也能满足插件市场上架要求。\n\n必读：docs/TEAM-BRIEF.md、docs/INSTALL.md（packagin…",
+     "status": "pending",
+     "blockedBy": [],
+     "writeScopes": [
+      "README.md",
+      "README.zh.md",
+      "docs/DESIGN.md",
+      "docs/MARKET.md",
+      "docs/SCREENSHOTS.md"
+     ]
+    }
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 508,
+   "time": 1791648729846,
+   "data": {
+    "turn": 1,
+    "step": 79
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 509,
+   "time": 1791648729914,
+   "data": {
+    "turn": 1,
+    "step": 80
+   }
+  },
+  {
+   "type": "team/member",
+   "seq": 512,
+   "time": 1791648739342,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "member": {
+     "id": "66b9735d-8df4-44df-9d74-b4083057e02f",
+     "name": "packaging",
+     "description": "打包与脚手架：构建产物形状、manifest、安装验证",
+     "provider": "spawn",
+     "phase": "provisioning"
+    }
+   }
+  },
+  {
+   "type": "subagent/catalog",
+   "seq": 513,
+   "time": 1791648744477,
+   "data": {
+    "version": 0,
+    "childId": "66b9735d-8df4-44df-9d74-b4083057e02f",
+    "childCreatedAt": 1791648739361,
+    "mode": "continuable",
+    "label": "打包与脚手架：构建产物形状、manifest、安装验证"
+   }
+  },
+  {
+   "type": "team/member",
+   "seq": 514,
+   "time": 1791648745015,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "member": {
+     "id": "66b9735d-8df4-44df-9d74-b4083057e02f",
+     "name": "packaging",
+     "description": "打包与脚手架：构建产物形状、manifest、安装验证",
+     "provider": "spawn",
+     "phase": "active"
+    }
+   }
+  },
+  {
+   "type": "team/member",
+   "seq": 517,
+   "time": 1791648745059,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "member": {
+     "id": "87589993-ee13-46d7-a8a4-53972f697519",
+     "name": "host-data",
+     "description": "host 半数据层：会话日志折叠成甘特图时间轴",
+     "provider": "spawn",
+     "phase": "provisioning"
+    }
+   }
+  },
+  {
+   "type": "subagent/catalog",
+   "seq": 518,
+   "time": 1791648751410,
+   "data": {
+    "version": 0,
+    "childId": "87589993-ee13-46d7-a8a4-53972f697519",
+    "childCreatedAt": 1791648745081,
+    "mode": "continuable",
+    "label": "host 半数据层：会话日志折叠成甘特图时间轴"
+   }
+  },
+  {
+   "type": "team/member",
+   "seq": 519,
+   "time": 1791648751995,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "member": {
+     "id": "87589993-ee13-46d7-a8a4-53972f697519",
+     "name": "host-data",
+     "description": "host 半数据层：会话日志折叠成甘特图时间轴",
+     "provider": "spawn",
+     "phase": "active"
+    }
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 521,
+   "time": 1791648752024,
+   "data": {
+    "turn": 1,
+    "step": 80
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 522,
+   "time": 1791648752297,
+   "data": {
+    "turn": 1,
+    "step": 81
+   }
+  },
+  {
+   "type": "team/task",
+   "seq": 524,
+   "time": 1791648758846,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "task": {
+     "id": "task-1",
+     "revision": 2,
+     "subject": "打包与脚手架：构建产物形状、manifest、安装验证",
+     "description": "Owner: packaging。\n目标：让 dsh-task-gantt 成为一个可被 DSH web profile 正确发现、挂载、并从 GitHub 直装的插件包。\n\n必读…",
+     "status": "in_progress",
+     "blockedBy": [],
+     "writeScopes": [
+      "package.json",
+      "scripts",
+      "tsconfig.json",
+      "cordis.patch.yml",
+      "dsh.plugin.json",
+      "icon.svg",
+      "docs/INSTALL.md"
+     ],
+     "ownerId": "66b9735d-8df4-44df-9d74-b4083057e02f"
+    }
+   }
+  },
+  {
+   "type": "team/task",
+   "seq": 525,
+   "time": 1791648759111,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "task": {
+     "id": "task-2",
+     "revision": 2,
+     "subject": "host 半数据层：会话日志 → 甘特图时间轴",
+     "description": "Owner: host-data。\n目标：实现 /Users/lzx/Documents/GitHub/dsh-task-gantt/src/host/timeline.ts 的 …",
+     "status": "in_progress",
+     "blockedBy": [],
+     "writeScopes": [
+      "src/host",
+      "docs/FINDINGS-host.md"
+     ],
+     "ownerId": "87589993-ee13-46d7-a8a4-53972f697519"
+    }
+   }
+  },
+  {
+   "type": "team/member",
+   "seq": 528,
+   "time": 1791648763058,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "member": {
+     "id": "7484fccf-2cb1-450c-9993-610a8930073e",
+     "name": "shell",
+     "description": "client 外壳：tab 注册、样式注入、生命周期",
+     "provider": "spawn",
+     "phase": "provisioning"
+    }
+   }
+  },
+  {
+   "type": "subagent/catalog",
+   "seq": 529,
+   "time": 1791648771692,
+   "data": {
+    "version": 0,
+    "childId": "7484fccf-2cb1-450c-9993-610a8930073e",
+    "childCreatedAt": 1791648763119,
+    "mode": "continuable",
+    "label": "client 外壳：tab 注册、样式注入、生命周期"
+   }
+  },
+  {
+   "type": "team/member",
+   "seq": 530,
+   "time": 1791648772472,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "member": {
+     "id": "7484fccf-2cb1-450c-9993-610a8930073e",
+     "name": "shell",
+     "description": "client 外壳：tab 注册、样式注入、生命周期",
+     "provider": "spawn",
+     "phase": "active"
+    }
+   }
+  },
+  {
+   "type": "team/member",
+   "seq": 533,
+   "time": 1791648772502,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "member": {
+     "id": "c79a18f7-d3c4-41c7-a689-9ba3b0ca483f",
+     "name": "ui",
+     "description": "甘特图 UI：泳道、时间轴、任务卡",
+     "provider": "spawn",
+     "phase": "provisioning"
+    }
+   }
+  },
+  {
+   "type": "subagent/catalog",
+   "seq": 534,
+   "time": 1791648782297,
+   "data": {
+    "version": 0,
+    "childId": "c79a18f7-d3c4-41c7-a689-9ba3b0ca483f",
+    "childCreatedAt": 1791648772522,
+    "mode": "continuable",
+    "label": "甘特图 UI：泳道、时间轴、任务卡"
+   }
+  },
+  {
+   "type": "team/member",
+   "seq": 535,
+   "time": 1791648783167,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "member": {
+     "id": "c79a18f7-d3c4-41c7-a689-9ba3b0ca483f",
+     "name": "ui",
+     "description": "甘特图 UI：泳道、时间轴、任务卡",
+     "provider": "spawn",
+     "phase": "active"
+    }
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 537,
+   "time": 1791648783200,
+   "data": {
+    "turn": 1,
+    "step": 81
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 538,
+   "time": 1791648783415,
+   "data": {
+    "turn": 1,
+    "step": 82
+   }
+  },
+  {
+   "type": "team/member",
+   "seq": 541,
+   "time": 1791648794123,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "member": {
+     "id": "f828dda6-e91d-4dcc-bbf0-9a9d73d9555e",
+     "name": "verify",
+     "description": "验证：单测、契约守护、CI 与冒烟脚本",
+     "provider": "spawn",
+     "phase": "provisioning"
+    }
+   }
+  },
+  {
+   "type": "subagent/catalog",
+   "seq": 542,
+   "time": 1791648801695,
+   "data": {
+    "version": 0,
+    "childId": "f828dda6-e91d-4dcc-bbf0-9a9d73d9555e",
+    "childCreatedAt": 1791648794141,
+    "mode": "continuable",
+    "label": "验证：单测、契约守护、CI 与冒烟脚本"
+   }
+  },
+  {
+   "type": "team/member",
+   "seq": 543,
+   "time": 1791648803054,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "member": {
+     "id": "f828dda6-e91d-4dcc-bbf0-9a9d73d9555e",
+     "name": "verify",
+     "description": "验证：单测、契约守护、CI 与冒烟脚本",
+     "provider": "spawn",
+     "phase": "active"
+    }
+   }
+  },
+  {
+   "type": "team/member",
+   "seq": 546,
+   "time": 1791648803122,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "member": {
+     "id": "91410edb-5869-4183-bb36-01a655321fb4",
+     "name": "docs",
+     "description": "文档与上架材料",
+     "provider": "spawn",
+     "phase": "provisioning"
+    }
+   }
+  },
+  {
+   "type": "subagent/catalog",
+   "seq": 547,
+   "time": 1791648809652,
+   "data": {
+    "version": 0,
+    "childId": "91410edb-5869-4183-bb36-01a655321fb4",
+    "childCreatedAt": 1791648803159,
+    "mode": "continuable",
+    "label": "文档与上架材料"
+   }
+  },
+  {
+   "type": "team/member",
+   "seq": 548,
+   "time": 1791648810695,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "member": {
+     "id": "91410edb-5869-4183-bb36-01a655321fb4",
+     "name": "docs",
+     "description": "文档与上架材料",
+     "provider": "spawn",
+     "phase": "active"
+    }
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 550,
+   "time": 1791648810732,
+   "data": {
+    "turn": 1,
+    "step": 82
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 551,
+   "time": 1791648810885,
+   "data": {
+    "turn": 1,
+    "step": 83
+   }
+  },
+  {
+   "type": "team/task",
+   "seq": 552,
+   "time": 1791648814605,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "task": {
+     "id": "task-6",
+     "revision": 2,
+     "subject": "文档与上架材料：README/DESIGN/MARKET",
+     "description": "Owner: docs。\n目标：让仓库既能让用户装上用上，也能满足插件市场上架要求。\n\n必读：docs/TEAM-BRIEF.md、docs/INSTALL.md（packagin…",
+     "status": "in_progress",
+     "blockedBy": [],
+     "writeScopes": [
+      "README.md",
+      "README.zh.md",
+      "docs/DESIGN.md",
+      "docs/MARKET.md",
+      "docs/SCREENSHOTS.md"
+     ],
+     "ownerId": "91410edb-5869-4183-bb36-01a655321fb4"
+    }
+   }
+  },
+  {
+   "type": "team/task",
+   "seq": 553,
+   "time": 1791648815077,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "task": {
+     "id": "task-5",
+     "revision": 2,
+     "subject": "验证：单测、契约守护、CI 与真机冒烟脚本",
+     "description": "Owner: verify。\n目标：独立验证（不是重述作者的说法），并守住回归。\n\n必读：docs/TEAM-BRIEF.md 全部。\n\n交付物：\n1. vitest.config…",
+     "status": "in_progress",
+     "blockedBy": [],
+     "writeScopes": [
+      "tests",
+      "vitest.config.ts",
+      ".github/workflows",
+      "docs/VALIDATION.md"
+     ],
+     "ownerId": "f828dda6-e91d-4dcc-bbf0-9a9d73d9555e"
+    }
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 558,
+   "time": 1791648818083,
+   "data": {
+    "turn": 1,
+    "step": 83
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 559,
+   "time": 1791648818388,
+   "data": {
+    "turn": 1,
+    "step": 84
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 565,
+   "time": 1791648822500,
+   "data": {
+    "turn": 1,
+    "step": 84
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 566,
+   "time": 1791648822916,
+   "data": {
+    "turn": 1,
+    "step": 85
+   }
+  },
+  {
+   "type": "team/task",
+   "seq": 567,
+   "time": 1791648825263,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "task": {
+     "id": "task-4",
+     "revision": 2,
+     "subject": "甘特图 UI：泳道、时间轴、任务卡与详情",
+     "description": "Owner: ui。\n目标：把 TimelineResponse 画成一张真正的甘特图，纵轴 teammate、横轴时间、条内显示任务标题与简介。\n\n必读：docs/TEAM-BR…",
+     "status": "in_progress",
+     "blockedBy": [],
+     "writeScopes": [
+      "src/client/api.ts",
+      "src/client/ui"
+     ],
+     "ownerId": "c79a18f7-d3c4-41c7-a689-9ba3b0ca483f"
+    }
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 573,
+   "time": 1791648840889,
+   "data": {
+    "turn": 1,
+    "step": 85
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 574,
+   "time": 1791648841951,
+   "data": {
+    "turn": 1,
+    "step": 86
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 578,
+   "time": 1791648844598,
+   "data": {
+    "turn": 1,
+    "step": 86
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 579,
+   "time": 1791648845093,
+   "data": {
+    "turn": 1,
+    "step": 87
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 585,
+   "time": 1791648851629,
+   "data": {
+    "turn": 1,
+    "step": 87
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 586,
+   "time": 1791648852130,
+   "data": {
+    "turn": 1,
+    "step": 88
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 590,
+   "time": 1791648862630,
+   "data": {
+    "turn": 1,
+    "step": 88
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 591,
+   "time": 1791648863434,
+   "data": {
+    "turn": 1,
+    "step": 89
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 595,
+   "time": 1791648875532,
+   "data": {
+    "turn": 1,
+    "step": 89
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 596,
+   "time": 1791648876013,
+   "data": {
+    "turn": 1,
+    "step": 90
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 600,
+   "time": 1791648881993,
+   "data": {
+    "turn": 1,
+    "step": 90
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 601,
+   "time": 1791648885075,
+   "data": {
+    "turn": 1,
+    "step": 91
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 605,
+   "time": 1791648888627,
+   "data": {
+    "turn": 1,
+    "step": 91
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 606,
+   "time": 1791648888958,
+   "data": {
+    "turn": 1,
+    "step": 92
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 610,
+   "time": 1791648894149,
+   "data": {
+    "turn": 1,
+    "step": 92
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 611,
+   "time": 1791648894561,
+   "data": {
+    "turn": 1,
+    "step": 93
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 615,
+   "time": 1791648898623,
+   "data": {
+    "turn": 1,
+    "step": 93
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 616,
+   "time": 1791648898865,
+   "data": {
+    "turn": 1,
+    "step": 94
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 622,
+   "time": 1791648902559,
+   "data": {
+    "turn": 1,
+    "step": 94
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 623,
+   "time": 1791648906032,
+   "data": {
+    "turn": 1,
+    "step": 95
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 627,
+   "time": 1791648909183,
+   "data": {
+    "turn": 1,
+    "step": 95
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 628,
+   "time": 1791648909333,
+   "data": {
+    "turn": 1,
+    "step": 96
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 632,
+   "time": 1791648917776,
+   "data": {
+    "turn": 1,
+    "step": 96
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 633,
+   "time": 1791648918898,
+   "data": {
+    "turn": 1,
+    "step": 97
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 639,
+   "time": 1791648924123,
+   "data": {
+    "turn": 1,
+    "step": 97
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 640,
+   "time": 1791648924882,
+   "data": {
+    "turn": 1,
+    "step": 98
+   }
+  },
+  {
+   "type": "step/end",
+   "seq": 644,
+   "time": 1791648928415,
+   "data": {
+    "turn": 1,
+    "step": 98
+   }
+  },
+  {
+   "type": "step/start",
+   "seq": 645,
+   "time": 1791648928843,
+   "data": {
+    "turn": 1,
+    "step": 99
+   }
+  }
+ ]
+}
