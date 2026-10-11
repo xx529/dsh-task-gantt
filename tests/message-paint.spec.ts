@@ -34,8 +34,18 @@ import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
+import { uiMessages } from '../src/client/ui/labels.ts'
 import { MESSAGE_PREVIEW_MAX, type LaneColorTokens, type MessageSpan, type SpanSpeaker, type TimelineLane, type TimelineResponse } from '../src/shared/contract.ts'
-import { layoutTimeline, messageDetail, messageMarkerPaint, resolveMessageDirection, speakerLaneMapper, type MessageMarkerRect } from '../src/client/ui/timeline-layout.ts'
+import {
+  formatClock,
+  formatDateTime,
+  layoutTimeline,
+  messageDetail,
+  messageMarkerPaint,
+  resolveMessageDirection,
+  speakerLaneMapper,
+  type MessageMarkerRect,
+} from '../src/client/ui/timeline-layout.ts'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const TOKEN = /^--(?:dsw|ds)-[a-z0-9-]+$/
@@ -405,8 +415,14 @@ describe('the direction cue does not depend on colour', () => {
 })
 describe('the detail view shows the whole body of the marker', () => {
   const LONG = 'z'.repeat(2_000)
-  const texts = { noBody: '(no body)', truncated: '(tail dropped)', you: 'you', peerFallback: '(unknown recipient)' }
+  // ui-2 replaced `peerFallback` with `recipientUnrecorded` (and deleted the
+  // `messageNoPeer` key): a missing `to` must NOT read as "unknown peer" — the
+  // recipient is derivable from the lane that carried the message, and only when
+  // even that is missing do we say it was not recorded.
+  const texts = { you: 'you', recipientUnrecorded: '（未记录收件人）' }
   const formatTime = (time: number): string => `t${time}`
+  const LEAD = { kind: 'lead', id: 'session-a', name: 'lead' } as const
+  const PACKAGING = { kind: 'teammate', id: 'session-b', name: 'packaging' } as const
 
   /** Two markers on one lane: a 2000-char body and one with no body at all. */
   function markers(): { long: MessageMarkerRect; empty: MessageMarkerRect } {
@@ -435,8 +451,8 @@ describe('the detail view shows the whole body of the marker', () => {
               kind: 'message',
               time: 1_100,
               end: null,
-              from: { kind: 'lead', id: 'session-a', name: 'lead' },
-              to: { kind: 'teammate', id: 'session-b', name: 'packaging' },
+              from: LEAD,
+              to: PACKAGING,
               preview: LONG,
               messageId: 'm-long',
               sessionId: 'session-a',
@@ -445,8 +461,8 @@ describe('the detail view shows the whole body of the marker', () => {
               kind: 'message',
               time: 1_200,
               end: null,
-              from: { kind: 'teammate', id: 'session-b', name: 'packaging' },
-              to: { kind: 'lead', id: 'session-a', name: 'lead' },
+              from: PACKAGING,
+              to: LEAD,
               messageId: 'm-nobody',
               sessionId: 'session-b',
             },
@@ -462,7 +478,7 @@ describe('the detail view shows the whole body of the marker', () => {
     return { long: long as MessageMarkerRect, empty: empty as MessageMarkerRect }
   }
 
-  it('copies the marker preview VERBATIM — no re-truncation, no second pass', () => {
+  it('copies the preview VERBATIM — no re-truncation, no second pass', () => {
     // The core lock of "click to see what was said": whatever the host delivered
     // is what the detail shows. A 2000-character body was impossible under the
     // old 140 cap, so this is red on the old contract.
@@ -472,8 +488,16 @@ describe('the detail view shows the whole body of the marker', () => {
     expect(detail.body).toBe(LONG)
     expect(detail.body.length).toBe(2_000)
     expect(detail.hasBody).toBe(true)
-    expect(detail.when).toBe(formatTime(long.time))
     expect(detail.direction).toBe(long.direction)
+  })
+
+  it('formats the time through the INJECTED formatter (asserting its output, not a literal)', () => {
+    // ui-2's self-caught mistake was printing a hand-written `00:00:00` and calling
+    // it evidence. The subject here is the function's RETURN value.
+    const { long } = markers()
+    const detail = messageDetail(long, texts, formatTime, MESSAGE_PREVIEW_MAX)
+    expect(detail.when).toBe(formatTime(long.time))
+    expect(detail.when).toBe(`t${long.time}`)
   })
 
   it('says "no body" explicitly instead of rendering an empty block', () => {
@@ -497,6 +521,31 @@ describe('the detail view shows the whole body of the marker', () => {
     expect(detail.route).toBe(`${detail.fromName} → ${detail.toName}`)
   })
 
+  it('infers a missing recipient from the carrying lane, and never says "unknown"', () => {
+    const prompt = { kind: 'user-prompt' as const, time: 1_500, direction: 'incoming' as const, from: { kind: 'user' as const, id: 'user', name: 'you' }, preview: 'hi' }
+    // (a) carried by a known lane ⇒ that lane IS the recipient (the human asked it).
+    const inferred = messageDetail({ ...prompt, laneName: 'lead' }, texts, formatTime, MESSAGE_PREVIEW_MAX)
+    expect(inferred.route).toBe('you → lead')
+    expect(inferred.toName).toBe('lead')
+    // (b) no lane context either ⇒ say so plainly, with no word implying corruption.
+    const unrecorded = messageDetail(prompt, texts, formatTime, MESSAGE_PREVIEW_MAX)
+    expect(unrecorded.route).toBe(`you → ${texts.recipientUnrecorded}`)
+    expect(unrecorded.route).not.toMatch(/unknown|未知/i)
+    // (c) PROHIBITION (Lead's requirement), checked on the dictionary KEY rather
+    // than on the wording: the deleted key must not come back, and no route the
+    // function can produce may contain an "unknown"-style word.
+    const labels = readFileSync(resolve(ROOT, 'src/client/ui/labels.ts'), 'utf8')
+    expect(labels).not.toContain('messageNoPeer')
+    // The prohibition applies to the WORDS THE PRODUCT PUTS ON SCREEN, i.e. the
+    // board dictionary — NOT to a caller-supplied lane name: a lane may legally be
+    // called anything, and sanitizing data is not this function's job. (My first
+    // version of this assertion injected 'unknown peer' as a lane name and failed
+    // for exactly that reason.)
+    for (const [key, value] of Object.entries(uiMessages())) {
+      expect(value, key).not.toMatch(/unknown peer|未知对端|未知收件人/i)
+    }
+  })
+
   it('flags a possibly-clipped body instead of implying it is complete', () => {
     const { long } = markers()
     // A body exactly at the ceiling is indistinguishable from a clipped one, so
@@ -504,5 +553,31 @@ describe('the detail view shows the whole body of the marker', () => {
     const atLimit = messageDetail({ ...long, preview: 'w'.repeat(MESSAGE_PREVIEW_MAX) }, texts, formatTime, MESSAGE_PREVIEW_MAX)
     expect(atLimit.maybeTruncated).toBe(true)
     expect(messageDetail(long, texts, formatTime, MESSAGE_PREVIEW_MAX).maybeTruncated).toBe(false)
+  })
+})
+
+describe('the clock shows seconds by default (ui-2 corrected a fake self-check here)', () => {
+  // ui-2 reported printing a hand-written `00:00:00` as if it came from the
+  // function, when `formatClock` only produced `HH:MM` at the time. Every subject
+  // below is a real RETURN value, and the epoch/tz are pinned so it is stable.
+  it('formatClock returns HH:MM:SS by default and HH:MM on request', () => {
+    const full = formatClock(0, 0)
+    expect(full).toMatch(/^\d{2}:\d{2}:\d{2}$/)
+    expect(full).toBe('00:00:00')
+    const coarse = formatClock(0, 0, { seconds: false })
+    expect(coarse).toMatch(/^\d{2}:\d{2}$/)
+    expect(coarse).toBe('00:00')
+  })
+
+  it('seconds actually advance with the input (the assertion cannot pass on a constant)', () => {
+    // If `formatClock` ignored its argument this would fail — the previous version
+    // of the claim could not distinguish those cases.
+    expect(formatClock(1_000, 0)).toBe('00:00:01')
+    expect(formatClock(61_000, 0)).toBe('00:01:01')
+    expect(formatClock(3_661_000, 0)).toBe('01:01:01')
+  })
+
+  it('formatDateTime carries the seconds too', () => {
+    expect(formatDateTime(0, 0)).toBe('01-01 00:00:00')
   })
 })

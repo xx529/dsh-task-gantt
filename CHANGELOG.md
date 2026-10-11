@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.2.1 — 2026-10-12
+
+Follow-up to 0.2.0 from the first pass of live testing of the message details.
+
+- A message whose recipient was not recorded no longer reads `unknown peer`.
+  A human prompt carries no addressee in the journal, but its recipient is
+  knowable: the prompt lives in the log of whoever it was addressed to. The
+  details view now derives that from the lane it is drawn on (`you -> lead`),
+  and falls back to `(recipient not recorded)` when even that is unavailable.
+  The `unknown peer` dictionary entry is deleted, and the tests forbid the
+  wording from returning.
+- The details view shows seconds. `formatClock` had only ever formatted to the
+  minute while a self-check claimed otherwise: the asserted value had been
+  written into the log by hand rather than read back from the function, so the
+  assertion never ran. The formatter now defaults to seconds (axis labels keep
+  minutes) and the check reads the real return value.
+- `data-message-route` carries `data-message-direction`, `-from` and `-to` on
+  the same node, so a live check can read the whole routing in one query.
+
 ## 0.2.0 — 2026-10-12
 
 The panel's first release with a build identity, so a tester can tell from the

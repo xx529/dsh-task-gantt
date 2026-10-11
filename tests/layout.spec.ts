@@ -180,7 +180,13 @@ describe('tick ladder', () => {
     })
     expect(stepMs).toBe(5_000)
     expect(ticks.map((tick) => tick.time)).toEqual([5_000, 10_000])
-    expect(ticks[0]).toMatchObject({ x: 40, viewX: 40, labelKind: 'time', label: '00:00', major: false })
+    // Tick labels go through `formatClock`, which now defaults to SECONDS
+    // (ui-2's change, 2026-10-12). This tick is at t=5_000 with tzOffset 0, so the
+    // label is `00:00:05` — the seconds genuinely reach the AXIS, which is why I
+    // raised the question of whether axis labels should ask for the coarse arm
+    // (`{ seconds: false }`, as the NOW/ENDED markers do). Pinned as-is so a
+    // decision shows up as a deliberate change.
+    expect(ticks[0]).toMatchObject({ x: 40, viewX: 40, labelKind: 'time', label: '00:00:05', major: false })
     expect(truncated).toBe(false)
     for (let index = 1; index < ticks.length; index += 1) {
       expect((ticks[index] as { time: number }).time).toBeGreaterThan((ticks[index - 1] as { time: number }).time)
@@ -234,21 +240,25 @@ describe('tick ladder', () => {
 })
 
 describe('time formatting (pure, offset-driven)', () => {
-  it('formats a clock in the given zone', () => {
-    expect(formatClock(0, 0)).toBe('00:00')
-    expect(formatClock(0, 480)).toBe('08:00')
-    expect(formatClock(0, -300)).toBe('19:00')
+  it('formats a clock in the given zone, seconds by default', () => {
+    expect(formatClock(0, 0)).toBe('00:00:00')
+    expect(formatClock(0, 480)).toBe('08:00:00')
+    expect(formatClock(0, -300)).toBe('19:00:00')
+    // The coarse arm exists for NOW/ENDED markers, which must not flicker a second
+    // digit; both arms are pinned WITH offsets so the zone maths is covered too.
+    expect(formatClock(0, 0, { seconds: false })).toBe('00:00')
+    expect(formatClock(0, 480, { seconds: false })).toBe('08:00')
   })
 
   it('formats date+time and the tick labels', () => {
-    expect(formatDateTime(0, 0)).toBe('01-01 00:00')
-    expect(formatTickLabel(0, 'time', 0)).toBe('00:00')
+    expect(formatDateTime(0, 0)).toBe('01-01 00:00:00')
+    expect(formatTickLabel(0, 'time', 0)).toBe('00:00:00')
     expect(formatTickLabel(0, 'date', 0)).toBe('01-01')
   })
 
   it('never throws on a non-finite time', () => {
-    expect(formatClock(Number.NaN)).toBe('00:00')
-    expect(formatDateTime(Number.POSITIVE_INFINITY)).toMatch(/^\d{2}-\d{2} \d{2}:\d{2}$/)
+    expect(formatClock(Number.NaN)).toBe('00:00:00')
+    expect(formatDateTime(Number.POSITIVE_INFINITY)).toMatch(/^\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/)
   })
 })
 

@@ -735,8 +735,8 @@ function Axis({
           }
         >
           {live
-            ? `${uiLabel('nowLabel')} ${formatClock(marker.time, tzOffsetMinutes)}`
-            : `${uiLabel('endedLabel')} ${formatClock(marker.time, tzOffsetMinutes)}`}
+            ? `${uiLabel('nowLabel')} ${formatClock(marker.time, tzOffsetMinutes, { seconds: false })}`
+            : `${uiLabel('endedLabel')} ${formatClock(marker.time, tzOffsetMinutes, { seconds: false })}`}
         </span>
       )}
     </div>

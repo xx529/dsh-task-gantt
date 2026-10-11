@@ -696,9 +696,19 @@ export function pickTickStep(targetMs: number): number {
 }
 
 /** `HH:mm` in the local zone described by `tzOffsetMinutes` (east positive). */
-export function formatClock(time: number, tzOffsetMinutes = 0): string {
+/**
+ * `HH:MM:SS` in the panel's local time.
+ *
+ * Seconds are included because several messages routinely land inside one
+ * minute, and "which of these four replies came first" is exactly what a reader
+ * of this chart asks. Call sites that genuinely want the coarser form ask for it
+ * (`{ seconds: false }`) — e.g. the NOW marker, where a ticking seconds value
+ * would be noise.
+ */
+export function formatClock(time: number, tzOffsetMinutes = 0, options?: { seconds?: boolean }): string {
   const shifted = new Date(num(time, 0) + tzOffsetMinutes * MINUTE_MS)
-  return `${pad2(shifted.getUTCHours())}:${pad2(shifted.getUTCMinutes())}`
+  const hm = `${pad2(shifted.getUTCHours())}:${pad2(shifted.getUTCMinutes())}`
+  return options?.seconds === false ? hm : `${hm}:${pad2(shifted.getUTCSeconds())}`
 }
 
 /** `MM-DD HH:mm` in the local zone described by `tzOffsetMinutes`. */
@@ -709,7 +719,9 @@ export function formatDateTime(time: number, tzOffsetMinutes = 0): string {
 
 /** The header label of one tick. */
 export function formatTickLabel(time: number, kind: TickKind, tzOffsetMinutes = 0): string {
-  if (kind === 'time') return formatClock(time, tzOffsetMinutes)
+  // The AXIS stays minute-coarse on purpose: a tick label is a coordinate
+  // readout, and seconds there are noise (the detail views carry the seconds).
+  if (kind === 'time') return formatClock(time, tzOffsetMinutes, { seconds: false })
   const shifted = new Date(num(time, 0) + tzOffsetMinutes * MINUTE_MS)
   return `${pad2(shifted.getUTCMonth() + 1)}-${pad2(shifted.getUTCDate())}`
 }
@@ -1236,8 +1248,13 @@ export function messageDetail(
     from: SpanSpeaker
     to?: SpanSpeaker | undefined
     preview?: string | undefined
+    /**
+     * The lane this message is DRAWN on. Used only to infer a missing
+     * recipient — see {@link MessageDetailInput} notes below.
+     */
+    laneName?: string | undefined
   },
-  texts: { you: string; peerFallback: string },
+  texts: { you: string; recipientUnrecorded: string },
   formatTime: (time: number) => string,
   previewMax: number = MESSAGE_PREVIEW_MAX,
 ): MessageDetail {
@@ -1245,9 +1262,17 @@ export function messageDetail(
   const body = marker.preview ?? ''
   const isUser = marker.from.kind === 'user'
   const fromName = isUser ? texts.you : marker.from.name !== '' ? marker.from.name : marker.from.id
+  // A missing `to` is not "unknown": the host deliberately records no recipient
+  // for a human prompt (adding one would draw the same prompt on two lanes). The
+  // recipient is nevertheless *derivable* — this message is carried by exactly
+  // one lane's log, and that lane is who it went to. Only when even that is
+  // unavailable do we say the recipient was not recorded; we never print a word
+  // like "unknown", which reads as corrupt data.
   const toName =
-    marker.to === undefined
-      ? texts.peerFallback
+    marker.to === undefined || marker.to === null
+      ? marker.laneName !== undefined && marker.laneName !== ''
+        ? marker.laneName
+        : texts.recipientUnrecorded
       : marker.to.name !== '' && marker.to.name !== undefined
         ? marker.to.name
         : marker.to.id

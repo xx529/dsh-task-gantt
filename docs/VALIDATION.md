@@ -439,6 +439,26 @@ host-data-2 打的包 `/tmp/dtg-body-pack/dsh-task-gantt-0.1.0.tgz`（193 537 B�
 
 ⇒ **这个包可以装**：安装副本里的 `PREVIEW_MAX = 140` 正是本轮真机"正文仍卡 140"的直接原因，重装本包 + 重启后应变为千级正文。**核验方法可复用**（见 `tests/e2e/README.md` §1.4）。
 
+## 1.14 详情视图接口变更（ui-2）+ 我对"自证式断言"的自查
+
+**同步的四处接口变更**（`src/client/ui/timeline-layout.ts`）
+1. `messageDetail(input, texts, formatTime, previewMax?)`：`input` 变窄接口并新增 **`laneName`**；`texts` 从 `{you, peerFallback}` 变为 **`{you, recipientUnrecorded}`**；
+2. **缺 `to` 不再写 "unknown peer"**：`to` 缺失 + 有 `laneName` ⇒ 用承载泳道名作收件人（prompt 的收件人**可推断**：它被哪个会话的日志承载就是发给谁）；连泳道上下文都没有 ⇒ `（未记录收件人）`；词典 key **`messageNoPeer` 已删除**，换成 **`messageRecipientUnrecorded`**；
+3. `formatClock(time, tz, {seconds})`：**默认含秒**（`HH:MM:SS`），`{seconds:false}` 取粗粒度（NOW/ENDED 标记用）；`formatDateTime` 随之含秒；
+4. `data-message-direction` 从旁边 kind span **移到 `[data-message-route]` 上**，并在同一节点新增 `data-message-from` / `data-message-to`（Lead 之前在该节点读到 null 即因此）。
+
+**我的用例同步（`tests/message-paint.spec.ts` 41 条）**：`texts` 新形状；**收件人推断三态**（有 `to` / 缺 `to` 但有 `laneName` ⇒ `you → lead` / 两者都缺 ⇒ `you → （未记录收件人）`）；**禁止项按词典 key 断言**（`labels.ts` 不得再出现 `messageNoPeer`，且词典值不得含 `unknown peer|未知对端|未知收件人`）；**时钟锁改为断言函数返回值**（`formatClock(0,0)==='00:00:00'`、`{seconds:false}==='00:00'`、`1000→'00:00:01'`、`61000→'00:01:01'`、`formatDateTime(0,0)==='01-01 00:00:00'`）。
+- **我第一版禁止项写错了**：我拿 `laneName: 'unknown peer'` 去断言 route 不含 `/unknown/i` —— 那是**要求函数给数据做消毒**，而泳道本来就可能叫任何名字。禁止项的对象是**产品输出（词典与兜底文案）**，不是调用方数据。已改为对 `uiMessages()` 逐项断言。
+- **我另修了 4 条自己变红的旧断言**（`tests/layout.spec.ts`）：它们把旧时钟行为写成了字面量（`'00:00'`），秒一加就红 —— 这属于"期望值编码了旧行为"，与 ui-2 自查出的那类**不同**（详见下）。
+
+**❓23（我提出，待 ui-2/Lead 定）**：`formatTickLabel` 走的是 `formatClock(time, tz)` **不带 options** ⇒ **轴上的时间刻度现在也带秒**（实测 tick `t=5000, tz=0` → 标签 `00:00:05`）。详情面板要秒是对的，但**坐标轴标签通常只要 `HH:MM`**；若要粗粒度，应在 `formatTickLabel` 里显式传 `{seconds:false}`。我按现状钉住（含注释），不做单方面修改。
+
+**关于"自证式断言"的自查（ui-2 要求，我做了并给出方法与边界）**
+ui-2 自查出：他曾在自检里打印**手写的** `when=00:00:00` 当作证据，而当时 `formatClock` 只到分钟 —— 断言打在"自己构造的常量"上，无法证伪。他请我查同型。
+- **方法**：①扫描 `expect(<字面量>)`（主语本身是常量）；②扫描 `expect(X).toBe(X)` 同名单常量；③扫描"断言里出现硬编码时间样式、但同块并未调用被测函数"。脚本对 `tests/*.spec.ts` 全量执行。
+- **结果**：①命中 **1** 条 —— `tests/bundle.spec.ts:158` `expect('client.abc123.js').toMatch(HOST_CLIENT_CHUNK)`，这是**故意的正则标定**（用合法分块名证明 `HOST_CLIENT_CHUNK` 这个**产品导入的模式**不是空转），不属于该缺陷类；②0 条；③0 条。
+- **结论（含边界）**：我的用例里**没有**"期望值手写、被测函数从未被调用"的实例；每条 `expect` 的主语都是函数返回值或从磁盘/契约读到的产物。**但我的脚本无法区分"断言自造常量"与"断言文件产物 / 在 `beforeEach` 里准备好的被测值"**（例如 `bundle/ci/manifest/host-route` 的命中多为后两者），所以这条结论建立在①②③三种**精确模式**上，而不是"所有断言都人工读过"。唯一更弱的一类是 `expect(detail.when).toBe(formatTime(long.time))` —— 它断言的是**注入的 formatter**；我在同一条里补了 `=== `t${long.time}``（主语仍是函数返回值）并加注释说明这一层的弱性。
+
 ## 2. 环境（实测值）
 
 | 事实 | 值 | 怎么测的 |

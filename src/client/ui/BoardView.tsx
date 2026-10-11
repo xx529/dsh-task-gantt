@@ -203,7 +203,14 @@ export function BoardView({ sessionId, visible, routeBase, navigate }: BoardView
         if (message === undefined) continue
         const key = message.messageId ?? `${lane.id}:${message.kind}:${message.time}:${index}`
         if (key === selectedMessageKey) {
-          return { laneId: lane.id, message, direction: resolveMessageDirection(message, lane.id, laneIdOf).direction }
+          return {
+            laneId: lane.id,
+            // The lane's display name, so a missing recipient can be named
+            // instead of printed as "unknown".
+            laneName: lane.name !== '' ? lane.name : lane.id,
+            message,
+            direction: resolveMessageDirection(message, lane.id, laneIdOf).direction,
+          }
         }
       }
     }
@@ -303,6 +310,7 @@ export function BoardView({ sessionId, visible, routeBase, navigate }: BoardView
       {selectedMessage === null ? null : (
         <MessageDetails
           laneId={selectedMessage.laneId}
+          laneName={selectedMessage.laneName}
           message={selectedMessage.message}
           direction={selectedMessage.direction}
           tzOffsetMinutes={tzOffsetMinutes}
@@ -349,12 +357,14 @@ export function BoardView({ sessionId, visible, routeBase, navigate }: BoardView
  */
 function MessageDetails({
   laneId,
+  laneName,
   message,
   direction,
   tzOffsetMinutes,
   onClose,
 }: {
   laneId: string
+  laneName: string
   message: MessageSpan
   direction: 'outgoing' | 'incoming'
   tzOffsetMinutes: number
@@ -368,15 +378,22 @@ function MessageDetails({
       from: message.from,
       to: message.to,
       preview: message.preview,
+      laneName,
     },
-    { you: t('you'), peerFallback: uiLabel('messageNoPeer') },
+    { you: t('you'), recipientUnrecorded: uiLabel('messageRecipientUnrecorded') },
     (time: number) => formatDateTime(time, tzOffsetMinutes),
   )
   const outgoing = detail.direction === 'outgoing'
   return (
     <div className="dtg-details dtg-message-details" role="region" aria-label={uiLabel('messageDetailTitle')}>
       <div className="dtg-details-head">
-        <span className="dtg-details-title dtg-message-route" data-message-route={detail.route}>
+        <span
+          className="dtg-details-title dtg-message-route"
+          data-message-route={detail.route}
+          data-message-direction={detail.direction}
+          data-message-from={detail.fromName}
+          data-message-to={detail.toName}
+        >
           {detail.route}
         </span>
         <span className="dtg-details-kind" data-message-direction={detail.direction}>
