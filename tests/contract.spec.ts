@@ -14,7 +14,7 @@ import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { API_VERSION, MESSAGE_PREVIEW_MAX, ROUTE_PREFIX, TAB_TYPE_ID } from '../src/shared/contract.ts'
+import { API_VERSION, BUILD_LABEL, MESSAGE_PREVIEW_MAX, ROUTE_PREFIX, TAB_TYPE_ID } from '../src/shared/contract.ts'
 import { assertTimeline, validateTimeline, validTimeline, timelineErrors } from './helpers/timeline-assert.ts'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -60,6 +60,26 @@ describe('contract module hygiene', () => {
     for (const name of ['API_VERSION', 'TAB_TYPE_ID', 'ROUTE_PREFIX', 'TimelineResponse', 'TimelineLane', 'TimelineTask', 'ActivitySpan', 'TaskEvent', 'ApiEnvelope']) {
       expect(source, `${name} must stay exported`).toContain(name)
     }
+  })
+})
+
+describe('the build label identifies which code is live', () => {
+  it('is a non-empty string in the contract module', () => {
+    // The user has twice been unable to tell whether a fix was live (a stale
+    // lib/, an in-flight edit). A visible build label is the cheap answer, so the
+    // label must stay a real, non-empty contract value.
+    expect(typeof BUILD_LABEL).toBe('string')
+    expect(BUILD_LABEL.length).toBeGreaterThan(0)
+  })
+
+  it('is rendered on every branch of the board, plus the footer', () => {
+    // Source-level guard: BoardView has an early "loading/empty" return and the
+    // normal return; a label on only one of them would be missing exactly when a
+    // user is looking at a broken board.
+    const source = readFileSync(resolve(ROOT, 'src/client/ui/BoardView.tsx'), 'utf8')
+    expect(source).toContain("import { BUILD_LABEL } from '../../shared/contract.ts'")
+    const rendered = [...source.matchAll(/data-build=\{BUILD_LABEL\}/g)].length
+    expect(rendered, 'data-build must appear on both return branches and the footer').toBeGreaterThanOrEqual(3)
   })
 })
 

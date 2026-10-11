@@ -23,6 +23,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { LaneNavigation, TimelineResponse, TimelineTask } from '../../shared/contract.ts'
+import { BUILD_LABEL } from '../../shared/contract.ts'
 import { fetchTimeline, type RouteBase } from '../api.ts'
 import { t } from '../i18n.ts'
 import { GanttChart } from './GanttChart.tsx'
@@ -183,7 +184,7 @@ export function BoardView({ sessionId, visible, routeBase, navigate }: BoardView
   if (data === null) {
     const failed = error !== null
     return (
-      <div className="dtg-root" data-dsh-task-gantt="">
+      <div className="dtg-root" data-dsh-task-gantt="" data-build={BUILD_LABEL}>
         <div className="dtg-center" role={failed ? 'alert' : undefined}>
           <span className="dtg-center-title">
             {failed ? t('errorTitle') : t('loading')}
@@ -206,7 +207,7 @@ export function BoardView({ sessionId, visible, routeBase, navigate }: BoardView
       : { className: 'dtg-chip dtg-chip-warn', text: data.source === 'partial' ? t('sourcePartial') : t('sourceLive') }
 
   return (
-    <div className="dtg-root" data-dsh-task-gantt="">
+    <div className="dtg-root" data-dsh-task-gantt="" data-build={BUILD_LABEL}>
       <div className="dtg-bar">
         <span className={sourceChip.className} title={[t('sourceLog'), t('sourcePartial'), t('sourceLive')].join(' / ')}>
           {sourceChip.text}
@@ -262,6 +263,16 @@ export function BoardView({ sessionId, visible, routeBase, navigate }: BoardView
           {`${uiLabel('notesLabel')}: ${data.notes.join(' · ')}`}
         </div>
       )}
+      {/*
+        Build identity, ALWAYS rendered and deliberately NOT translated: the
+        browser half is served from /plugins/<id>/client.js&rev=<hash of
+        mtime+ctime+size>, which does not include the content, so a page can run
+        a stale bundle while looking identical. This string is how a human (and
+        `document.querySelector('[data-build]')`) tells which code is live.
+      */}
+      <div className="dtg-build" data-build={BUILD_LABEL} title={BUILD_LABEL}>
+        {BUILD_LABEL}
+      </div>
     </div>
   )
 }

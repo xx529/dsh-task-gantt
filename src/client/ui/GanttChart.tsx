@@ -60,9 +60,11 @@ import {
   formatClock,
   formatDateTime,
   isLiveBoard,
+  messageMarkerPaint,
   taskDurationLine,
   layoutTimeline,
   type LaneBox,
+  type MessageDirection,
   type MessageMarkerRect,
   type SpanRect,
   type TaskCardRect,
@@ -189,11 +191,41 @@ export function GanttChart(props: GanttChartProps): ReactNode {
   const live = data.live !== false
   const effectiveMsPerPx = msPerPx ?? fitMsPerPx(win.durationMs, Math.max(1, viewport.width))
   const tzOffsetMinutes = -new Date(now).getTimezoneOffset()
-  /** Lane id -> token pair, resolved once per payload. */
+  /**
+   * Lane id -> resolved paint, and session id -> lane id.
+   *
+   * The second map is not a convenience: a message's `from.id`/`to.id` are
+   * SESSION ids, while this table is keyed by LANE id. Looking a speaker up
+   * directly in `laneColors` returns undefined and paints nothing — the bug that
+   * made every agent marker look like the human's fixed colour.
+   */
   const laneColors = useMemo(() => {
     const map = new Map<string, LaneColorTokens>()
     data.lanes.forEach((lane, index) => map.set(lane.id, laneColor(lane, index)))
     return map
+  }, [data])
+  /**
+   * Speaker id (a SESSION id) -> lane id.
+   *
+   * Two hops, because they are two different id spaces:
+   *  1. a teammate's lane id IS its session id, so an exact lane-id match wins;
+   *  2. otherwise the lane's own `navigation.value` carries its session id —
+   *     which is the only way the LEAD resolves, since its lane id is the literal
+   *     'lead' while its session id is 'session-…'.
+   * Returning null means "not on this board" (system, or a member that left).
+   */
+  const laneIdOf = useMemo(() => {
+    const byLaneId = new Set(data.lanes.map((lane) => lane.id))
+    const bySessionId = new Map<string, string>()
+    for (const lane of data.lanes) {
+      const navigation = lane.navigation
+      const sessionId = navigation === undefined ? undefined : navigation.type === 'session' ? navigation.value : navigation.value?.sessionId
+      if (typeof sessionId === 'string' && sessionId !== '') bySessionId.set(sessionId, lane.id)
+    }
+    return (speakerId: string): string | null => {
+      if (byLaneId.has(speakerId)) return speakerId
+      return bySessionId.get(speakerId) ?? null
+    }
   }, [data])
   const markerCount = data.lanes.reduce((total, lane) => total + (lane.messages?.length ?? 0), 0)
   const userPaint = useMemo(() => ({ bar: lanePaint(USER_COLOR.bar), on: lanePaint(USER_COLOR.on) }), [])
@@ -429,7 +461,7 @@ export function GanttChart(props: GanttChartProps): ReactNode {
                 <MessageMarker
                   key={`msg:${marker.key}`}
                   marker={marker}
-                  color={marker.from.kind === 'user' ? userPaint : marker.from.kind === 'system' ? systemPaint : laneColors.get(marker.from.id)}
+                  paint={markerPaint(marker, laneColors, laneIdOf, userPaint, systemPaint)}
                   tzOffsetMinutes={tzOffsetMinutes}
                 />
               ))}
@@ -509,12 +541,12 @@ export function GanttChart(props: GanttChartProps): ReactNode {
         {markerCount === 0 ? null : (
           <>
             <span className="dtg-legend-item" title={uiLabel('messageLegendHint')}>
-              <span className="dtg-legend-msg dtg-legend-msg-user" />
-              {uiLabel('messageLegendYou')}
+              <span className="dtg-legend-arrow" aria-hidden="true">↗</span>
+              {uiLabel('messageLegendSent')}
             </span>
             <span className="dtg-legend-item" title={uiLabel('messageLegendHint')}>
-              <span className="dtg-legend-msg" />
-              {uiLabel('messageLegendTeammate')}
+              <span className="dtg-legend-arrow" aria-hidden="true">↙</span>
+              {uiLabel('messageLegendReceived')}
             </span>
             {layout.droppedMessageCount === 0 ? null : (
               <span className="dtg-legend-item" title={uiLabel('messageDroppedHint')}>
@@ -752,22 +784,81 @@ function speakerName(speaker: { kind: string; name: string } | undefined): strin
  * prompt, plus a solid vs dotted outline), because colour alone must not be the
  * only way to tell "I said this" from "a teammate said this".
  */
+/**
+ * The paint + direction a marker needs, resolved outside JSX so a test can
+ * assert it (verify imports {@link markerPaint} rather than walking elements,
+ * so the tested function and the painted result cannot drift).
+ */
+export interface MarkerPaint {
+  paint: LaneColorTokens
+  direction: MessageDirection
+  peerName: string
+  peerMatched: boolean
+  isUser: boolean
+}
+
+/**
+ * Colour a message marker for the lane it is drawn on.
+ *
+ * The colour is always the COUNTERPART's lane colour ("A's lane shows B's
+ * colour"), while the user's own fixed two-tone paint is used whenever the
+ * counterpart is the human. A counterpart that is not a lane of this board
+ * (`system`, or a member already gone) falls back to the neutral paint instead
+ * of an invented one, and `peerMatched` carries that fact into the tooltip.
+ */
+export function markerPaint(
+  marker: MessageMarkerRect,
+  laneColors: Map<string, LaneColorTokens>,
+  laneIdOf: (sessionId: string) => string | null,
+  userPaint: LaneColorTokens,
+  systemPaint: LaneColorTokens,
+): MarkerPaint {
+  const resolved = messageMarkerPaint(
+    {
+      kind: marker.kind,
+      time: marker.time,
+      end: marker.end,
+      from: marker.from,
+      to: marker.to,
+      preview: marker.preview,
+      sessionId: marker.from.id,
+    },
+    marker.laneId,
+    laneColors,
+    laneIdOf,
+    userPaint,
+    systemPaint,
+  )
+  return {
+    paint: resolved.paint,
+    direction: resolved.direction,
+    peerName: resolved.peerName,
+    peerMatched: resolved.peerMatched,
+    isUser: resolved.isUser,
+  }
+}
+
 function MessageMarker({
   marker,
-  color,
+  paint,
   tzOffsetMinutes,
 }: {
   marker: MessageMarkerRect
-  color?: LaneColorTokens | undefined
+  paint: MarkerPaint
   tzOffsetMinutes: number
 }): ReactNode {
-  const isUser = marker.from.kind === 'user'
-  const classes = ['dtg-msg', isUser ? 'dtg-msg-user' : 'dtg-msg-agent']
+  const color = paint.paint
+  const outgoing = paint.direction === 'outgoing'
+  const isUser = paint.isUser
+  const classes = ['dtg-msg', isUser ? 'dtg-msg-user' : 'dtg-msg-agent', outgoing ? 'dtg-msg-out' : 'dtg-msg-in']
   if (marker.kind === 'turn') classes.push('dtg-msg-turn')
   const when = formatDateTime(marker.time, tzOffsetMinutes)
-  const route = isUser
-    ? `${t('you')} → ${speakerName(marker.to) === '—' ? uiLabel('leadLabel') : speakerName(marker.to)}`
-    : `${speakerName(marker.from)} → ${speakerName(marker.to)}`
+  // The route is stated from THIS lane's point of view, so it is self-evident
+  // which way the message went and who the other side is.
+  const route = outgoing
+    ? `${uiLabel('messageSentTo')} ${paint.peerName}`
+    : `${uiLabel('messageReceivedFrom')} ${paint.peerName}`
+  const peerNote = paint.peerMatched ? '' : ` · ${uiLabel('messagePeerUnknown')}`
   const dropped = marker.droppedBefore > 0 ? ` · ${uiLabel('messageOmitted', { count: marker.droppedBefore })}` : ''
   const label = uiLabel('messageAria', { time: when, route, preview: marker.preview ?? '' })
   const style: CSSProperties = {
@@ -788,14 +879,16 @@ function MessageMarker({
     <span
       className={classes.join(' ')}
       style={style}
-      title={`${when} · ${route}${dropped}${marker.preview === undefined || marker.preview === '' ? '' : `\n${marker.preview}`}`}
+      title={`${when} · ${route}${peerNote}${dropped}${marker.preview === undefined || marker.preview === '' ? '' : `\n${marker.preview}`}`}
       aria-label={label}
       data-msg-kind={marker.kind}
+      data-msg-direction={paint.direction}
+      data-msg-peer={paint.peerName}
       data-msg-from={marker.from.id}
       {...(marker.to === undefined ? {} : { 'data-msg-to': marker.to.id })}
     >
       <span className="dtg-msg-glyph" aria-hidden="true">
-        {marker.kind === 'turn' ? '▸' : isUser ? '✎' : '✉'}
+        {marker.kind === 'turn' ? '▸' : outgoing ? '↗' : '↙'}
       </span>
       {marker.droppedBefore > 0 ? <span className="dtg-msg-count" aria-hidden="true">{`+${marker.droppedBefore}`}</span> : null}
     </span>
@@ -860,9 +953,11 @@ function TaskCard({
         className={`dtg-task-bar dtg-task-bar-${rect.anchor}${rect.live ? ' dtg-task-bar-live' : ''}`}
         style={{
           left: rect.x,
-          top: rect.y,
+          // Centred inside the card box, at TASK_BAR_HEIGHT tall — a bar, not a
+          // 36px blob (that is what read as "a colour chip floating by the text").
+          top: rect.barY,
           width: rect.w,
-          height: rect.h,
+          height: rect.barH,
           ...(color === undefined ? {} : { background: color.bar }),
         }}
         aria-hidden="true"

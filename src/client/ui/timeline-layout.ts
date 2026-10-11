@@ -78,7 +78,7 @@
  *                       + (TURN_BAND_HEIGHT - STEP_BAR_HEIGHT) / 2, h = STEP_BAR_HEIGHT
  *   task card     y = laneY(i) + TASK_CARD_TOP,            h = TASK_CARD_HEIGHT
  *   (TASK_CARD_TOP = LANE_PAD_Y + TURN_BAND_HEIGHT + 4, so a lane of
- *    DEFAULT_LANE_HEIGHT = 56 stacks: 3px pad, 10px turn band (the 8px step bar
+ *    DEFAULT_LANE_HEIGHT = 84 stacks three tracks: 3px pad, 10px turn band (the 8px step bar
  *    centred inside it), 4px gap, 36px card (two token lines), 3px pad.)
  *
  * ============================== SPAN RECTS =================================
@@ -155,6 +155,7 @@
  */
 import type {
   ActivitySpan,
+  LaneColorTokens,
   MessageSpan,
   SpanSpeaker,
   TimelineLane,
@@ -173,8 +174,16 @@ export const DAY_MS = 24 * HOUR_MS
 
 /** Fixed lane-head column width (px): name + status dot, per the narrow-panel design. */
 export const LANE_HEAD_WIDTH = 132
-/** Default height of one lane row (px) — see the geometry table in the module doc. */
-export const DEFAULT_LANE_HEIGHT = 56
+/**
+ * Fixed height of one lane row (px).
+ *
+ * FIXED BY DECISION, not adaptive: the user chose "always taller" over "grow to
+ * fit". At 56px the three tracks were crowded — the message markers (12-23)
+ * overlapped the task label (17-53) — so one lane now carries three separated
+ * tracks (see {@link laneTracks}). Do not make this content-adaptive, and do not
+ * shrink the 36px task label to win lanes back: 36px is two measured text lines.
+ */
+export const DEFAULT_LANE_HEIGHT = 84
 /** Default height of the sticky time-axis header (px). */
 export const DEFAULT_HEADER_HEIGHT = 28
 /** Default number of ticks wanted across the visible width. */
@@ -185,9 +194,57 @@ export const DEFAULT_TICK_COUNT = 6
 export const LANE_PAD_Y = 3
 export const TURN_BAND_HEIGHT = 10
 export const STEP_BAR_HEIGHT = 8
+
+/* ------------------------------------------------------- the three tracks */
+
+/**
+ * A lane is three stacked TRACKS, with `TRACK_GAP` between them and
+ * `LANE_BOTTOM_PAD` under the last one. The tracks are the contract: geometry is
+ * derived from these constants (never from literals), and
+ * `laneTracks(laneIndex, laneHeight)` returns the rectangles so a test can
+ * assert the three of them never overlap — the regression lock for the crowded
+ * 56px lane, where the message markers sat on top of the task label.
+ *
+ *   track 1  activity  turn band + step bar
+ *   track 2  message   markers (+ the density band along the lane's bottom edge)
+ *   track 3  task      the duration bar + its label chip
+ */
+export const ACTIVITY_TRACK_HEIGHT = TURN_BAND_HEIGHT
+export const MESSAGE_TRACK_HEIGHT = 11
+export const TASK_TRACK_HEIGHT = 36
+/** Vertical gap between two tracks. */
+export const TRACK_GAP = 3
+/** Space under the last track, so a lane never ends flush against its bar. */
+export const LANE_BOTTOM_PAD = 3
+
+/** One track's vertical slice inside a lane. */
+export interface LaneTrack {
+  id: 'activity' | 'message' | 'task'
+  /** Top edge, in content px (lane 0 starts at `headerHeight`). */
+  y: number
+  h: number
+}
+
+/**
+ * The three track rectangles for one lane, in top-to-bottom order.
+ *
+ * @param laneIndex - 0-based lane index.
+ * @param laneHeight - the lane's height; defaults to `DEFAULT_LANE_HEIGHT`.
+ */
+export function laneTracks(laneIndex: number, laneHeight: number = DEFAULT_LANE_HEIGHT): LaneTrack[] {
+  const base = laneIndex * laneHeight
+  const activity = base + LANE_PAD_Y
+  const message = activity + ACTIVITY_TRACK_HEIGHT + TRACK_GAP
+  const task = message + MESSAGE_TRACK_HEIGHT + TRACK_GAP
+  return [
+    { id: 'activity', y: activity, h: ACTIVITY_TRACK_HEIGHT },
+    { id: 'message', y: message, h: MESSAGE_TRACK_HEIGHT },
+    { id: 'task', y: task, h: TASK_TRACK_HEIGHT },
+  ]
+}
 /** Vertical gap between the turn band and the card row. */
 export const TASK_CARD_GAP = 4
-export const TASK_CARD_TOP = LANE_PAD_Y + TURN_BAND_HEIGHT + TASK_CARD_GAP
+export const TASK_CARD_TOP = LANE_PAD_Y + ACTIVITY_TRACK_HEIGHT + TRACK_GAP + MESSAGE_TRACK_HEIGHT + TRACK_GAP
 /** Two token-sized text lines (12px/18px + 11px/14px) plus 4px of padding. */
 export const TASK_CARD_HEIGHT = 36
 /** A span shorter than this still gets a visible mark. */
@@ -202,6 +259,18 @@ export const MIN_SPAN_PX = 2
  * length, which is precisely the reading this chart exists to communicate.
  */
 export const TASK_BAR_MIN_WIDTH = MIN_SPAN_PX
+/**
+ * Height of the DURATION BAR (px).
+ *
+ * Deliberately its own constant, NOT `TASK_CARD_HEIGHT`: the bar says "how long
+ * did this take" and the chip says "what was it", so they must not share a
+ * height. Reusing 36px rendered the bar as a 2-7px x 36px blob — a colour chip
+ * floating in front of the text — instead of a Gantt bar. Same order of
+ * magnitude as {@link STEP_BAR_HEIGHT}, which is what makes it read as a bar.
+ */
+export const TASK_BAR_HEIGHT = 10
+/** Vertical offset of the bar inside its card box: the bar is centred on it. */
+export const TASK_BAR_TOP_OFFSET = (TASK_CARD_HEIGHT - TASK_BAR_HEIGHT) / 2
 /** Horizontal gap between the bar's right edge and an outside label chip. */
 export const TASK_CHIP_GAP = 3
 /** Width of the label chip (two readable text lines need it). */
@@ -246,8 +315,8 @@ export const MESSAGE_MARKER_MIN_GAP_PX = 9
 export const MESSAGE_MARKER_WIDTH = 11
 /** Rendered height of one message marker (px). */
 export const MESSAGE_MARKER_HEIGHT = 11
-/** Top of the marker row inside a lane, below the step bar. */
-export const MESSAGE_MARKER_TOP = LANE_PAD_Y + STEP_BAR_HEIGHT + 1
+/** Top of the marker row: the start of the message track (below the activity track). */
+export const MESSAGE_MARKER_TOP = LANE_PAD_Y + ACTIVITY_TRACK_HEIGHT + TRACK_GAP
 /**
  * Soft ceiling on rendered markers per lane. Decimation keeps the earliest
  * message of every pixel bucket, so a lane also stops at this count.
@@ -409,9 +478,23 @@ export interface TaskCardRect {
    * duration. It is independent of any label text.
    */
   x: number
+  /** Top of the CARD box (the chip). */
   y: number
-  w: number
+  /** CARD box height ({@link TASK_CARD_HEIGHT}); the chip uses this. */
   h: number
+  /** BAR width: the task's real elapsed time, floored at the visual minimum. */
+  w: number
+  /**
+   * Top of the BAR: `y + TASK_BAR_TOP_OFFSET`. The bar is centred inside the
+   * card box, so it never shares the card's height.
+   */
+  barY: number
+  /**
+   * BAR height ({@link TASK_BAR_HEIGHT}) — deliberately NOT {@link h}. Sharing
+   * the card height made the bar a 2-7px x 36px blob that read as a colour chip
+   * beside the text instead of a Gantt bar.
+   */
+  barH: number
   viewX: number
   visible: boolean
   /** Alias of `anchor === 'live'`, for readable call sites. */
@@ -703,8 +786,15 @@ export function computeWindow(data: TimelineResponse, now: number): TimelineWind
  *     stops one dense burst at the start from consuming the whole budget and
  *     erasing the quiet tail.
  *  4. A kept marker must additionally sit at least `gapPx` from the previously
- *     kept one, which is what actually prevents overlap when many messages land
- *     in the same bucket.
+ *     kept one OF THE SAME DIRECTION. The spacing cursor is per direction on
+ *     purpose: with a single shared cursor, an outgoing marker that lands a few
+ *     pixels after an already-kept incoming one is dropped for the whole lane,
+ *     so a lane of N replies renders as N receipts and never shows a single
+ *     "sent" arrow. That is a data-distorting failure (the direction layer
+ *     silently disappeared), not a cosmetic one.
+ *     Consequence to accept consciously: two markers of different directions may
+ *     now sit closer than `gapPx`, i.e. they can overlap slightly. Losing an
+ *     entire direction to avoid a 2px overlap is the wrong trade.
  *  5. At most `maxPerLane` markers survive.
  *
  * Every dropped marker is counted in the next kept marker's
@@ -727,6 +817,10 @@ export function decimateMarkers(
     mode: MessageMode
     gapPx: number
     maxPerLane: number
+    /** The lane these messages are drawn on — needed to know the direction. */
+    laneId?: string
+    /** Speaker id -> lane id, so direction can be resolved per lane. */
+    laneIdOf?: (sessionId: string) => string | null
   },
 ): { indices: number[]; droppedTotal: number; candidates: number } {
   const gapPx = input.gapPx > 0 ? input.gapPx : MESSAGE_MARKER_MIN_GAP_PX
@@ -736,7 +830,11 @@ export function decimateMarkers(
   const candidates: number[] = []
   for (let index = 0; index < list.length; index += 1) {
     const span = list[index]
-    if (span === undefined) continue
+    if (span === undefined || span === null || typeof span !== 'object') continue
+    // A span with no datable time cannot be placed on the axis at all: drawing it
+    // would put a marker at an invented position, so it is never a candidate
+    // (the backfill pass below must not resurrect it either).
+    if (!Number.isFinite(num(span.time, Number.NaN))) continue
     if (input.mode === 'both' && span.kind === 'turn') continue
     candidates.push(index)
   }
@@ -751,21 +849,67 @@ export function decimateMarkers(
   const bucketCount = spanPx > 0 ? Math.max(1, Math.ceil(spanPx / bucketSizePx)) : 1
 
   const kept: number[] = []
-  const usedBuckets = new Set<number>()
-  let lastX = Number.NEGATIVE_INFINITY
+  // BOTH the spacing cursor and the bucket occupancy are PER DIRECTION.
+  //
+  // Only one message can be kept per (direction, bucket). With a single shared
+  // bucket set, an incoming and an outgoing message landing in the same 9px
+  // window meant the later one was dropped — and since a lane's replies sit a few
+  // pixels after the prompts they answer, that reliably erased every "sent" arrow
+  // from every lane: the direction layer silently disappeared while the count and
+  // the times stayed plausible. Losing a direction is a data distortion; a
+  // slightly tighter spacing between two markers of DIFFERENT directions is a
+  // cosmetic cost, and that is the trade this makes on purpose.
+  const usedBuckets = new Set<string>()
+  const lastXByKind = new Map<string, number>()
+  const kindOf = (span: MessageSpan): string => {
+    if (input.laneId === undefined || input.laneIdOf === undefined) return 'any'
+    return resolveMessageDirection(span, input.laneId, input.laneIdOf).direction
+  }
   for (const index of ordered) {
     if (kept.length >= maxPerLane) break
     const span = list[index]
     if (span === undefined) continue
     const x = (num(span.time, input.windowStart) - input.windowStart) / msPerPx
     const bucket = spanPx > 0 ? clamp(Math.floor(x / bucketSizePx), 0, bucketCount - 1) : 0
-    if (usedBuckets.has(bucket)) continue
-    if (kept.length > 0 && x - lastX < gapPx) continue
-    usedBuckets.add(bucket)
+    const kind = kindOf(span)
+    const bucketKey = `${kind}#${bucket}`
+    if (usedBuckets.has(bucketKey)) continue
+    const lastX = lastXByKind.get(kind)
+    if (lastX !== undefined && x - lastX < gapPx) continue
+    usedBuckets.add(bucketKey)
     kept.push(index)
-    lastX = x
+    lastXByKind.set(kind, x)
   }
-  return { indices: kept, droppedTotal: candidates.length - kept.length, candidates: candidates.length }
+
+  // ---- backfill: never let a whole direction vanish ----------------------
+  //
+  // The greedy pass can still starve a direction on a very wide lane: every
+  // "sent" marker sits a few pixels after an already-kept "received" one, so all
+  // of them fail the spacing rule. When that happens, re-run for that direction
+  // alone with the spacing rule relaxed — it keeps the direction visible at a
+  // couple of extra overlapping pixels, which is emphatically better than a lane
+  // that shows replies but never replies. Markers still keep their exact times
+  // and the lane's own `messageBands` still reports the true extent either way.
+  const directionsWithData = new Set(ordered.map((index) => {
+    const span = list[index]
+    return span === undefined ? 'any' : kindOf(span)
+  }))
+  const directionsKept = new Set(kept.map((index) => {
+    const span = list[index]
+    return span === undefined ? 'any' : kindOf(span)
+  }))
+  for (const kind of directionsWithData) {
+    if (directionsKept.has(kind) || kept.length >= maxPerLane) continue
+    const fallback = ordered.find((index) => {
+      const span = list[index]
+      return span !== undefined && kindOf(span) === kind
+    })
+    if (fallback !== undefined) {
+      kept.push(fallback)
+      directionsKept.add(kind)
+    }
+  }
+  return { indices: kept.sort((a, b) => a - b), droppedTotal: candidates.length - kept.length, candidates: candidates.length }
 }
 
 /**
@@ -826,6 +970,218 @@ export function taskDurationLine(
     known: true,
   }
 }
+
+/** Which way a message points on the lane it is drawn on. */
+export type MessageDirection = 'outgoing' | 'incoming'
+
+/** A message's resolved direction and counterpart on ONE lane. */
+export interface MessageLaneDirection {
+  direction: MessageDirection
+  /** The lane whose id equals the counterpart's session id, when it exists. */
+  peerLaneId: string | null
+  /** The counterpart's speaker kind, for choosing the paint. */
+  peerKind: SpanSpeaker['kind']
+  /** Counterpart display name (falls back to the raw id). */
+  peerName: string
+  /**
+   * `false` when the counterpart is not a lane of this board (a `system`
+   * sender, or a member that has already left). The caller must then paint a
+   * NEUTRAL colour — never guess a lane, and say so in the tooltip.
+   */
+  peerMatched: boolean
+}
+
+/**
+ * Resolve a message's direction ON A GIVEN LANE, from that lane's point of view.
+ *
+ * This is the whole of the user's rule: "A sends to B — A's lane shows B's
+ * colour with a sent mark; B's lane shows A's colour with a received mark." The
+ * same span therefore paints differently in the two lanes, and the colour is
+ * always the COUNTERPART's.
+ *
+ * Two corners are settled here rather than left to intuition:
+ * - A message with NO addressee (`to` absent) is **outgoing** on its sender's
+ *   lane (it demonstrably left here; the destination is unrecorded) and has NO
+ *   counterpart there — naming the sender would just name this lane. On any other
+ *   lane the same message is **incoming**, and its counterpart is the sender.
+ *   That is what makes a human prompt read "received from <me>" instead of
+ *   "received from <the lane it is drawn on>".
+ * - A lane that is BOTH sender and receiver (a note to self) resolves as
+ *   **incoming**, per the documented precedence `outgoing = sender && !receiver`
+ *   — chosen so the rule is a single expression, not an ordering accident.
+ *
+ * Critically, the lookup is by **laneId**, and a speaker's `id` is a SESSION id.
+ * The board's lanes happen to use session ids as their ids, so this maps them
+ * through `laneIdOf` — but it must be an explicit mapping, because querying a
+ * lane-keyed colour table with `message.from.id` silently returns undefined and
+ * paints nothing. That was a real bug: every agent marker lost its colour.
+ *
+ * @param message - the message span (its `from`/`to` are session ids).
+ * @param laneId - the lane currently being drawn.
+ * @param laneIdOf - session id -> lane id, built from the board's lanes.
+ */
+export function resolveMessageDirection(
+  message: MessageSpan,
+  laneId: string,
+  laneIdOf: (sessionId: string) => string | null,
+): MessageLaneDirection {
+  const fromId = message.from?.id ?? ''
+  const toId = message.to?.id ?? ''
+  // BOTH sides must be mapped into LANE space before comparing with `laneId`.
+  // A speaker's `id` is a SESSION id and `laneId` is a lane id; they coincide
+  // only for a teammate (whose lane id IS its session id). The lead's lane id is
+  // the literal 'lead' while its session id is 'session-…', so comparing the raw
+  // ids made `outgoing` unreachable on the lead's lane — every marker rendered as
+  // incoming even though the data was right.
+  const fromLane = fromId === '' ? null : laneIdOf(fromId)
+  const toLane = toId === '' ? null : laneIdOf(toId)
+  const selfIsSender = fromLane !== null && fromLane === laneId
+  const selfIsReceiver = toLane !== null && toLane === laneId
+  // Priority when a lane is BOTH the sender and the receiver (a note to self):
+  // it counts as outgoing, because the arrow should point away. Keeping the
+  // sender check first makes that explicit rather than dependent on order.
+  const outgoing = selfIsSender && !selfIsReceiver
+  // The counterpart is the OTHER party — derived from the two speakers, not from
+  // "whichever side the direction picked". With no addressee recorded there is
+  // only ONE party, and which role it plays depends on them:
+  //   - the HUMAN writes with no `to`  -> this lane received it: peer = the human;
+  //   - a TEAMMATE wrote with no `to`  -> this lane sent it: no peer at all
+  //     (taking `message.from` here would name the lane itself, which is how a
+  //     prompt on the lead lane ended up reading "received from Lead").
+  const noAddressee = message.to === undefined || message.to === null
+  let peer: SpanSpeaker | undefined
+  if (noAddressee) {
+    peer = selfIsSender ? undefined : message.from
+  } else {
+    peer = outgoing ? message.to : message.from
+  }
+  const peerKind: SpanSpeaker['kind'] = peer?.kind ?? (outgoing ? 'teammate' : 'system')
+  const peerName = peer?.name !== undefined && peer.name !== '' ? peer.name : (peer?.id ?? '')
+  const peerLaneId = peer === undefined || peer.id === '' ? null : laneIdOf(peer.id)
+  return {
+    direction: outgoing ? 'outgoing' : 'incoming',
+    peerLaneId,
+    peerKind,
+    peerName,
+    peerMatched: peer !== undefined && (peerKind === 'user' || peerLaneId !== null),
+  }
+}
+
+/**
+ * Resolve a lane's identity colour NAME (a bare `--dsw-alias-…` token) into
+ * usable paint, i.e. wrap it in `var(...)`.
+ *
+ * The contract publishes token NAMES, so passing one straight into a style makes
+ * an invalid declaration that paints nothing — silently. A name that is already
+ * wrapped is tolerated, because a host have shipped either shape.
+ */
+export function lanePaint(token: string): string {
+  const name = token.trim()
+  if (name === '') return 'currentColor'
+  return name.startsWith('var(') ? name : `var(${name})`
+}
+
+/**
+ * A lane's identity colour with a stable fallback, for a payload that predates
+ * `lane.color`. Lead and the human get FIXED slots (so "who said this" never
+ * depends on roster order); teammates are hashed by id.
+ */
+export function laneColorIndex(
+  lane: { id: string; role: string; color?: LaneColorTokens | undefined },
+  index: number,
+): LaneColorTokens {
+  const given = lane.color
+  if (given !== undefined && typeof given.bar === 'string' && given.bar !== '') {
+    return { bar: lanePaint(given.bar), on: lanePaint(given.on ?? '--dsw-alias-label-primary-inverted') }
+  }
+  const palette: LaneColorTokens[] = LANE_COLOR_FALLBACKS
+  const pick = (slot: number): LaneColorTokens => {
+    const entry = palette[slot % palette.length] as LaneColorTokens
+    return { bar: lanePaint(entry.bar), on: lanePaint(entry.on) }
+  }
+  if (lane.role === 'lead') return pick(0)
+  if (lane.id === 'unassigned' || lane.role === 'unknown') return pick(palette.length - 1)
+  let hash = 0
+  for (let i = 0; i < lane.id.length; i += 1) hash = (hash * 31 + lane.id.charCodeAt(i)) >>> 0
+  return pick(1 + (hash % (palette.length - 1)))
+}
+
+/**
+ * The paint for one message marker on one lane — the colour-meaning contract,
+ * usable without a renderer.
+ *
+ * The colour is the COUNTERPART's lane colour ("in A's lane, A→B uses B's
+ * colour"), the human's own fixed two-tone paint whenever the counterpart is the
+ * human, and the neutral paint when the counterpart is not a lane of this board
+ * (`system`, or a member that has left) — never a guessed lane.
+ *
+ * @param message - the span; `from`/`to` carry SESSION ids.
+ * @param laneId - the lane being drawn.
+ * @param laneColors - lane id -> paint, built from the payload's lanes.
+ * @param laneIdOf - session id -> lane id, or null when not on this board.
+ * @param userPaint - the fixed paint for the human.
+ * @param systemPaint - the neutral fallback.
+ */
+export function messageMarkerPaint(
+  message: MessageSpan,
+  laneId: string,
+  laneColors: Map<string, LaneColorTokens>,
+  laneIdOf: (sessionId: string) => string | null,
+  userPaint: LaneColorTokens,
+  systemPaint: LaneColorTokens,
+): {
+  paint: LaneColorTokens
+  direction: MessageDirection
+  peerName: string
+  peerLaneId: string | null
+  peerMatched: boolean
+  isUser: boolean
+} {
+  const resolved = resolveMessageDirection(message, laneId, laneIdOf)
+  const isUser = resolved.peerKind === 'user'
+  const isSystem = resolved.peerKind === 'system'
+  const peerPaint = resolved.peerLaneId === null ? undefined : laneColors.get(resolved.peerLaneId)
+  const ownPaint = laneColors.get(laneId)
+  // Precedence, most specific first:
+  //  1. a human counterpart -> the fixed user paint;
+  //  2. a counterpart that IS a lane here (including a note to self, whose peer
+  //     resolves to this same lane) -> that lane's colour, i.e. "the other side's
+  //     colour" as seen from this lane;
+  //  3. no addressee yet (a queued message) -> this lane's own colour, as there
+  //     is nobody else to borrow from;
+  //  4. anything else (system, a member that left) -> neutral, and the tooltip
+  //     says the counterpart is not on this board. Never a guess.
+  const noAddressee = message.to === undefined || message.to === null
+  // A `system` counterpart is checked BEFORE the no-addressee fallback: the
+  // fallback exists for "this lane sent it, nobody is recorded as the recipient",
+  // not for "the sender is not a lane at all" (which must read as neutral).
+  const own =
+    isUser && resolved.peerMatched
+      ? userPaint
+      : resolved.peerMatched && peerPaint !== undefined
+        ? peerPaint
+        : noAddressee && !isSystem && ownPaint !== undefined
+          ? ownPaint
+          : systemPaint
+  return {
+    paint: own,
+    direction: resolved.direction,
+    peerName: resolved.peerName,
+    peerLaneId: resolved.peerLaneId,
+    peerMatched: resolved.peerMatched,
+    isUser,
+  }
+}
+
+/** Fallback lane tokens, for a payload that predates `lane.color`. */
+const LANE_COLOR_FALLBACKS: LaneColorTokens[] = [
+  { bar: '--dsw-alias-brand-primary', on: '--dsw-alias-label-primary-inverted' },
+  { bar: '--dsw-alias-state-success-primary', on: '--dsw-alias-label-primary-inverted' },
+  { bar: '--dsw-alias-state-warn-primary', on: '--dsw-alias-label-primary-inverted' },
+  { bar: '--dsw-alias-state-error-primary', on: '--dsw-alias-label-primary-inverted' },
+  { bar: '--dsw-alias-state-business-primary', on: '--dsw-alias-label-primary-inverted' },
+  { bar: '--dsw-alias-state-idle-primary', on: '--dsw-alias-label-primary-inverted' },
+]
 
 /** See the TICKS table in the module doc. */
 export function buildTicks(input: {  window: TimelineWindow
@@ -976,6 +1332,25 @@ export function layoutTimeline(
 
   /* --------------------------------------------------- message markers */
 
+  /**
+   * Speaker id (a SESSION id) -> lane id, derived from the payload's own lanes.
+   *
+   * Built here rather than required from the caller so direction is correct by
+   * construction: lane ids match session ids for a teammate, and the lead's
+   * session id comes from its `navigation`. This is what lets the density pass
+   * below avoid starving one direction on a lane.
+   */
+  const lanesById = new Set(lanesInput.map((lane) => lane.id))
+  const laneBySessionId = new Map<string, string>()
+  for (const lane of lanesInput) {
+    const navigation = lane.navigation
+    const sessionId =
+      navigation === undefined ? undefined : navigation.type === 'session' ? navigation.value : navigation.value?.sessionId
+    if (typeof sessionId === 'string' && sessionId !== '') laneBySessionId.set(sessionId, lane.id)
+  }
+  const speakerToLane = (speakerId: string): string | null =>
+    lanesById.has(speakerId) ? speakerId : laneBySessionId.get(speakerId) ?? null
+
   const messageMode: MessageMode = options.messageMode === 'markers' ? 'markers' : 'both'
   const gapPx = num(options.messageMinGapPx, MESSAGE_MARKER_MIN_GAP_PX)
   const maxPerLane = num(options.messageMaxPerLane, MESSAGE_MARKER_MAX)
@@ -1030,6 +1405,8 @@ export function layoutTimeline(
       mode: messageMode,
       gapPx,
       maxPerLane,
+      laneId: lane.id,
+      laneIdOf: speakerToLane,
     })
     // `kept.indices` is ascending already, and every candidate between two kept
     // indices was dropped — counted onto the marker that follows it, so the UI
@@ -1229,7 +1606,11 @@ function taskCardRect(
     x,
     y: laneY + TASK_CARD_TOP,
     w,
+    // `h` stays the CARD box; the bar carries its own height, so "the bar became
+    // a 36px blob again" is a red test rather than a silent regression.
     h: TASK_CARD_HEIGHT,
+    barY: laneY + TASK_CARD_TOP + TASK_BAR_TOP_OFFSET,
+    barH: TASK_BAR_HEIGHT,
     viewX,
     visible: viewX + w >= 0 && viewX <= viewportWidth,
     live: anchor === 'live',

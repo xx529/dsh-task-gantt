@@ -404,19 +404,24 @@ function toTimelineTask(draft: TaskDraft, laneId: string): TimelineTask {
 function makeSpeakerLookup(
   laneByMemberId: Map<string, string>,
   memberIdByName: Map<string, string>,
+  memberNameById: Map<string, string>,
 ): (id: string | undefined, name: string | undefined) => SpanSpeaker | undefined {
   return (id, name) => {
     if (id === undefined) return undefined
+    // The journal names the sender but NOT the addressee: `delivered` carries
+    // only ids, so a `to` speaker must resolve its display name through this
+    // reverse index. Without it the recipient showed up as a raw session id.
+    const resolved = name ?? memberNameById.get(id) ?? id
     const laneId = laneByMemberId.get(id)
-    if (laneId === 'lead') return { kind: 'lead', id: 'lead', name: name ?? 'lead' }
-    if (laneId !== undefined) return { kind: 'teammate', id: laneId, name: name ?? laneId }
+    if (laneId === 'lead') return { kind: 'lead', id: 'lead', name: resolved }
+    if (laneId !== undefined) return { kind: 'teammate', id: laneId, name: resolved }
     if (name !== undefined) {
       const byName = memberIdByName.get(name)
       if (byName === 'lead') return { kind: 'lead', id: 'lead', name }
       if (byName !== undefined) return { kind: 'teammate', id: byName, name }
     }
-    if (id === 'lead') return { kind: 'lead', id: 'lead', name: name ?? 'lead' }
-    return { kind: 'system', id, name: name ?? id }
+    if (id === 'lead') return { kind: 'lead', id: 'lead', name: resolved }
+    return { kind: 'system', id, name: resolved }
   }
 }
 
@@ -431,7 +436,10 @@ function makeSpeakerLookup(
  *
  * @param fold - the fold of the log that carried the events.
  * @param lookup - roster resolver for both ids.
- * @param seen - message ids already emitted (one exchange = one span).
+ * @param seen - message ids already emitted, **scoped to this call**: the
+ *   caller passes a fresh set per fold, because one exchange must be placed on
+ *   two lanes. Cross-fold deduplication happens by lane + message id in the
+ *   message pass, never here.
  * @returns ascending spans.
  */
 function messageSpansFrom(
@@ -472,6 +480,12 @@ function messageSpansFrom(
  *
  * `from.id` is the literal `'user'` so the client can give every prompt one
  * fixed colour: "I said this" must never look like "a teammate said this".
+ *
+ * `sessionId` is the **log that carried** the event (the contract's meaning),
+ * not the lane the span ends up on — the same prompt is present in several logs,
+ * and the copy kept is the first one read. Deduplication must therefore key on
+ * something log-independent: keying on `sessionId` drew one prompt on **three**
+ * lanes (measured).
  *
  * @param fold - the fold of the log that carried the events.
  * @returns ascending spans.
@@ -520,6 +534,13 @@ function turnSpansFrom(fold: FoldedSession, speaker: SpanSpeaker): MessageSpan[]
     spans.push(emitted)
   }
   return spans
+}
+
+/** The speaker a lane stands for — the Lead row is `lead`, every other is a teammate. */
+function speakerOfLane(lane: TimelineLane): SpanSpeaker {
+  return lane.role === 'lead'
+    ? { kind: 'lead', id: lane.id, name: lane.name }
+    : { kind: 'teammate', id: lane.id, name: lane.name }
 }
 
 /** Ascending by `(time, end)`, with `turn` under `message`/`user-prompt`. */
@@ -608,11 +629,22 @@ async function deriveTimeline(ctx: Context, sessionId: string, generatedAt: numb
 
   // ---- 4. roster: projection first, journal fills the gaps ----------------
   const memberIdByName = new Map<string, string>()
-  for (const [name, id] of rootFold.team.memberIdByName) memberIdByName.set(name, id)
+  /** The reverse index: a journal `targetId` arrives WITHOUT a name. */
+  const memberNameById = new Map<string, string>()
+  for (const [name, id] of rootFold.team.memberIdByName) {
+    memberIdByName.set(name, id)
+    memberNameById.set(id, name)
+  }
   for (const view of memberViews) {
     const name = text(view.name)
     const id = text(view.id)
-    if (name !== undefined && id !== undefined) memberIdByName.set(name, id)
+    if (name !== undefined && id !== undefined) {
+      memberIdByName.set(name, id)
+      memberNameById.set(id, name)
+    }
+  }
+  for (const member of rootFold.team.members) {
+    if (member.name !== undefined && member.name !== '') memberNameById.set(member.id, member.name)
   }
 
   const leadView = memberViews.find((view) => text(view.role) === 'lead' || text(view.name) === 'lead')
@@ -791,14 +823,6 @@ async function deriveTimeline(ctx: Context, sessionId: string, generatedAt: numb
         ? fromView
         : deriveStatus(draft.phase, runningKnown ? running : undefined, coldSession ? false : hasOpenSpan)
 
-    // The lane's own turns, plus this lane's identity colour. `navigation`
-    // is only set for a lane with a real session behind it.
-    const speaker: SpanSpeaker =
-      draft.role === 'lead'
-        ? { kind: 'lead', id: 'lead', name: draft.name }
-        : { kind: 'teammate', id: draft.id, name: draft.name }
-    const messages = fold === undefined ? [] : turnSpansFrom(fold, speaker)
-
     const lane: TimelineLane = {
       id: draft.id,
       name: draft.name,
@@ -808,7 +832,9 @@ async function deriveTimeline(ctx: Context, sessionId: string, generatedAt: numb
       // the flag tells the UI "this is durable history", not "a log exists".
       hasHistory: fold !== undefined && spans.length > 0,
       spans,
-      messages: sortMessageSpans(messages),
+      // Filled by the message pass below (turns + exchanges + prompts) — one
+      // single place decides placement, so a turn can never be drawn twice.
+      messages: [],
       color: laneColorTokens(draft.id, laneIndex),
       tasks: [],
     }
@@ -823,30 +849,102 @@ async function deriveTimeline(ctx: Context, sessionId: string, generatedAt: numb
   }
   const laneIds = new Set(lanes.map((lane) => lane.id))
 
-  // ---- 7b. messages: attribute every exchange to its sender's lane --------
+  // ---- 7b. messages: dual-write every exchange onto BOTH lanes ------------
   // Reads BOTH the root log and each member log, because a teammate's message
   // is journalled into the Lead's log while the teammate's own replies live in
   // its own log. Attribution is by the payload's ids (see `makeSpeakerLookup`),
-  // so a span lands on the row of whoever actually spoke.
-  const lookup = makeSpeakerLookup(laneByMemberId, memberIdByName)
+  // never by the log it was read from.
+  //
+  // ## Why each exchange lands on TWO lanes
+  //
+  // The user asked (verbatim) for the pair to be visible from both sides:
+  // "A 发给 B，A 的泳道显示 收件人B 的颜色并带有发出的标识，而 B 这显示 收件人A
+  // 的颜色并带有接收的标记". That requires the message on A's row *and* B's row.
+  // The row itself is the perspective: when `lane.id === span.from.id` the reader
+  // is the sender, otherwise the receiver, so the client derives "sent" vs
+  // "received" from where it found the span and the contract needs no new field.
+  //
+  // Measured before this change on the real Lead log: the Lead lane carried 25
+  // `message` spans and every teammate lane carried **zero** incoming — the Lead
+  // could not see who had answered it.
+  const lookup = makeSpeakerLookup(laneByMemberId, memberIdByName, memberNameById)
   const laneById = new Map(lanes.map((lane) => [lane.id, lane]))
-  const seenMessages = new Set<string>()
+  /** Span per message id / prompt, so N logs carrying it still yield one record. */
+  const spanByKey = new Map<string, MessageSpan>()
+  /** `${laneId}\u0000${messageId}` — one copy per lane, never a third. */
+  const placedIn = new Set<string>()
   const messageDiagnostics = []
+  /** Unique exchanges seen, regardless of how many lanes display them. */
+  let uniqueMessages = 0
+  /**
+   * Copies of **messages and prompts** written across all lanes (≥ uniqueMessages).
+   *
+   * Turns are counted separately in {@link turnsWritten}: they are "this person
+   * was working here", not an exchange, and folding them into this number made
+   * the `notes` line compare two different populations (67 unique vs 141 copies,
+   * of which 18 were turns) — a defect named F11 by the verification track.
+   */
+  let messageCopies = 0
+  /** Turn spans written; every turn belongs to exactly one lane. */
+  let turnsWritten = 0
+  /** Exchanges whose recipient is not on the roster, so only one side shows. */
+  let offRosterTargets = 0
+
+  const place = (laneId: string, messageId: string | undefined, span: MessageSpan): void => {
+    const lane = laneById.get(laneId)
+    if (lane === undefined) return
+    const key = `${laneId}\u0000${messageId ?? `${span.kind}:${span.time}:${span.from.id}`}`
+    if (placedIn.has(key)) return
+    placedIn.add(key)
+    lane.messages.push(span)
+    if (span.kind === 'turn') turnsWritten += 1
+    else messageCopies += 1
+  }
+
   for (const [foldSessionId, fold] of folds) {
     messageDiagnostics.push(fold.messages.diagnostics)
-    const exchanges = messageSpansFrom(fold, lookup, seenMessages)
-    const prompts = userPromptSpansFrom(fold)
-    for (const span of [...exchanges, ...prompts]) {
-      // A message belongs to the lane of its sender; a *user prompt* belongs to
-      // the lane whose log carried it (the human is not a roster member), which
-      // for the Lead's own log is the Lead row.
-      const owner =
-        span.kind === 'user-prompt'
-          ? (laneByMemberId.get(foldSessionId) ?? foldSessionId)
-          : span.from.id
-      const lane = laneById.get(owner)
-      if (lane === undefined) continue
-      lane.messages.push(span)
+    // Turns are "this person was working here", not an exchange → single lane.
+    const ownLaneId = laneByMemberId.get(foldSessionId) ?? foldSessionId
+    const ownLane = laneById.get(ownLaneId)
+    if (ownLane !== undefined) {
+      for (const span of turnSpansFrom(fold, speakerOfLane(ownLane))) {
+        const key = `turn\u0000${foldSessionId}\u0000${span.messageId ?? span.time}`
+        if (spanByKey.has(key)) continue
+        spanByKey.set(key, span)
+        place(ownLaneId, `turn:${span.messageId ?? span.time}`, span)
+      }
+    }
+
+    // Exchanges: keep the first record per message id across all logs.
+    for (const span of messageSpansFrom(fold, lookup, new Set<string>())) {
+      const key = `message\u0000${span.messageId ?? `${span.time}\u0000${span.from.id}`}`
+      if (spanByKey.has(key)) continue
+      spanByKey.set(key, span)
+      uniqueMessages += 1
+      place(span.from.id, span.messageId, span)
+      if (span.to === undefined) continue
+      if (laneById.has(span.to.id)) {
+        place(span.to.id, span.messageId, span)
+      } else {
+        offRosterTargets += 1
+      }
+    }
+
+    // The human's prompts: "you" has no lane of its own, so the prompt is shown
+    // on the row of the agent it addressed (the lane that carried the log).
+    // Keyed by (time, preview) rather than by the carrying log, because the same
+    // prompt is present in the Lead's log AND in each teammate's log — keying on
+    // the log drew it once per log (measured: three copies of one prompt).
+    for (const span of userPromptSpansFrom(fold)) {
+      const key = `prompt\u0000${span.time}\u0000${span.preview ?? ''}`
+      if (spanByKey.has(key)) continue
+      spanByKey.set(key, span)
+      uniqueMessages += 1
+      place(ownLaneId, `prompt:${span.time}:${span.preview ?? ''}`, span)
+      const target = span.to
+      if (target !== undefined && laneById.has(target.id)) {
+        place(target.id, `prompt:${span.time}:${span.preview ?? ''}`, span)
+      }
     }
   }
   for (const lane of lanes) lane.messages = sortMessageSpans(lane.messages)
@@ -855,6 +953,21 @@ async function deriveTimeline(ctx: Context, sessionId: string, generatedAt: numb
   for (const diagnostics of messageDiagnostics) {
     unpairedDeliveries += diagnostics.unpairedDeliveries
     injectedUserMessages += diagnostics.injectedUserMessages
+  }
+  if (offRosterTargets > 0) {
+    notes.push(
+      `${offRosterTargets} message(s) were addressed to a session outside this roster (a finished/failed member or another team); they are drawn on the sender's lane only, and no lane was invented for them`,
+    )
+  }
+  if (messageCopies > uniqueMessages) {
+    // Three numbers on purpose, each a different population, so a reader never
+    // has to subtract: unique exchanges, their copies across lanes, and the
+    // turns drawn alongside them.
+    notes.push(
+      `${uniqueMessages} unique message(s): ${messageCopies} message/prompt copies drawn across lanes ` +
+        `(an exchange is shown on both the sender's and the recipient's lane, so a per-lane count is not a message total), ` +
+        `plus ${turnsWritten} turn span(s)`,
+    )
   }
   if (unpairedDeliveries > 0) {
     notes.push(

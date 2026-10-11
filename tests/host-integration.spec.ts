@@ -15,6 +15,7 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
+import { MESSAGE_PREVIEW_MAX, type MessageSpan } from '../src/shared/contract.ts'
 import { LANE_COLOR_TOKENS, UNASSIGNED_COLOR_TOKENS, laneColorTokens } from '../src/host/lane-color.ts'
 import { buildTimeline } from '../src/host/timeline.ts'
 import { clearSessionLogCache } from '../src/host/session-log.ts'
@@ -587,6 +588,173 @@ describe('buildTimeline over the real Lead journal', () => {
       expect(known.has(lane.color.bar), `${lane.id} bar`).toBe(true)
       expect(known.has(lane.color.on), `${lane.id} on`).toBe(true)
     }
+  })
+})
+
+describe('an exchange is drawn on both lanes (task-11)', () => {
+  /** Every message span, tagged with the lane it was drawn on. */
+  function copies(data: { lanes: { id: string; messages: MessageSpan[] }[] }, kind: MessageSpan['kind']) {
+    return data.lanes.flatMap((lane) => lane.messages.filter((message) => message.kind === kind).map((message) => ({ laneId: lane.id, message })))
+  }
+
+  /** Group copies by their exchange identity (messageId, or time for prompts). */
+  function groups(rows: { laneId: string; message: MessageSpan }[], keyOf: (message: MessageSpan) => string) {
+    const map = new Map<string, { laneId: string; message: MessageSpan }[]>()
+    for (const row of rows) {
+      const key = keyOf(row.message)
+      const list = map.get(key)
+      if (list === undefined) map.set(key, [row])
+      else list.push(row)
+    }
+    return map
+  }
+
+  it('draws a paired exchange exactly twice: sender lane and recipient lane', async () => {
+    const data = await buildTimeline(host(), ROOT_SESSION)
+    assertTimeline(data)
+    const byId = groups(copies(data, 'message'), (message) => message.messageId ?? `t${message.time}`)
+    expect(byId.size, 'the real log carries exchanges').toBeGreaterThan(0)
+
+    let doubled = 0
+    for (const [id, rows] of byId) {
+      // Not 1 (the pre-task-11 behaviour: sender lane only), not 3 (a third copy).
+      expect(rows.length, `${id} was drawn ${rows.length} time(s)`).toBeLessThanOrEqual(2)
+      if (rows.length === 2) {
+        doubled += 1
+        const lanes = new Set(rows.map((row) => row.laneId))
+        expect(lanes.size, `${id} drawn twice in ONE lane (the dedupe key must include laneId)`).toBe(2)
+        const { from, to } = rows[0]!.message
+        expect(to, `${id} has two copies but no addressee`).toBeDefined()
+        expect(lanes).toEqual(new Set([from.id, to?.id]))
+      }
+    }
+    expect(doubled, 'at least one exchange must be double-written (otherwise the feature is off)').toBeGreaterThan(0)
+  })
+
+  it('draws a turn exactly once (a turn is "this agent worked", not an exchange)', async () => {
+    const data = await buildTimeline(host(), ROOT_SESSION)
+    assertTimeline(data)
+    const turns = groups(copies(data, 'turn'), (message) => message.messageId ?? `t${message.time}`)
+    expect(turns.size, 'the real log has turns').toBeGreaterThan(0)
+    for (const [key, rows] of turns) expect(rows.length, `turn ${key}`).toBe(1)
+  })
+
+  it('draws an orphan delivery once, on the sender lane', async () => {
+    const data = await buildTimeline(host(), ROOT_SESSION)
+    assertTimeline(data)
+    const orphans = copies(data, 'message').filter((row) => row.message.to === undefined)
+    for (const [key, rows] of groups(orphans, (message) => message.messageId ?? `t${message.time}`)) {
+      expect(rows.length, `orphan ${key} must have exactly one copy (no recipient to mirror onto)`).toBe(1)
+      expect(rows[0]?.laneId).toBe(rows[0]?.message.from.id)
+    }
+  })
+
+  it('reports three separate populations: unique exchanges, their copies, and turns', async () => {
+    const data = await buildTimeline(host(), ROOT_SESSION)
+    assertTimeline(data)
+    const messageGroups = groups(copies(data, 'message'), (message) => message.messageId ?? `t${message.time}`)
+    const promptGroups = groups(copies(data, 'user-prompt'), (message) => `p${message.time}:${message.preview ?? ''}`)
+    const unique = messageGroups.size + promptGroups.size
+    const messageOrPromptCopies = copies(data, 'message').length + copies(data, 'user-prompt').length
+    const turnCopies = copies(data, 'turn').length
+    const mirrored = [...messageGroups.values(), ...promptGroups.values()].filter((rows) => rows.length === 2).length
+
+    const note = data.notes.find((line) => /unique message\(s\):/.test(line))
+    expect(note, 'the note explaining the copy counts must appear when exchanges are mirrored').toBeDefined()
+    // Structural match, not the whole sentence: the wording may be reworded, but
+    // the three POPULATIONS and their order are the contract this guard defends.
+    const parsed = /(\d+) unique message\(s\): (\d+) message\/prompt copies drawn across lanes[\s\S]*?plus (\d+) turn span\(s\)/.exec(note as string)
+    expect(parsed, `unparseable note: ${note}`).not.toBeNull()
+    const describedUnique = Number((parsed as RegExpExecArray)[1])
+    const describedCopies = Number((parsed as RegExpExecArray)[2])
+    const describedTurns = Number((parsed as RegExpExecArray)[3])
+
+    // Each number must equal what a reader can count on the wire for ITS population.
+    expect(describedUnique, 'unique = distinct messages + distinct prompts').toBe(unique)
+    // F11 REGRESSION LOCK: the copy count is messages + prompts ONLY. It used to
+    // include turn placements (141 where only 123 were message/prompt copies),
+    // which made the note compare two different populations.
+    expect(describedCopies, 'copies must NOT include turns').toBe(messageOrPromptCopies)
+    expect(describedTurns, 'turns are reported as their own population').toBe(turnCopies)
+    // The three assertions above are RECOUNTS from the lanes, which host-data-2
+    // rightly calls the only authoritative check ("do not assert a parity or a
+    // decomposition identity"). This last one IS a decomposition, so it is gated
+    // on its precondition first: every exchange has at most two copies, therefore
+    // `copies - unique` is exactly the number of mirrored exchanges. Parity/
+    // doubling formulas were tried and failed on the real 9-lane data (the diff
+    // there is 140, not a clean multiple of anything) — so if this ever disagrees,
+    // trust the recount, not the identity.
+    for (const rows of [...messageGroups.values(), ...promptGroups.values()]) {
+      expect(rows.length, 'each exchange is drawn on at most two lanes').toBeLessThanOrEqual(2)
+    }
+    expect(describedCopies - describedUnique).toBe(mirrored)
+    expect(describedCopies).toBeGreaterThan(describedUnique)
+  })
+})
+
+describe('host invariants published in FINDINGS §18.8', () => {
+  const SPEAKER_KINDS = new Set(['user', 'lead', 'teammate', 'system'])
+  const MESSAGE_KINDS = new Set(['turn', 'message', 'user-prompt'])
+
+  it('holds all 13 numbered rules on the real board', async () => {
+    // host-data-2 published these as the host's contract (verified on 446 real
+    // spans) so the renderer does not have to re-derive them. They are asserted
+    // here BY NUMBER so a future drift names the rule it broke. Rules 1–12 were
+    // already enforced field-by-field by `assertTimeline`; consolidating them
+    // here makes the cross-owner contract traceable, and rule 13 was a real gap
+    // in this suite until this test existed.
+    const data = await buildTimeline(host(), ROOT_SESSION)
+    assertTimeline(data)
+
+    const violations: string[] = []
+    const messageLanes = new Map<string, Set<string>>()
+    for (const lane of data.lanes) {
+      // 13: the sentinel lane carries no messages — a CONSTRUCTIVE guarantee, not
+      // an observation (verified against the host code, 2026-10-12):
+      //   timeline.ts:871  `laneById = new Map(lanes.map(...))`  ← the message pass
+      //                    indexes only the ROSTER lanes;
+      //   timeline.ts:894/908 every `place()` looks the lane up and returns early
+      //                    when it is missing;
+      //   timeline.ts:1026-1039 the `unassigned` lane is pushed AFTER that pass and
+      //                    never enters `laneById`.
+      // So this can only start failing if someone moves the sentinel lane into
+      // `laneById` or reorders the two passes — which is exactly the edit this
+      // assertion should stop. Keyed on the stable sentinel `id`, never the
+      // display `name`.
+      if (lane.id === 'unassigned' && lane.messages.length > 0) violations.push('13: unassigned lane carries messages')
+      let previousTime = Number.NEGATIVE_INFINITY
+      for (const message of lane.messages) {
+        if (message.time < previousTime) violations.push(`1: ${message.kind} out of time order in ${lane.id}`) // 1
+        previousTime = message.time
+        if (message.end !== null && message.end < message.time) violations.push('2: end < time') // 2
+        if (!Number.isFinite(message.time)) violations.push('3: non-finite time') // 3
+        if (!SPEAKER_KINDS.has(message.from.kind)) violations.push(`4: bad from.kind ${message.from.kind}`) // 4
+        if (message.from.id === '' || message.from.name === '') violations.push('5: empty from id/name') // 5
+        if (!MESSAGE_KINDS.has(message.kind)) violations.push(`6: bad kind ${message.kind}`) // 6
+        if (message.kind === 'turn' && message.to !== undefined) violations.push('7: turn carries to') // 7
+        if (message.kind === 'user-prompt' && message.from.id !== 'user') violations.push('8: prompt from.id is not "user"') // 8
+        if (message.preview !== undefined && (message.preview.length > MESSAGE_PREVIEW_MAX || /[\r\n]/.test(message.preview))) {
+          violations.push('9: preview over-long or multiline') // 9
+        }
+        if (message.sessionId === '') violations.push('12: empty sessionId') // 12
+        if (message.messageId !== undefined) {
+          const key = `${message.kind}:${message.messageId}`
+          const lanes = messageLanes.get(key) ?? new Set<string>()
+          lanes.add(lane.id)
+          messageLanes.set(key, lanes)
+        }
+      }
+    }
+    for (const [key, lanes] of messageLanes) {
+      const kind = key.slice(0, key.indexOf(':'))
+      // 10 / 11: a turn is a single-lane fact; an exchange is one or two lanes
+      // (ONE is normal: an orphan delivery, or a recipient off the roster).
+      if (kind === 'turn' && lanes.size !== 1) violations.push(`10: turn ${key} appears on ${lanes.size} lanes`)
+      if (kind === 'message' && (lanes.size < 1 || lanes.size > 2)) violations.push(`11: message ${key} appears on ${lanes.size} lanes`)
+    }
+
+    expect(messageLanes.size, 'the real board carries messages to check').toBeGreaterThan(0)
+    expect(violations, violations.join('\n')).toEqual([])
   })
 })
 

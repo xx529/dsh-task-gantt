@@ -11,7 +11,7 @@
 | 门 | 命令 | 结果 | 原始证据 |
 |---|---|---|---|
 | 类型检查 | `pnpm run typecheck` | ✅ `typecheck_exit=0`（`tsc -p tsconfig.json --noEmit`，无任何输出） | `/tmp/gate2.txt` |
-| 单测 | `pnpm run test` | ✅ `Test Files 17 passed (17)` / `Tests 444 passed | 1 skipped (445)`（2026-10-12 00:35 复跑；契约 v2 与任务条几何见 §1.4–§1.6） | 00:35 复跑 |
+| 单测 | `pnpm run test` | ✅ `Test Files 18 passed (18)` / `Tests 479 passed | 1 skipped (480)`（2026-10-12 01:20 复跑；见 §1.4–§1.9） | 01:20 复跑 |
 | 构建 | `pnpm run build` | ✅ 产出 `lib/index.js` + `lib/client.js`（`.d.ts`/`.map` 同批） | `/tmp/gate2.txt` |
 | 产物形状（packaging 脚本） | `pnpm run verify:build` | ✅ `[verify-build] OK`（宿主半 ESM 导出 name/inject/apply，0 个非相对 import；客户端半 wrapper 调用一次且 factory 返回 exports） | `/tmp/gate2.txt` |
 | 展示元数据（packaging 脚本） | `pnpm run verify:meta` | ✅ `[verify-meta] OK`（`locale/en.json`、`locale/zh.json` 经 exports 解析；`icon.svg` 2277 B） | `/tmp/gate2.txt` |
@@ -47,29 +47,43 @@ $ wc -c lib/index.js lib/client.js → 40502 B（39.6 KiB）/ 71996 B（70.3 KiB
 
 结论：**F1 已关闭且是字节级关闭**（提交产物 == 当前源码重建产物），F7 的「必须带 HEAD」在提交前后都给出正确信号（提交前 1、提交后 0）。`docs/INSTALL.md` 随后由 Lead 提交为 `517f23d`；此后工作区唯一未提交项是**本文件**（§1.1 与 §5/§6 的这次定稿）。
 
-## 1.2 真机挂载冒烟（Lead 执行，verify 只记录、未执行）
+## 1.2 真机冒烟（Lead 执行，verify 只记录、未执行）
 
-Lead 在 **scratch home**（不碰用户真实 `~/.dsh`）完成冒烟；我**没有**执行 `tests/e2e/mount-smoke.sh` 的 `mount`/`unmount`，因此下表「证据」列写的是 Lead 报给我的一手观察，命中状态由我按 A1–A11 断言表逐条判定。**推断命中的项我都标了「推断」**，没有把推断当成实测。
+**平台**：web profile 实例 19501，DSH 0.2.0-rc.2 + better-sidebar 0.25.0。Lead 实测并交付原始数据，我（verify）**没有**执行过 `mount`/`unmount`，本节全部标注来源。
 
-| # | 断言点 | 判定 | 证据 / 说明 |
-|---|---|---|---|
-| A1 | profile bundle 栈出现本插件 | ✅ | 在 scratch 组合中安装后 tab 出现、路由可答；安装本体未逐步取证 |
-| A2 | 启动日志无 `disabling profile plugin` | ✅（**推断**） | 未被禁用 ⇒ 预检通过；Lead 未直接贴启动日志行 |
-| A3 | 浏览器半被下发且首行是 `window.__ModuleLoader__.load({ id: "dsh-task-gantt"` | ✅（**推断**） | 面板真实挂载 ⇒ 宿主 materialize 了 `lib/client.js`；未单独抓 `/plugins` 响应体 |
-| A4 | `POST /api/ping` → `{ok:true,value:{apiVersion:1,host:'dsh-task-gantt'}}` | ✅ | 探针输出：`apply entered; webServer= undefined`，改 `ctx.inject` 后 `POST /dsh-task-gantt/api/ping` **立刻**返回 `{"ok":true,…}` |
-| A5 | `/api/timeline` 200，`source ∈ log/partial/live`，`notes` 是数组 | ✅ | 200，`source: log`，6 张任务卡带**真实时间戳** |
-| A6 | 跨源请求 403 | ❓ | 冒烟未做该负例（单测已覆盖 403/405/404/400，见 `tests/host-route.spec.ts` 28 例） |
-| A7 | `+` 菜单出现「任务甘特图 / Task Gantt」 | ✅ | Lead 观察：tab 出现在 `+` 菜单并可打开 |
-| A8 | 面板渲染泳道与任务卡 | ✅ | `div[data-dsh-task-gantt]` 挂载，`[class*="dtg-"]` **1085** 个节点；**7 条泳道**（lead / packaging / host-data / shell / ui / verify / docs）；**6 张任务卡**带真实时间戳 |
-| A9 | 无 agent team 的会话里降级为空态而非报错 | ❓ | 冒烟未覆盖该场景 |
-| A10 | 硬刷新后仍正常 | ❓ | 冒烟未做（只跑了 A11 之外的挂载路径） |
-| A11 | 卸载后 tab 消失、无残留下载错误 | ❓ | `unmount` 未执行（脚本里的分支我未跑） |
+### 本轮 7 项实测（Lead 提供，我逐项判定）
 
-截图（Lead 提供，我确认文件存在）：`/Users/lzx/Documents/GitHub/dsh-task-gantt/docs/screenshots/panel.png`（142 625 B）、`panel-compact.png`（117 674 B）。
+| # | 数据 | 判定 |
+|---|---|---|
+| 1 | `[data-build]` = `"build 2026-10-12 · tracks+peer-color"` | ✅ 确认部署的是含本轮修复的产物 |
+| 2 | `data-msg-direction` 分布 = `{ incoming: 8 }`（**outgoing 0**） | ❓ **未通过** —— 见下"真机发现" |
+| 3 | `.dtg-msg-out` / `.dtg-msg-in` = `0 / 8` | ❓ **未通过**（与第 2 项同一现象） |
+| 4 | `.dtg-msg` 总数 = `8` == `0 + 8` | ✅ 计数自洽（**这正说明问题不是"没画"，而是"只画了一个方向"**） |
+| 5 | 样例 `title`：`10-11 23:10 · received from you` / `10-11 23:19 · received from demo-gamma · 1 more here, not drawn`；**user marker 方向 = incoming** | ✅ 与规则 4 一致（人类发言在承载泳道上读作"收到"） |
+| 6 | 泳道几何（矩形实测，泳道内局部坐标）：`lane-bg h=84`；`activity dy=4 h=8`；`message dy=16 h=11`；`task chip dy=114 h=36`；`task bar dy=127 h=10` ⇒ **activity 4–12 / message 16–27 / task 30–66 两两不相交**，chip 不越界；`114 − 84 = 30 = TASK_CARD_TOP` | ✅ 与我的**结构断言**交叉验证（我断言"三轨不相交 + 不写死 84 + `TASK_CARD_TOP === task 轨 y`"，真机数字逐条吻合） |
+| 7 | 同一 `msPerPx=6.0` 下任务条宽 `2.2 / 4.1 / 5.3 / 7.3 px`（**不再是等长**）；chip 宽恒 148 且全部 `placement='right'`；无 history 的 live 标记 = `2px × 10px`（不再是 36px 柱子） | ✅ "条长=时长" 与"live 标记是点不是条"两项真机通过；与我的**单调性/下限**断言一致（2.2px 说明下限 2px 只是兜底，不是常态） |
 
-**仍未验证（冒烟之外）**：实时增量刷新与 live `agentTeams` 投影路径（Lead 起过最小 team 但未观察到新 team 形成，**不计入已实测**）；`git diff --exit-code -- lib` 之外的真机反代子路径与桌面壳 `dsh-app://` 路由（仅单测覆盖，见 `tests/client-api.spec.ts`）。
+### 真机发现（**离线全绿、真机仍错** —— 与两次 fixture 缺口同类）
 
----
+第 2/3 项是**已知未过项**，但 **host 数据是正确的**：Lead 直接打路由拿到的会话（`session-48a50328-…`、`source:"log"`、4 泳道）里
+```
+demo-alpha laneId = b4c7baa8-…，一条 marker: from = { kind:'teammate', id:'b4c7baa8-…' }
+demo-beta  laneId = 24fa5a9e-…，一条 marker: from = { kind:'teammate', id:'24fa5a9e-…' }
+```
+即 `from.id === laneId` 的消息**确实存在**（每条泳道都有一条来自自己），按规则应为 **outgoing**，而渲染出 0 条。已排除：部署不一致（仓库与实例 `lib/client.js` **md5 逐字节相同**）、产物缺 `bySessionId`（×3）、`laneIdOf` 未传入、泳道缺 `navigation`。
+
+**我的独立取证（离线，先于 ui-2 的定位）**：我用**同一份真实 board** 按 `GanttChart.tsx:217-227` 的**真实构造**（`laneIds` + 由 `lane.navigation` 建的 `bySessionId` 两跳）重算方向，得到 **141 条 marker → outgoing 74 / incoming 67**，且 9 条泳道**全部带 `navigation`**。⇒ **数据与方向判定都是对的，丢失发生在"选哪些 marker 画"这一步**，从而**否证了"客户端手里的 data 与 host 不一致"这一候选解释**。（这条独立缩小了范围：不是数据、不是 `laneIdOf`，而是抽稀。）
+
+**根因（ui-2 定位并修复）**：`decimateMarkers` 原先把**一个像素间距游标**与**一个占用集合**共用给所有方向。真实数据里"回复"天然落在它所回答的消息之后几像素，于是整条泳道的 outgoing 全部撞在已保留的 incoming 的 9px 窗口内被**系统性丢弃** —— 现象是"计数与时间都对，只有**方向层静默消失**"。修法：①间距游标与占用集合**按方向分开**（同方向仍 ≥9px，不同方向允许更近 —— 刻意取舍：宁可重叠 2px，也不能整方向消失）；②**backfill**：某方向"有数据但一条未留"时放开间距补一条；③非有限 `time` 的 span **不进候选，backfill 也不复活**。
+**ui-2 的修复前后实测**（同一真实 payload）：4 泳道 `OUT 0→5 / IN 8→8`（`rendered 8→13`）；9 泳道 `OUT 5→21 / IN 21→24`（`rendered 26→45`）。**Lead 将重新部署复验第 2/3 项**，届时本节 ❓ 换 ✅。
+
+**我的回归锁（3 条，已绿）**：`tests/layout.spec.ts`
+1. **整个 cluster 落在最小间距内**（6 条 marker 挤在 6px 内）→ 两个方向都必须有保留；
+   - **形状决定一切，我实测过这一点**：用"重建的旧算法（单一游标、9px）"跑同一输入 → 旧实现只留 **1** 条且方向只有 `incoming` ⇒ **本条在旧代码上必红**；而"每 4px 交替"的那种形状旧实现能留 2 条（每方向一条）⇒ **看起来等价却什么都证明不了**。这与"id 空间重合""两条读通道同源"是**同一类逃逸：决定 bug 可达性的是数据的形状，不是断言本身**。
+2. **某方向将被整体抹掉时，恰好补回 1 条，且时间是原始值**（backfill 不得改写时间）；
+3. **非有限 `time` 永不被复活**（ui-2 的 backfill 曾让这条红过一次 —— 说明它有牙齿）。
+
+> 历史记录（上一轮，A1–A11 断言表）：当日冒烟命中 A1/A4/A5/A7/A8，A6/A9/A10/A11 未测；这一节现以本轮 7 项为准。
 
 ## 1.3 GitHub CI 首次真跑：红了，根因是 pnpm 大版本 → 已修（我本地用 node 20 + pnpm 10 完整复现）
 
@@ -207,6 +221,141 @@ Lead 扩展并冻结了 `src/shared/contract.ts`（`SpanSpeaker` / `MessageSpan`
 
 **未动**：`MESSAGE_MARKER_MIN_GAP_PX(9) < MESSAGE_MARKER_WIDTH(11)`（Lead 裁定本轮不改，仍记 ❓19）。
 
+## 1.7 问题 2 的根因核实：与 Lead 初诊**不一致**（我按实测记录，不按印象）
+
+**Lead 的初诊**：`GanttChart.tsx:432` 用 `laneColors.get(marker.from.id)`，而 `laneColors` 的键是 **laneId**、`marker.from.id` 是**会话 id** → 查不到 → `undefined` → 填充没画上；用户看到"全是同一种深色"即由此而来。被归为"合法但静默失效的第四类：查表键不匹配"。
+
+**我的实测（真实 1263 条日志 fixture + fake 服务，85 条 marker）**
+```
+lane ids: lead, 66b9735d-…, 87589993-…, 7484fccf-…, c79a18f7-…, f828dda6-…, 91410edb-…, 8a600894-…, d9f89160-…
+   21 lead     | HIT  | 走 map 查表
+   53 teammate | HIT  | 走 map 查表
+   11 user     | MISS | 但走 userPaint（专门画法，不查 map）
+走 map 且未命中 = 0 / 85
+```
+**为什么不成立**：`src/host/timeline.ts:404-421` 的 `makeSpeakerLookup` 对 `lead`/`teammate` 返回的 `from.id` **就是 lane id**（lead → `'lead'`；teammate → 该成员的 laneId，即其会话 id）——正是 `laneColors` 的键；`user`/`system` 在 `GanttChart` 里走 `userPaint`/`systemPaint` **根本不进 map 分支**；未识别的 sender 会被兜底成 `kind:'system'`（`:419`、`:454-456`），同样不进 map 分支。所以第 432 行在实际数据上对每一条**使用它**的 marker 都命中。
+
+**结论（分两层，避免把风险类别写成已发生缺陷）**
+1. **风险类别成立、本实例不成立**：「查表键与 id 空间不一致 → 返回 undefined → 静默无色」是一个值得守的类别（jsx 里 `.get()` 的返回类型是 `X | undefined`，而 CSS 把 undefined 静默当"无值"），但**在今天的真实数据上没有发生**。我在守护里仍会加「任何 marker 的 paint 必须非空」这条**前置不变量**，并如实标注它当前**不会红**、不是对某个现存 bug 的修复。
+2. **用户诉求的真实缺口是语义**：用户逐字要求「A 发给 B：A 泳道显示**收件人 B 的颜色** + 发出标识；B 泳道显示**A 的颜色** + 接收标识」。当前实现**无论画在哪条泳道都用 `from` 的颜色**，且**没有发出/收到标识** —— 同一 marker 在两条泳道得到相同颜色，与要求相反。这才是要修的东西。
+3. 附注：真实数据里 85 条 marker 全在 Lead 泳道（member 泳道自己的日志里没有 message 事件），所以"每条泳道各自决定颜色"这一语义在最常见的真实形态下**几乎不可见**；构造"同一消息出现在两条泳道"的用例必须由 fixture 提供（我会在守护里显式构造，不依赖真实日志恰好如此）。
+
+**待 ui-2 落地后我要加的守护（按 Lead 口径，且不写魔法数）**
+- ① 同一 `MessageSpan` 在 `from` 泳道与 `to` 泳道 paint **不同**，且分别等于**对方**泳道色（需 ui-2 把颜色决策抽成可测纯函数/映射，签名至少含 `(message, laneId)`）；
+- ② 任一 marker 的 paint `bar`/`on` **非空**（前置不变量）；
+- ③ 方向标识存在且**非颜色可辨**（形状/字形/`aria-label`）；
+- ④ 问题 1：同一泳道内 **activity / message / task 三条轨道的 y 区间两两不相交**（不断言 `laneHeight === 84` 这类魔法数），需要 ui-2 把三轨道的 y/h 导出。
+
+## 1.8 问题 2 复核结论（Lead 实测确认）+ 更深一层的双写缺口 + 问题 1 的结构性断言
+
+**Lead 的活页面实测（与我的离线实测一致）**：7 条标记 —— `dtg-msg-user ×6` → `bg rgb(255,255,255)`（人类提示的专门画法）、`dtg-msg-agent ×1` → `bg rgb(245,158,11)`（颜色正常）。**`laneColors.get(marker.from.id)` 命中，不存在"返回 undefined 导致无色"**。Lead 明确更正：他的初诊是**按模式推断、没读 `makeSpeakerLookup`**，并同意按我的口径记录 —— 「查表键不匹配 → undefined → 静默无色」列为**风险类别（前置不变量，当前未捕获到实例）**，不写成已修的真 bug。§1.7 的全部内容由此**双重证实**（我的离线 85 条 marker 统计 + Lead 的活页面 7 条）。
+
+**更深一层的缺口（Lead 顺着证据查出来的，比颜色更根本）**：`src/host/timeline.ts:826-851` 里
+```
+const lane = laneById.get(owner)   // owner = from.id
+lane.messages.push(span)           // 只挂到「发送者」的泳道
+```
+即**每条消息只出现在发送者那一行**（活页面印证：6 条「你 → Lead」全在 lead 行，`demo-beta → …` 只在 demo-beta 行）。而用户要求「A 发给 B：A 的泳道一条、B 的泳道一条」⇒ **必须双写**。所以「按泳道取对方颜色」之外，**消息本身也还没到对方泳道**；Lead 已派 **task-11** 给 host-data-2（双写 + 去重键 `laneId+messageId` + `turn` 不双写 + 孤儿 delivery 只写一侧 + diagnostics 区分唯一数/出现次数）。我**等它落完**再加这四条守护：
+1. `A → B` 的消息恰好出现 **2** 次（A、B 各一次；不是 1 次、不是 3 次）；
+2. `kind:'turn'` 只出现 **1** 次（防止顺手双写）；
+3. 孤儿 delivery（无 `to`）只出现 **1** 次；
+4. diagnostics 的「唯一数」与「出现次数」各自正确（不能是简单相加）。
+
+**问题 1（三层分开）我按 Lead 口径落成结构断言，已绿**：`tests/layout.spec.ts` 里原先把 `TASK_CARD_TOP` 钉成 `LANE_PAD_Y + TURN_BAND_HEIGHT + 4`（ui-2 加高泳道后立刻变红，属**预期的契约变更**不是回归）。现改为断言**结构属性**（用 ui-2 新导出的 `laneTracks(laneIndex, laneHeight)`）：
+- 三条轨道 `['activity','message','task']`、各自 `h > 0`、**相邻两条 `y` 区间两两不相交**；
+- 默认泳道必须**装得下**三条轨道 + `LANE_BOTTOM_PAD`（否则被下一行裁掉，"分开"就不成立）；
+- 轨道高度是**固定值**（用户选的是"固定加高"而非自适应）：第 1 条泳道的内部布局恰为第 0 条整体平移一个 `laneHeight`，把 `laneHeight` 改成 100 也不改变各轨道高度；
+- `TASK_CARD_TOP === task` 轨道的 `y`（只有一处推导，避免两个来源漂移）；`TASK_CARD_HEIGHT <= TASK_TRACK_HEIGHT`。
+→ **不断言 `laneHeight === 84`**：那是魔法数，ui-2 下次调高度会让正确的代码变红，且说不清"分开"这件事。
+
+**方法论文档（Lead 要求署名给他，我完全同意留档）**
+> **「我用模式匹配代替读实现，得出了一个不存在的 bug，并已下发给队友。」** —— 下根因结论前，必须**读那条代码路径**，或做一次**能证伪它的实测**。（与「两条独立测量不齐时先找通道差异，而不是先判谁错」对称：一条讲"结论要有取证"，一条讲"分歧时别先归因对方"。）
+
+## 1.9 方向判定真 bug、双写守护、以及一条最重要的 fixture 教训
+
+**Lead 活页面实测的真 bug（ui-2 已修，我的守护已确认）**
+```
+Lead 实测（部署含新逻辑的产物）：8/8 标记 data-msg-direction="incoming"、dtg-msg-out 命中 0
+而 host 数据是对的：lead 泳道 104 条 messages，含 from:lead→to:packaging（应 outgoing）…
+根因：resolveMessageDirection 用「会话 id 比泳道 id」——lead 泳道 id 是 'lead'，而 from.id 是 'session-4d51254b-…'，永不相等
+```
+**我的第一版 fixture 有同一条逃逸路径**：我把 lane id 直接写成 `lane-a`/`lane-b`、speaker id 也写同名，于是**两个 id 空间重合**、原始比较也能通过 → 我的测试**全绿而真机全错**。已重写：
+- lane id = `lead` / `lane-b`；speaker id = `session-a` / `session-b`；`laneIdOf` 是**唯一的桥**；
+- 新增一条**元守护**：断言「没有任何 lane id 等于任何 speaker 会话 id」（这条一失效，整个文件就悄悄不再测这个 bug）；
+- 新增**计数**断言（Lead 点名）：一次交换恰好产出 **1 outgoing + 1 incoming**；整块看板两个方向都必须 > 0 —— **只断言"属性存在"正是让全 incoming 实现逃逸的原因**。
+- **又一次被队友纠正、也是我的第二个 fixture 缺口**：我的 `laneIdOf` 只做了"会话 id → 泳道 id"**一跳**，而真实实现是**两跳**（`GanttChart.tsx:207-215`）：① id 本身是 lane id → 返回自身（teammate 的 lane id 就是会话 id；实测真实数据里 **21/85** 条 marker 的 `from.id` 已经是 `'lead'` 这种 lane id）；② 否则经 `lane.navigation.value` 把会话 id 映到 lane。一跳版本会把所有"已处于 lane 空间"的 marker 误判。已改为两跳，并新增一个 `from.id === 'lead'`（lane 空间）的用例块，含一条"一跳映射会失败"的自证。
+- 现状：ui-2 已修（`laneIdOf` 对两侧都做映射，`timeline-layout.ts:964-967`），我的守护确认 **lead 泳道 → outgoing**、且两个方向都出现。
+
+**由这条教训产出的方法论（与"两条通道要故意不一致"成对）**
+> **fixture 必须让"只在实际数据里才不同的两个 id 空间"真的不同** —— 与「所有 fake 都让两条读通道返回同一份数据，于是分支不可达」是同一类假绿：**fixture 太整齐，把关键差异抹平了。**
+
+**三处"口径/注释 与 代码不一致"的最终处置（ui-2 逐条裁定，我的用例已同步）**
+1. **未配对 queued（`to` 缺失）**：**代码为准**，定为 `outgoing`（"它确实离开了本泳道，只是没记录去过哪里"）；`peer` 保持 null 不编造，颜色用本泳道自身色。ui-2 之前给我的口头口径"incoming"是描述错误，已改文件注释。
+2. **`system` speaker + 无收件人**：**ui-2 改了代码** —— 新增显式 `isSystem` 判定，`noAddressee && !isSystem` 才用本泳道色，否则**中性色**。我那条用例因此从"期望泳道色"改为"期望中性色"（这是代码变更导致的预期更新；该组合在 host 侧仍不可达，属防御分支）。
+3. **自言自语（note to self）**：**保留代码 `incoming`**（Lead 在任务里逐字指定了 `outgoing = selfIsSender && !selfIsReceiver` 这个单表达式优先级），ui-2 把原来那句误导注释改成与代码一致。我的用例钉住 `incoming`，并在注释里写明这是被显式指定的规则。
+
+**task-11 双写守护（已落，4 条）**：真实数据实测 141 个 span = **112** 条消息副本（56 个 exchange × 2）+ **11** 条 prompt 副本 + **18** 条 turn。守护：
+1. `A→B` 的每个 exchange 副本数 **≤2**，两次的泳道集合必须恰为 `{from.id, to.id}`，且**至少有一个 exchange 被双写**（否则功能没开）；
+2. `turn` 恰好 **1** 份（16 条 turn 全部通过）；
+3. 孤儿 delivery（无 `to`）恰好 **1** 份且落在发送方泳道；
+4. diagnostics 三个数各自正确 —— 这里发现并**已修复 F11**（见下）。
+
+**F11（我发现 → host-data-2 修 → 回归锁已加）**：原 note 写 `67 unique message(s) drawn on 141 lane(s)`，但 `copiesWritten` 把 **turn 也计入**（`uniqueMessages` 不计），141 里只有 123 是消息/prompt 副本、**18 是 turn** —— 两个数**不是同一总体**。host-data-2 已按"每个数一个总体"改为**三个数同句**：`{unique} unique message(s): {messageCopies} message/prompt copies drawn across lanes … plus {turnsWritten} turn span(s)`，且 `messageCopies` 只统计消息+prompt。我的回归锁（`tests/host-integration.spec.ts`）：
+- 结构化正则（不钉整句）抽出三个数；`unique === 去重消息+去重提示`；**`copies === 消息副本 + 提示副本`（不含 turn）← F11 的真正锁**；`turns === turn 副本数`；`copies - unique === 被镜像的交换数`（不是简单相加）。
+- 原先的 `it.fails('[F11] …')` 修复探测器**已改成正常断言**并删除（使命完成）。
+- **host-data-2 的独立对账（真实 9 泳道日志，不用我的 fixture）**：`unique=164 / copies=304 / turns=88`，并逐条核对 `copies == 所有非 turn 的 lane.messages 总数`、`turns == turn 总数`、`unique == distinct 键数`、`全部 lane.messages == copies + turns (392 == 392)` —— 与我的 67/123/18 分解口径一致（同源不同数据）。
+- **采纳他们的方法论告诫**：`copies` 与 `unique` **不是简单倍数关系**（exchange 与 prompt 各自 1 或 2 份，取决于收件人是否在 roster），所以**不要写 parity 或分解式恒等式**；唯一权威是**从 lanes 精确重点算**。我原先那条 `copies - unique === mirrored` 是分解式，现已**先断言"每个 exchange ≤2 份"这一前提**再使用，并在注释里写明"若不一致，信重点算、不要信恒等式"（他们为此踩了两次假红，diff=137/140 不是任何干净倍数）。
+
+**host-data-2 §18.7 的四条权威规则（我据此补了守护，并实测了可达性）**
+1. 方向是**节点级**（同一条 span 对象在两行分别是"发出/收到"）⇒ 判定必须拿**当前泳道**的 id，不能拿 span 自身字段；
+2. `from.id` 本身就是 **lane id**（不是 session id），所以"再查一跳 `navigation.value`"是多余的；真要多查，那是**两跳**（id→lane，再 session→lane）；
+3. **不要用收件人反推方向**：畸形 payload 下 `from.id === to.id` 可能成立，此时按"发送"处理；
+4. `turn` 恒落自己泳道 ⇒ `from.id === lane.id` 恒真；`user-prompt` 的 `from.id` 恒为字面量 `'user'`（人类没有自己的行）⇒ 它在被寻址的泳道上判成 **received**（"我收到了你的话"），**不是 bug**。
+
+**我的实测可达性与守护**（`tests/message-paint.spec.ts`，27 条）：
+- 真实日志 **0 条自寻址 span**（`from.id === to.id`）⇒ 规则 3 的分支**当前不可达**，属防御；
+- 真实日志 **11 条 prompt 全部没有收件人**（host 今天不写 `to`），全部画在"承载该日志的泳道"上；
+- 新增 4 条守护：prompt 用**固定 user 色**（用户要求）+ 方向 **incoming**（规则 4）；即使将来 host 补上收件人，被寻址泳道上**仍须 incoming**；以及自寻址形态的自证。
+
+**✅ 一处 owner 规则分歧已裁决（Lead，2026-10-12）：以 client 为准**。§18.7 原规则 3 说自寻址 span（`from.id === to.id`）应读作 **sent**，而 client 的单表达式 `outgoing = selfIsSender && !selfIsReceiver` 给 **incoming**。Lead 裁定 **①维持 client** 并要求 host-data-2 对齐 §18.7 措辞，理由：(a) 真实数据 **0 条自寻址**，纯防御分支；(b) 该表达式是 Lead 的显式指定、ui-2 特意保留；(c) 对"对着自己泳道的 span"，"到达"与"发出"同样站得住；(d) 收尾阶段为一个不可达分支改活代码属**无收益改动**。我的用例注释已从"分歧"改写为"**已裁决：client 权威**"，并把四条理由留档。
+   **裁决后 host-data-2 又提出"该表达式会让自发自收落入第三态（既非 outgoing 也非 incoming）"，我实测复核后如实记录为"部分成立、且不影响裁决"**：
+   - 可观测的 `direction` **永远只有两个值之一**（`outgoing` | `incoming`），不存在第三态；对 `A→A @A`，`selfIsSender` **与** `selfIsReceiver` **同时为真**，因为 `toLane === laneId`，所以它是被**正面判定为"本泳道是接收方"** ⇒ `incoming`。他们表里的"两者都 false"针对的是一个**假想的对称布尔** `incoming = selfIsReceiver && !selfIsSender`，而代码并不计算它。
+   - **但他们的担忧有一个真实残差**：对"本泳道既非发送方也非接收方"的调用（`A→B @不存在的泳道`），表达式同样落到 `incoming` ⇒ **`incoming` 实际上是兜底值，而不是"我确实收到了"的正面判定**。该形态**不可达**（marker 只会布置在它自己的泳道上），实测 `A->B @ghost` 也为 `incoming` + `peerMatched:true`。
+   - **需要 host-data-2 注意**：他们把 §18.7 规则 3 改写成 `selfIsSender ? 'sent' : (selfIsReceiver ? 'received' : 'sent')`，该式对自寻址输出 **`sent`**，**与 Lead 的裁决①相矛盾**；已请他们按裁决对齐为 `incoming`，避免两处 owner 文档漂移。
+   - 另：ui-2 在同一轮修掉一个**真 bug**（`to` 缺失时对端推错，prompt 的 aria 一度渲染成 `收到 ← Lead`，即把承载泳道自己当成对端）；我新增守护：**对端必须永远是"另一方"**（prompt → `peerName === 'you'`，且 `!== 承载泳道名`），两种形态（无 `to` / `to` 指向本泳道）各一条。
+
+**另加**：`BUILD_LABEL` 守护（`src/shared/contract.ts` 的非空字符串 + `BoardView.tsx` 的**每个 return 分支都有 `data-build={BUILD_LABEL}`**，共 ≥3 处）—— 用户两次无法判断"修好没有"，可见的构建标识是最便宜的答案。
+
+**待更新**：§1.2 的真机小节仍是上一轮的记录；Lead 说修完会部署、读 `data-build` 确认版本并给我原始 DOM 数据，届时并入（含 `outgoing` 命中数）。
+
+## 1.10 host 侧 §18.8 的 13 条不变量 → 按编号纳入守护（其中第 13 条是我此前的真空）
+
+host-data-2 在 `docs/FINDINGS-host.md` §18.8 发布了 **13 条 host 侧不变量**（真实 9 泳道 / **446 个 span** 上逐条实测），目的正是**让渲染层不必重推**。我逐条核对后处理如下：
+
+| # | 不变量 | 此前的覆盖情况 |
+|---|---|---|
+| 1 | `lane.messages` 按 `time` 升序 | 已由 `assertTimeline` 逐字段强制 |
+| 2 | `end === null` 或 `end >= time` | 同上 |
+| 3 | `time` 有限（无 NaN 坐标） | 同上 |
+| 4 | `from.kind ∈ {user,lead,teammate,system}` | 同上 |
+| 5 | `from.id` / `from.name` 非空 | 同上 |
+| 6 | `kind ∈ {turn,message,user-prompt}` | 同上 |
+| 7 | `turn.to` 恒缺席 | 同上（谁带 `to` 直接 error） |
+| 8 | `user-prompt.from.id` 恒为 `'user'` | 已在"80 条 user/message → 恰好 11 条人类提示"用例中断言 |
+| 9 | `preview` ≤140 且无换行 | 同上 |
+| 10 | `turn` 的 messageId 恰好 1 条泳道 | 已在 task-11 双写用例中断言 |
+| 11 | `message` 的 messageId 恰好 1 **或 2** 条泳道 | 已断言 ≤2 + "至少一个被双写" + 孤儿恰好 1 |
+| 12 | 每个 span 的 `sessionId` 非空 | 同上 |
+| 13 | **`unassigned` 泳道的 `messages` 恒为空** | ⚠️ **此前没有任何断言 —— 真空，已补** |
+
+**做法**：新增 `it('holds all 13 numbered rules on the real board')`，把 13 条**按编号**一次性断言（违反时消息直接报出编号），这样未来任何漂移都会**点名它破坏了哪一条**，而不是一句"契约不符"。第 13 条正是这次新补的。
+
+**两条我特别采纳的提醒（host-data-2 提出）**
+- **第 11 条的"1 条泳道"是正常结果**（孤儿 delivery，或收件人已不在 roster），**不是数据缺失**；我的用例把孤儿形态单独钉住（恰好 1 份 + 落在发送方泳道），UI 不应假设"每条消息必有对端"。
+- **host 事实（第 7/10/11 条）与 `direction` 判定（§18.7）正交**：host 只说"这条 span 出现在哪些泳道"，从不规定"画成发出还是收到"。我的 `tests/message-paint.spec.ts` 恰好把 **`direction` 与 `peer` 拆成独立断言**（对端永远是另一方），与这个正交性一一对应。
+
+**我接受他们的范围决定**：他们**没有**为 `laneTracks` / 条高 / chip 高声明任何不变量，理由是会变成"第三个口头契约"（描述漂移的来源）。几何以 ui-2 的 `laneTracks` 文档注释 + 我的 `tests/layout.spec.ts` 为准；host 侧只为上面 13 条背书。真机几何数据到手后我做交叉对账。
+
 ## 2. 环境（实测值）
 
 | 事实 | 值 | 怎么测的 |
@@ -222,7 +371,7 @@ Lead 扩展并冻结了 `src/shared/contract.ts`（`SpanSpeaker` / `MessageSpan`
 
 ---
 
-## 3. 我写的测试（17 个 spec / 445 用例：444 passed + 1 skipped）
+## 3. 我写的测试（18 个 spec / 480 用例：479 passed + 1 skipped）
 
 写入范围（本任务独占）：`/Users/lzx/Documents/GitHub/dsh-task-gantt/tests/**`、`/Users/lzx/Documents/GitHub/dsh-task-gantt/vitest.config.ts`、`/Users/lzx/Documents/GitHub/dsh-task-gantt/.github/workflows/**`、本文件。
 
@@ -401,6 +550,8 @@ Lead 扩展并冻结了 `src/shared/contract.ts`（`SpanSpeaker` / `MessageSpan`
 17. ❓**面板每次请求到底走哪条读路径未在真机确认**：`src/` 无文件/zstd 代码 ⇒ 请求走宿主服务；服务返回内存事件时约 19 ms（host-data-2 实测），但若落到 `sessionPersistence.open().read()` 之类磁盘回退通道，**冷读一次 ≈1.0 秒**（我实测，§4 事实 17）。删掉 1.5s 跨请求缓存的安全性依赖前者成立——建议真机冒烟时顺带测一次「冷启动后第一次打开面板」的耗时（§1.2 未含此项）。
 18. ❓**暗色皮肤下这三个 token 的活页面解析值从未实测**：`label-secondary` / `label-primary` / `label-primary-inverted`。我给出的暗色值（`#cfd3d6` / `#f9fafb` / `#353638`）**全部是定义源推导**（主题 bundle 的第二个皮肤块 + static 字面量），Lead 的 `getComputedStyle` 只在浅色皮肤下做过。这正是「双环 vs 单层」之争唯一缺的一手数据 —— 建议真机冒烟时切到暗色皮肤各读一次这三条（并记下面板 `bg-layer-1` 的实际值），就能把 §5 F8/§1.5 里所有推导换成实测。
 19. ❓（**已知上限，Lead 裁定本轮不改**）`MESSAGE_MARKER_MIN_GAP_PX`(9) < `MESSAGE_MARKER_WIDTH`(11)：抽稀只保证标记**位置**间距 ≥9px，保留的两个标记仍可重叠 2px。我在 `tests/layout.spec.ts` 中只断言 gap 下限、**不**断言 `gap >= width`（那会刻意为红）；若后续把它改成 ≥12，把那条断言补上即可。
+20. ❓（**已知启发式 + 显式保留项，Lead 裁定本轮不改**，ui-2 要求记档以免收尾时被当成新 bug）chip 的 `inside` 阈值 `TASK_CHIP_INSIDE_MIN_WIDTH = 148px`：`labelPlacement === 'inside'` 仅当**条宽 ≥ chip 宽**，语义是"条装得下完整文字才内嵌，否则右侧挂靠"。148 是**与 chip 等宽的启发式**而非实测最优值——任何更窄的条一律右侧挂靠（例如 100px 的条不内嵌文字）。`tests/layout.spec.ts` 因此只断言结构（两条轨道不相交、`TASK_CARD_TOP === task 轨 y`、`TASK_CARD_HEIGHT <= TASK_TRACK_HEIGHT`）与 `labelPlacement` 的**两端情形**，**不**断言 148 这个魔数；若日后改为自适应，请同步更新 `labelPlacement` 的断言口径。（同批显式保留项还有 ❓19：`MESSAGE_MARKER_MIN_GAP_PX(9) < WIDTH(11)` 可重叠 2px；以及真机目视项：条高 10 / chip 36 / `dtg-msg-out` 命中数 / `data-build`，归 Lead。）
+21. ✅（**已裁决：不做**，Lead 2026-10-12）是否给 `user-prompt` 补 `to` —— **不做**。理由：用户只要求"我本人发起的对话用固定颜色"，而当前"prompt 挂在其承载泳道上"的语义已经正确（读作 `incoming`，即"我收到了你的话"，符合 §18.7 规则 4）；补 `to` 属于**行为变更**，且会让人类发言在视觉上**翻倍**（同一句话出现在两条泳道上）。我的守护两种形态都已覆盖，因此这条裁决不产生任何断言改动。
 
 ---
 

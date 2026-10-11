@@ -17,6 +17,19 @@
 /** Wire/API version. Bump on every incompatible change of this contract. */
 export const API_VERSION = 1 as const
 
+/**
+ * Human-readable build marker, shown at the end of the panel's footer.
+ *
+ * Exists because a stale client bundle is otherwise indistinguishable from a
+ * fresh one: the browser half is served from `/plugins/<id>/client.js&rev=…`
+ * where `rev` hashes mtime+ctime+size, so a rebuild that keeps those equal is
+ * invisible, and a page that never re-materialised the module looks exactly
+ * like a page running the new code. Bump this whenever the panel's appearance
+ * or behaviour changes, and a tester can read the version off the screen
+ * instead of guessing from a screenshot.
+ */
+export const BUILD_LABEL = 'build 2026-10-12 · tracks+peer-color' as const
+
 /** The sidebar tab type id registered through `ctx.betterSidebar.registerTab`. */
 export const TAB_TYPE_ID = 'dsh-task-gantt:board' as const
 

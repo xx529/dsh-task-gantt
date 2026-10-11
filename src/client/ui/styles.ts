@@ -244,7 +244,9 @@ export const BOARD_CSS = `
    no padding and no text, so nothing about a label can stretch it. */
 .dtg-task-bar {
   position: absolute;
-  border-radius: 2px;
+  /* A Gantt bar: 10px tall (TASK_BAR_HEIGHT), rounded, so it reads as duration
+     rather than as a colour chip in front of the label. */
+  border-radius: 3px;
   background: var(--dsw-alias-label-tertiary);
   opacity: 0.85;
 }
@@ -384,6 +386,20 @@ export const BOARD_CSS = `
 }
 .dtg-msg-agent { border: 0; }
 .dtg-msg-turn { border-radius: 1px; }
+/* Direction is carried by SHAPE, not only colour: outgoing rides in a squared
+   dot, incoming in a ringed round one, and the glyph itself points the way
+   (↗ vs ↙). "Did I send this or receive it" therefore survives a colour-blind
+   reader. The colour is always the COUNTERPART's lane colour. */
+.dtg-msg-out { border-radius: 2px; }
+.dtg-msg-in { border-style: solid; }
+.dtg-msg .dtg-msg-glyph { font-size: 9px; }
+.dtg-legend-arrow {
+  display: inline-block;
+  font: var(--dsw-font-xxxs-11);
+  line-height: 1;
+  color: var(--dsw-alias-label-secondary);
+}
+
 .dtg-msg-glyph {
   font: var(--dsw-font-xxxs-strong-11);
   line-height: 1;
@@ -501,6 +517,16 @@ export const BOARD_CSS = `
 .dtg-legend-turn { width: 14px; height: 8px; border-radius: 2px; background: var(--dsw-alias-bg-layer-3); opacity: 0.75; }
 .dtg-legend-step { width: 14px; height: 6px; border-radius: 2px; background: var(--dsw-alias-label-tertiary); }
 .dtg-legend-card { width: 14px; height: 9px; border: 1px dashed var(--dsw-alias-border-l2); border-left: 3px solid var(--dsw-alias-label-tertiary); border-radius: 3px; }
+/* Build identity: quiet, monospaced, never a call to action. */
+.dtg-build {
+  padding: 1px 8px 3px;
+  font: var(--dsw-font-xxxs-11);
+  color: var(--dsw-alias-label-tertiary);
+  opacity: 0.7;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .dtg-sr {
   position: absolute;
   width: 1px;

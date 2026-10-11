@@ -983,3 +983,220 @@ mismatches = 0。自检脚本因此不再依赖本机是否装了 `zstd`。
    （18.7 ms vs 1.0 s），先假设**两者都测对了不同的对象** —— 本轮正是这个假设把差异变成了
    一条真缺陷；若当时归因成"谁量错了"，只会互相复测一轮，然后各自保留数字、
    缺陷留在代码里。
+
+---
+
+## 18. 消息**双写**（task-12 / 用户需求 3 的数据侧）
+
+用户逐字要求：
+> A 发给 B，A 的泳道显示 收件人B 的颜色并带有发出的标识，而 B 这显示 收件人A 的颜色并带有接收的标记
+
+即一条消息必须**同时出现在 A 与 B 两条泳道上**。改动前的实现只挂在 sender（`laneById.get(span.from.id)`），
+真实 Lead 日志实测：**lead 泳道 25 条 `message`，每个 teammate 泳道 0 条 incoming** —— lead 看不到谁回过它。
+
+### 18.1 规则（`src/host/timeline.ts` 的消息 pass）
+
+| span | 落几条泳道 | 规则 |
+|---|---|---|
+| `kind:'turn'` | **1** | 只属于它自己的会话泳道（是"这个人在干活"，不是往来） |
+| `kind:'message'` | **2** | from 的泳道 + to 的泳道；`to` 缺失（孤儿 delivery）或 `to` 不在 roster → **只写 from** |
+| `kind:'user-prompt'` | 1（+1 若可解析出收件人） | 人没有自己的行，显示在**被寻址的那条**泳道上；寻址对象也在 roster 内时同样双写 |
+
+**视角不需要新契约字段**：泳道本身就是视角 —— `lane.id === span.from.id` 即"发出"，
+否则即"收到"。客户端据此现算（Lead 拍板，避免契约膨胀）。
+
+### 18.2 去重键：`laneId + messageId`（不是 messageId）
+
+双写后若仍按 `messageId` 全局去重，第二个泳道会被误判为重复而丢掉。现在的键是
+`${laneId}\u0000${messageId}`，因此**同一条消息在每个泳道最多一份、且不会有第三份**。
+跨 fold 的去重独立于它：一条 exchange 可能出现在多条日志里，`spanByKey` 按 messageId 只保留首个记录。
+
+### 18.3 本轮由探针抓到的两个自身缺陷（均已修）
+
+1. **人类 prompt 被画三次**：`userPromptSpansFrom` 原先带 `span.sessionId`，而**同一条 prompt
+   同时存在于 Lead 与每个 teammate 的日志里**，于是按 sessionId 去重会画出 3 份（实测
+   `prompt time → lane-copy distribution: [[1,14],[3,10]]`）。改为按 `(time, preview)` 去重后为
+   `[[1,24]]`。
+   ⚠️ `sessionId` 在契约里是**必填**，因此没有删它 —— 它表示"承载该事件的日志"，是**读到的第一条**，
+   不是最终落点。注释已按这个含义写清（我曾把契约字段当成可省的，被 tsc 挡回，未改契约）。
+2. **`to.name` 回落成裸 session id**：journal 的 `delivered` **只带 id 不带名字**，而原来的
+   `makeSpeakerLookup` 只有 name→id 一个索引，于是收件人显示为 `m-b` 而不是 `beta`。
+   新增 `memberNameById`（id→显示名，来自 journal member 与 projection 两侧）后正确解析。
+
+### 18.4 计数口径（`notes` 里明说，避免 UI 报错总数）
+
+双写使"按泳道累加"不再等于消息数，因此 note 会写：
+> `N unique message(s) drawn on M lane(s): an exchange is shown on both the sender's and the recipient's lane, so a per-lane count is not a message total`
+
+真实 Lead 日志实测：**151 unique 消息 → 363 泳道出现次数**（双写生效的直接证据）。
+另有 `offRosterTargets` 计数：收件人不在 roster 时只写一侧，并写一条 note
+（**绝不为此凭空造一条泳道**）。
+
+### 18.5 验收证据
+
+真实日志（9 泳道）：**124 条 exchange 全部恰好出现在 2 条泳道**，`>2` 的 0 条；
+turn 每条恰好 1 条泳道；prompt 每个时间点恰好 1 条泳道。
+
+合成边界用例（`/tmp` 探针）：
+```
+ok: A→B on exactly 2 lanes — ["m-a","m-b"]
+ok: A→B from is alpha / to is beta
+ok: off-roster target on exactly 1 lane — ["m-a"]
+ok: off-roster target got NO invented lane — lead,m-a,m-b
+ok: orphan delivery on exactly 1 lane — ["m-b"]  （且 from.kind === 'system'，不猜 sender）
+ok: off-roster note is present / dual-write note is present
+```
+
+### 18.6 F11：`notes` 的两个数曾是**不同总体**（已修）
+
+初版双写的 note 是：
+
+> `67 unique message(s) drawn on 141 lane(s): …`
+
+`uniqueMessages = 67`（56 exchange + 11 prompt）是对的，但 `copiesWritten = 141` **把 turn 也算进去了**
+（`place()` 对所有 span 自增，而 `uniqueMessages` 从不计 turn）—— 141 里有 **18 是 turn**，
+真正的消息/prompt 副本只有 123。读者会拿两个不同总体做减法。这正是 Lead 那条口径
+「唯一数/出现次数各自正确，不能简单相加」要拦的东西。由 verify 命名为 **F11**。
+
+**修法（采纳 verify 的方案 2：三个数、各自是一类，读者不需要做减法）**：
+
+- `messageCopies` 只统计 `kind !== 'turn'` 的副本；
+- 新增 `turnsWritten` 统计 turn；
+- note 改成：
+  > `164 unique message(s): 304 message/prompt copies drawn across lanes (an exchange is shown on both the sender's and the recipient's lane, so a per-lane count is not a message total), plus 88 turn span(s)`
+
+**修复后的自检**（真实 9 泳道日志，从 lanes 重新点算与 note 对账）：
+
+```
+note numbers : unique=164 copies=304 turns=88
+lane recount : message/prompt=304 turn=88 distinct=164
+ok: copies == lane recount / turns == lane recount / unique == distinct ids
+ok: copies > unique（双写确实发生）
+ok: 全部 lane.messages 总数 == copies + turns（392 == 392）
+```
+
+⚠️ **一个我在这里犯过两次的错误，记下来免得后人再推**：`copies` 与 `unique` **不是简单倍数关系** ——
+exchange 在"收件人在 roster 内"时值 2、在"收件人不在 roster / 只有 delivery"时值 1；
+user prompt 同样值 1 或 2。所以 `copies - unique` **不保证是偶数**，也没有
+`2*x + y + z` 的固定分解式。**唯一正确的校验是从 lanes 精确重点算**（上面那三条）。
+我先写了 parity 断言、又写了分解式断言，两次都是错的假设，均已被探针自己打红。
+
+### 18.7 客户端判定方向的**精确规则**（供 ui/verify 共用）
+
+双写之后，"这条标记是发出还是收到"**不能只看 `from.id`**，也不能只做一跳解析。
+
+**规则（与 client 现行实现逐字一致，已由 Lead 裁决维持）：**
+
+```
+1) 把 from.id / to.id 都映射到 lane 空间（from.id 通常已是 lane id；跨形态时才是两跳）
+2) selfIsSender   = fromLane !== null && fromLane === 当前泳道 id
+3) selfIsReceiver = toLane   !== null && toLane   === 当前泳道 id
+4) direction = selfIsSender && !selfIsReceiver ? 'outgoing' : 'incoming'
+```
+
+即 `direction` **只有两个取值**，没有第三态：`incoming` 同时承担"我确实是接收方"与
+"两者都判不出时的兜底"两种角色。
+
+**自寻址（note-to-self，`from.id === to.id === 当前泳道`）判为 `incoming`。**
+理由（Lead 裁决）：真实数据自寻址 **0 条**（纯防御分支）、该表达式是明确指定、
+"到达"在语义上同样站得住。本文件此前曾按"发送方优先"写成 `sent`，**已按裁决改为
+`incoming`**。
+
+**一节被我自己写错、在此更正的事**：我曾用一张真值表断言"自寻址时 `outgoing` 与
+`incoming` **同时为 false**，落在第三态"。**那是错的** —— 我假想了一个对称的
+`incoming = selfIsReceiver && !selfIsSender`，而代码**从不计算 `incoming` 变量**，
+只用三元返回字面量，所以自寻址被**正面判定**为 `incoming`。
+真正的残差是另一回事：对"本泳道既非发送方也非接收方"的调用，表达式同样落到
+`incoming` —— 也就是说 **`incoming` 实质是兜底值**。该形态**不可达**（标记只会被布置在
+它自己的泳道上），但这条观察值得留在文档里，措辞来自 verify 的复核。
+
+**踩过的三个坑（都实测过）：**
+
+1. **`from.id` 本身就是 lane id**（不是 session id）—— 实测 21/85 条 marker 的 `from.id`
+   直接是 `'lead'` 这类 lane id。拿它再查一跳 `navigation.value` 是多余的；真正的两跳是
+   **session id → lane id**（这是 ui 侧 `laneIdOf` 的职责）。
+2. **不要给 `incoming` 写一个对称表达式**：`selfIsReceiver && !selfIsSender` 与实际行为
+   不同（见上），照它写守护会锁住一个代码里不存在的语义。
+3. **方向是节点级而非 span 级**：同一条 span 对象被两写，它在 A 行是"发出"、在 B 行是"收到"。
+   判定必须拿**当前泳道**的 id，不能拿 span 自身的某个字段。
+
+**`kind` 相关的两条附带事实：**
+- `turn` 只有一份且恒落在自己泳道 ⇒ 对它 `from.id === lane.id` 恒真 ⇒ 恒为 `outgoing`
+  （`selfIsSender` 为真且 `selfIsReceiver` 为假）；
+- `user-prompt` 的 `from.id` 恒为字面量 `'user'`（人类没有自己的行）⇒ `selfIsSender` 恒假
+  ⇒ 它在**被寻址的泳道上判成 `incoming`**。这是正确语义（"我收到了你的话"），
+  但它也是**今天不可达**的分支：实测 11 条 prompt **全部没有收件人**（`to` undefined），
+  因此目前全都画在承载日志的泳道上。若 host 将来给 prompt 补上 `to`，这条就会生效。
+
+### 18.8 host 侧对消息 span 的**不变量清单**（UI 可以依赖这些，不必自己重推）
+
+在真实 9 泳道日志上逐条实测通过（**446 个 span**）。这些是 host **保证**的；UI 侧只需消费，
+不要重新实现：
+
+| # | 不变量 | 为什么 UI 可以依赖它 |
+|---|---|---|
+| 1 | 每条 `lane.messages` **按 `time` 升序** | 渲染可直接顺序绘制，不需要再排序 |
+| 2 | 每个 span：`end === null` 或 `end >= time` | 不会出现反向区间（负宽条） |
+| 3 | 每个 span 的 `time` 有限 | 不会有 `NaN` 坐标 |
+| 4 | `from.kind ∈ {user, lead, teammate, system}` | 分支可穷举；`system` 只出现在"发送者不可知"的孤儿 delivery |
+| 5 | `from.id`、`from.name` 均非空 | 不会渲染空白标签 |
+| 6 | `kind ∈ {turn, message, user-prompt}` | — |
+| 7 | **`turn.to` 恒缺席** | turn 是单泳道事实，UI 不必处理"turn 的收件人" |
+| 8 | `user-prompt.from.id` 恒为字面量 `'user'` | 固定色/固定身份判据 |
+| 9 | `preview` ≤ 140 且**不含换行** | 单行截断，不必再折行清洗 |
+| 10 | `turn` 每个 messageId **恰好出现在 1 条泳道** | 不会被双写 |
+| 11 | `message` 每个 messageId **恰好出现在 1 或 2 条泳道**（2 = 双方都在 roster；1 = 孤儿 delivery 或收件人不在 roster） | UI 不能假设"每条消息都有两侧" |
+| 12 | 每个 span 的 `sessionId` 非空（契约必填） | 它表示**承载该事件的日志**，不是最终落点 |
+| 13 | `lane.id === 'unassigned'` 的 `messages` 恒为空 | 该哨兵泳道只有任务，没有往来 |
+
+⚠️ **第 11 条是 UI 最容易踩的**：`1` 是**正常且有意义**的结果（收件人不可知/不在 roster），
+不是数据缺失。UI 若按"每条消息必有对端"渲染，会在孤儿 delivery 上取到 `undefined`。
+
+⚠️ **与 `direction` 的关系**：第 7/10/11 条是 **host 的事实**，`direction` 是**渲染侧的判定**
+（§18.7）。两者独立：host 只说"这条 span 在哪些泳道上"，从不说"你该画成发出还是收到"。
+
+**第 13 条是构造性保证，不是观测结果**（比"实测为空"强一个等级）：
+
+```
+timeline.ts:871   const laneById = new Map(lanes.map(l => [l.id, l]))   ← 消息 pass 的索引
+timeline.ts:1027  if (unassignedDrafts.length > 0) { … lanes.push(unassigned) }  ← 此处才入列
+```
+
+`unassigned` 入列的时机**晚于**消息 pass，且**从不进入 `laneById`**；而每个 `place()` 都先查
+`laneById`、查不到即返回。因此该泳道**结构上不可能**持有 message span。写守护时若这条红了，
+它抓到的不是"新泳道出现"，而是**有人把 `unassigned` 提前放进了 `laneById`**（那才会让哨兵泳道
+开始收消息）—— 这正是它值得存在的理由。
+
+### 18.9 裁决留档：`user-prompt` **不加** `to`（已定，非开放项）
+
+用户逐字要求的是「**A 发给 B**：A 的泳道显示收件人色 + 发出标识，B 的显示发件人色 + 收到标记」——
+这是 **agent 之间**的往来。人类那条他只说了「我本人发起的对话就用一个固定的颜色表示」，
+**没有要求双向**。
+
+因此 `userPromptSpansFrom` **不补 `to`**，裁决理由（Lead 拍板）：
+
+1. 现在 prompt 挂在**承载它的会话泳道**上，语义正确（"我说给 lead 听的话"落在 lead 行）；
+2. 补 `to` 会让同一条 prompt 出现在两条泳道上 —— 这是**行为变更**；
+3. 收益只是让一条**今天不可达**的规则生效，代价是视觉噪声（人类发言翻倍）；
+4. 原则：**不为不可达分支改活代码**。
+
+**可达性事实（实测）**：11/11 条 prompt **全部没有收件人**（`to` undefined），
+所以 §18.7 里"被寻址泳道上判 `incoming`"那条分支**今天不生效**。
+若将来真的补上 `to`，那条规则会自然生效 —— 客户端无需改动（§18.7 的判定式已经覆盖）。
+
+### 18.10 方法论第三条：能被结构性论证的，不要只靠采样
+
+前两条见 §17（**fake 要故意制造分歧**；**测量不齐时先找通道差异，而不是先判谁错**）。
+第三条由 Lead 在本轮采纳并并列：
+
+> **能被结构性论证的结论，不要只靠采样。**
+
+样本只能说明"此刻如此"，构造顺序才说明"换了数据也成立"，而且它同时回答了
+**"守护将来会在什么情况下红"**。实例就是 §18.8 第 13 条：`unassigned` 泳道
+"不可能持有 message span"不是因为它今天为空（采样），而是因为 `laneById` 在消息 pass 之前
+构建、且 `unassigned` **从不进入**该索引（构造）—— 所以这条守护将来红了，含义是
+**有人把哨兵泳道塞进了 `laneById`**，而不是"多了一条泳道"。
+
+反向也成立：采样数据会掩盖"这段代码本来就到不了"的事实。本轮的
+"自发自收/自寻址 span = 0 条"、"prompt 无收件人 11/11"都是这类**不可达分支**，
+它们应当被标成"防御/不可达"，而不是当成活路径去写断言或改行为。

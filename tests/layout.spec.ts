@@ -38,8 +38,13 @@ import {
   fitMsPerPx,
   formatClock,
   formatDateTime,
+  LANE_BOTTOM_PAD,
   MESSAGE_MARKER_MIN_GAP_PX,
+  resolveMessageDirection,
+  TASK_TRACK_HEIGHT,
   decimateMarkers,
+  laneTracks,
+  type LaneTrack,
   formatTickLabel,
   layoutTimeline,
   pickTickStep,
@@ -532,13 +537,35 @@ describe('layoutTimeline — sanitization and totality', () => {
     expect(layoutTimeline(data, VIEWPORT, options)).toEqual(layoutTimeline(data, VIEWPORT, options))
   })
 
-  it('keeps LANE_HEAD_WIDTH and the lane geometry constants consistent', () => {
-    // The lane head is a fixed column; the timeline area is the rest. A layout
-    // that assumed a different head width would mis-measure the viewport.
+  it('stacks the three tracks without overlap (the user-visible fix, no magic numbers)', () => {
+    // The user asked for lanes tall enough that activity, messages and tasks are
+    // visibly separate. The TESTABLE form of that is disjointness — NOT
+    // `laneHeight === 84`. A magic number would fail the next time ui-2 retunes
+    // the height on correct code, and would say nothing about the actual claim.
+    const tracks = laneTracks(0, DEFAULT_LANE_HEIGHT)
+    expect(tracks.map((track) => track.id)).toEqual(['activity', 'message', 'task'])
+    for (const track of tracks) expect(track.h, track.id).toBeGreaterThan(0)
+    for (let index = 1; index < tracks.length; index += 1) {
+      const previous = tracks[index - 1] as LaneTrack
+      const current = tracks[index] as LaneTrack
+      expect(current.y, `${current.id} must start at or below the end of ${previous.id}`).toBeGreaterThanOrEqual(previous.y + previous.h)
+    }
+    // The default lane must FIT all three plus the bottom pad, or the last track
+    // is clipped and the tracks stop being visually separate.
+    const last = tracks[2] as LaneTrack
+    expect(last.y + last.h + LANE_BOTTOM_PAD).toBeLessThanOrEqual(DEFAULT_LANE_HEIGHT)
+    // Track heights are FIXED (the user chose fixed taller lanes, not
+    // content-adaptive): another lane is offset by exactly one lane height and
+    // keeps the same internal layout, and a different laneHeight does not resize
+    // the tracks.
+    expect(laneTracks(1, DEFAULT_LANE_HEIGHT).map((track) => track.y - DEFAULT_LANE_HEIGHT)).toEqual(tracks.map((track) => track.y))
+    expect(laneTracks(0, 100).map((track) => track.h)).toEqual(tracks.map((track) => track.h))
+    // TASK_CARD_TOP must be the task track's own top, i.e. one derivation, not two.
+    expect(TASK_CARD_TOP).toBe(last.y)
+    expect(TASK_CARD_HEIGHT).toBeLessThanOrEqual(TASK_TRACK_HEIGHT)
+    // Untouched invariants from before.
     expect(LANE_HEAD_WIDTH).toBeGreaterThan(0)
     expect(DEFAULT_HEADER_HEIGHT).toBeGreaterThan(0)
-    expect(TASK_CARD_TOP).toBe(LANE_PAD_Y + TURN_BAND_HEIGHT + 4)
-    expect(TASK_CARD_TOP + TASK_CARD_HEIGHT).toBeLessThanOrEqual(DEFAULT_LANE_HEIGHT)
     expect(MIN_MS_PER_PX).toBeLessThan(MAX_MS_PER_PX)
     expect(HOUR_MS).toBe(3_600_000)
     expect(DAY_MS).toBe(86_400_000)
@@ -732,5 +759,101 @@ describe('message markers and density bands', () => {
     const layout = layoutTimeline(hostile, VIEWPORT, { now: 11_000, msPerPx: 100, tzOffsetMinutes: 0 })
     expect(layout.messages.length).toBeLessThanOrEqual(1)
     expect(layout.window.end).toBeGreaterThanOrEqual(layout.window.start + 1)
+  })
+})
+
+/* ------------------------------------------------------------------------- */
+/* Decimation must never erase a whole direction (live bug found by ui-2)      */
+/* ------------------------------------------------------------------------- */
+
+/**
+ * The live instance showed `dtg-msg-out = 0` with `incoming = 8` while the host
+ * data was correct. The cause was NOT the direction logic: `decimateMarkers`
+ * shared ONE pixel spacing cursor and ONE bucket set across directions, so on a
+ * real lane — where a reply lands a few pixels after the message it answers —
+ * every outgoing marker fell inside the minimum gap of a kept incoming one and
+ * was dropped. Direction counts vanished while times and totals stayed plausible.
+ *
+ * My own guards could not see it for the same reason as the earlier fixture gaps:
+ * my message fixture spaced the two directions far apart in time. These tests
+ * deliberately interleave them INSIDE the minimum gap.
+ */
+describe('decimation keeps every direction that has data', () => {
+  const LANE = 'lead'
+  const laneIdOf = (id: string): string | null => (id === 'session-a' ? 'lead' : id === 'session-b' ? 'lane-b' : id)
+
+  const span = (time: number, from: string, to: string, index: number): MessageSpan => ({
+    kind: 'message',
+    time,
+    end: null,
+    from: { kind: 'teammate', id: from, name: from },
+    to: { kind: 'teammate', id: to, name: to },
+    messageId: `m-${index}`,
+    sessionId: from,
+  })
+  /** Outgoing in the lead lane (lead is the sender). */
+  const outgoing = (time: number, index: number): MessageSpan => span(time, 'session-a', 'session-b', index)
+  /** Incoming in the lead lane (lead is the addressee). */
+  const incoming = (time: number, index: number): MessageSpan => span(time, 'session-b', 'session-a', index)
+
+  const decimate = (list: MessageSpan[], overrides: Record<string, unknown> = {}) =>
+    decimateMarkers(list, {
+      windowStart: 1_000,
+      msPerPx: 1, // 1 px == 1 ms, so the 4 ms spacing below is a 4 px spacing
+      widthPx: 600,
+      mode: 'markers',
+      gapPx: MESSAGE_MARKER_MIN_GAP_PX,
+      maxPerLane: 40,
+      laneId: LANE,
+      laneIdOf,
+      ...overrides,
+    })
+
+  const directionsOf = (list: MessageSpan[], indices: number[]): string[] =>
+    indices.map((index) => resolveMessageDirection(list[index] as MessageSpan, LANE, laneIdOf).direction)
+
+  it('keeps BOTH directions when the whole cluster fits inside the minimum gap', () => {
+    // SHAPE MATTERS, and this shape is the discriminating one. Verified against a
+    // reconstruction of the old algorithm (one shared cursor, 9 px):
+    //   - this cluster (six markers inside 6 px) → old kept 1 marker, direction
+    //     `incoming` only, outgoing = 0  ⇒ this test fails on the old code;
+    //   - a 4 px-spread alternation → old kept 2 (one per direction) ⇒ it would
+    //     have PASSED, i.e. a fixture that looks equivalent but proves nothing.
+    // That is the same escape path as the id-space and channel fixtures: the shape
+    // of the data, not the assertion, decides whether the bug is reachable.
+    const list = [
+      incoming(1_000, 0),
+      outgoing(1_002, 1),
+      outgoing(1_003, 2),
+      incoming(1_004, 3),
+      outgoing(1_005, 4),
+      incoming(1_006, 5),
+    ]
+    const { indices } = decimate(list)
+    const directions = directionsOf(list, indices)
+    expect(directions.filter((direction) => direction === 'outgoing').length, `kept: ${directions.join(',')}`).toBeGreaterThan(0)
+    expect(directions.filter((direction) => direction === 'incoming').length, `kept: ${directions.join(',')}`).toBeGreaterThan(0)
+  })
+
+  it('backfills a direction that would otherwise vanish, keeping its EXACT time', () => {
+    // One kept incoming, then a lone outgoing 3 px later: without a backfill the
+    // outgoing is the only member of its direction and gets dropped by the gap.
+    const list = [incoming(1_000, 0), outgoing(1_003, 1)]
+    const { indices } = decimate(list)
+    const kept = indices.map((index) => list[index] as MessageSpan)
+    const outgoingKept = kept.filter((message) => resolveMessageDirection(message, LANE, laneIdOf).direction === 'outgoing')
+    expect(outgoingKept).toHaveLength(1)
+    // A backfilled marker must never be re-dated: the time is the journal's.
+    expect(outgoingKept[0]?.time).toBe(1_003)
+  })
+
+  it('never resurrects a marker whose time is not finite', () => {
+    // ui-2's backfill made this test red once ("phantom marker"): the fix excludes
+    // non-finite times from the candidates AND from the backfill.
+    const list = [incoming(1_000, 0), outgoing(Number.NaN, 1), outgoing(Number.POSITIVE_INFINITY, 2)]
+    const { indices } = decimate(list)
+    const kept = indices.map((index) => list[index] as MessageSpan)
+    for (const message of kept) expect(Number.isFinite(message.time), JSON.stringify(message)).toBe(true)
+    expect(directionsOf(list, indices).filter((direction) => direction === 'outgoing')).toHaveLength(0)
   })
 })
