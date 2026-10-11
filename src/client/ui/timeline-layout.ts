@@ -117,12 +117,12 @@
  *     x0     = clamp(from, window.start, window.end)
  *     x1     = clamp(to,   window.start, window.end)
  *     x      = (x0 - window.start) / msPerPx
- *     w      = clamp((x1 - x0) / msPerPx, TASK_MIN_WIDTH, TASK_MAX_WIDTH)
+ *     w      = max(TASK_BAR_MIN_WIDTH, (x1 - x0) / msPerPx)   // length == duration
  *   else:
  *     anchor = 'live' ; historyIndex = -1
  *     from   = to = window.end
- *     w      = TASK_MIN_WIDTH
- *     x      = max(0, dataWidth - TASK_MIN_WIDTH)    // right-aligned to `now`
+ *     w      = TASK_BAR_MIN_WIDTH                    // duration unknown: marker only
+ *     x      = max(0, dataWidth - TASK_CHIP_WIDTH)   // right-aligned to `now`
  *   viewX  = x - scrollLeft
  *   visible = viewX + w >= 0 && viewX <= viewportWidth
  *   at      = from            (epoch ms the card is anchored at)
@@ -133,7 +133,10 @@
  * (i.e. the NOW marker) and flagged `live: true` — the UI must label it as live
  * state, never as a measured interval. A history card spans the first to the
  * last dated transition, width-clamped to
- * [{@link TASK_MIN_WIDTH}, {@link TASK_MAX_WIDTH}].
+ * floored at {@link TASK_BAR_MIN_WIDTH} (a 30s task and a 300s task differ by 10x).
+ * The LABEL is a separate chip — inside the bar when the bar is at least
+ * {@link TASK_CHIP_INSIDE_MIN_WIDTH} wide, otherwise hung to its right — so
+ * label text and bar length are decoupled.
  *
  * ============================== CULLING / INPUT SANITIZATION ===============
  * `cull: false` (default) returns every rect with `visible` computed.
@@ -187,14 +190,32 @@ export const TASK_CARD_GAP = 4
 export const TASK_CARD_TOP = LANE_PAD_Y + TURN_BAND_HEIGHT + TASK_CARD_GAP
 /** Two token-sized text lines (12px/18px + 11px/14px) plus 4px of padding. */
 export const TASK_CARD_HEIGHT = 36
-/** A card never renders narrower than this: two readable text lines need it. */
-export const TASK_MIN_WIDTH = 148
-/** A card never renders wider than this, however long the task lived. */
-export const TASK_MAX_WIDTH = 260
 /** A span shorter than this still gets a visible mark. */
 export const MIN_SPAN_PX = 2
+/**
+ * Floor for the TASK BAR's width, in px.
+ *
+ * A bar's length is its real elapsed time, so the floor only exists to keep a
+ * very short task visible; it must stay at the visual minimum (the same 2px
+ * {@link MIN_SPAN_PX} that a short activity span gets). It must NEVER be a text
+ * width: clamping the bar to fit a label is what made every task look the same
+ * length, which is precisely the reading this chart exists to communicate.
+ */
+export const TASK_BAR_MIN_WIDTH = MIN_SPAN_PX
+/** Horizontal gap between the bar's right edge and an outside label chip. */
+export const TASK_CHIP_GAP = 3
+/** Width of the label chip (two readable text lines need it). */
+export const TASK_CHIP_WIDTH = 148
+/**
+ * A label chip sits INSIDE the bar at or above this bar width, and hangs to the
+ * right of it below. 148px is the narrowest width at which the two lines of text
+ * (12px/18px + 11px/14px) plus padding still read.
+ */
+export const TASK_CHIP_INSIDE_MIN_WIDTH = TASK_CHIP_WIDTH
 
-/* ------------------------------------------------------------------ zoom */
+/* ---------------------------------------------------------------- zoom */
+
+/** 50 ms per px — the zoom-in floor (a 50ms step is half a percent of a 100px bar). */
 
 /** 50 ms per px — the zoom-in floor (a 50ms step is half a percent of a 100px bar). */
 export const MIN_MS_PER_PX = 50
@@ -382,6 +403,11 @@ export interface TaskCardRect {
   durationMs: number
   /** Index of the anchoring history event, -1 for a live card. */
   historyIndex: number
+  /**
+   * The BAR's left edge and width. `w` is the task's real elapsed time divided
+   * by `msPerPx` (floored at {@link TASK_BAR_MIN_WIDTH}): the bar length IS the
+   * duration. It is independent of any label text.
+   */
   x: number
   y: number
   w: number
@@ -390,6 +416,20 @@ export interface TaskCardRect {
   visible: boolean
   /** Alias of `anchor === 'live'`, for readable call sites. */
   live: boolean
+  /**
+   * The LABEL chip, decoupled from the bar so that "can I read the title" and
+   * "how long did it take" stop fighting each other:
+   * - `'inside'`  – `labelX === x`, `labelW === w` (the bar is wide enough);
+   * - `'right'`   – `labelX === x + w + TASK_CHIP_GAP`, `labelW === TASK_CHIP_WIDTH`.
+   *
+   * A chip placed to the right NEVER moves `x`/`w`: the bar keeps its true
+   * start and length.
+   */
+  labelPlacement: 'inside' | 'right'
+  labelX: number
+  labelY: number
+  labelW: number
+  labelH: number
 }
 
 export type TickKind = 'time' | 'date'
@@ -726,6 +766,65 @@ export function decimateMarkers(
     lastX = x
   }
   return { indices: kept, droppedTotal: candidates.length - kept.length, candidates: candidates.length }
+}
+
+/**
+ * Human-readable elapsed time, for the "how long did it take" readout.
+ *
+ * Deliberately coarse and unit-stable rather than locale-formatted: the panel
+ * shows it next to two clock times the reader is comparing, so `1h 5m 3s` beats
+ * a localized duration string that wraps. Sub-second spans floor to `0s`.
+ *
+ * @param ms - elapsed milliseconds; negative or non-finite yields an empty
+ *   string, so a caller can treat "no duration" as "do not render".
+ */
+export function formatDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return ''
+  const total = Math.floor(ms / 1000)
+  const seconds = total % 60
+  const minutes = Math.floor(total / 60) % 60
+  const hours = Math.floor(total / 3600)
+  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`
+  if (minutes > 0) return `${minutes}m ${seconds}s`
+  return `${seconds}s`
+}
+
+/**
+ * The two endpoints of a task's bar plus its elapsed time, as one readable line.
+ *
+ * Shared by the card tooltip and the details panel so the number the user hovers
+ * is the same number the user opens — one implementation, no drift. Returns the
+ * "unknown" text when the task has no dated history at all, which is the honest
+ * answer for a live task (its bar is a marker, not a duration).
+ *
+ * @param task - the task whose `history` is already ascending by time.
+ * @param formatTime - formats one epoch ms as local time for this panel.
+ * @param texts - the three strings, injected so this stays label-agnostic.
+ */
+export function taskDurationLine(
+  task: TimelineTask,
+  formatTime: (time: number) => string,
+  texts: { created: string; finished: string; lastTransition: string; duration: string; unknown: string; line: string },
+): { from: string; to: string; duration: string; label: string; text: string; known: boolean } {
+  const history = task.history ?? []
+  const created = history[0]?.time
+  const last = history[history.length - 1]?.time
+  if (created === undefined || last === undefined || history.length === 0) {
+    return { from: '', to: '', duration: '', label: texts.unknown, text: texts.unknown, known: false }
+  }
+  const elapsed = Math.max(0, last - created)
+  const from = formatTime(created)
+  const to = formatTime(last)
+  const duration = formatDuration(elapsed)
+  const label = task.status === 'completed' ? texts.finished : texts.lastTransition
+  return {
+    from,
+    to,
+    duration,
+    label,
+    text: texts.line.replace('{from}', from).replace('{to}', `${label} ${to}`).replace('{duration}', duration),
+    known: true,
+  }
 }
 
 /** See the TICKS table in the module doc. */
@@ -1089,10 +1188,13 @@ function taskCardRect(
   let from = win.end
   let to = win.end
   let x = 0
-  let w = TASK_MIN_WIDTH
+  let w = TASK_BAR_MIN_WIDTH
   if (history.length > 0) {
     anchor = 'history'
     historyIndex = 0
+    // `history` is ascending, so [0] is the CREATION and the last entry is the
+    // final transition (the completion, when the task completed). The bar spans
+    // exactly those two instants.
     from = num(history[0]?.time, win.start)
     to = from
     for (const event of history) {
@@ -1102,14 +1204,20 @@ function taskCardRect(
     const x0 = clamp(from, win.start, win.end)
     const x1 = clamp(to, win.start, win.end)
     x = (x0 - win.start) / msPerPx
-    w = clamp((x1 - x0) / msPerPx, TASK_MIN_WIDTH, TASK_MAX_WIDTH)
+    // THE BAR LENGTH IS THE DURATION. No label-derived clamp: a 30s task and a
+    // 300s task must differ by 10x at the same zoom, not by 1.1x.
+    w = Math.max(TASK_BAR_MIN_WIDTH, (x1 - x0) / msPerPx)
   } else {
-    // No dated history: a fixed-width card right-aligned to the NOW marker, so
-    // the live state is never off screen behind the right edge.
-    x = Math.max(0, win.durationMs / msPerPx - TASK_MIN_WIDTH)
-    w = TASK_MIN_WIDTH
+    // No dated history: the duration is UNKNOWN, so no duration bar is drawn at
+    // all — only a minimum-size marker pinned to the right edge, where a live
+    // task's last known moment is. Drawing a long bar here would be inventing a
+    // duration, which is the one thing this panel may never do.
+    x = Math.max(0, win.durationMs / msPerPx - TASK_CHIP_WIDTH)
+    w = TASK_BAR_MIN_WIDTH
   }
   const viewX = x - scrollLeft
+  const labelPlacement: 'inside' | 'right' =
+    anchor === 'history' && w >= TASK_CHIP_INSIDE_MIN_WIDTH ? 'inside' : 'right'
   return {
     laneId,
     laneIndex,
@@ -1125,5 +1233,10 @@ function taskCardRect(
     viewX,
     visible: viewX + w >= 0 && viewX <= viewportWidth,
     live: anchor === 'live',
+    labelPlacement,
+    labelX: labelPlacement === 'inside' ? x : x + w + TASK_CHIP_GAP,
+    labelY: laneY + TASK_CARD_TOP,
+    labelW: labelPlacement === 'inside' ? w : TASK_CHIP_WIDTH,
+    labelH: TASK_CARD_HEIGHT,
   }
 }

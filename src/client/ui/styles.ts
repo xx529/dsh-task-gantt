@@ -235,6 +235,34 @@ export const BOARD_CSS = `
 }
 
 /* --- task cards -------------------------------------------------------- */
+
+/* One absolutely-positioned wrapper per task, so the BAR and its LABEL chip are
+   laid out independently: bar length = duration, chip = readable text. The
+   wrapper has no size of its own; both children carry their own geometry. */
+.dtg-task-wrap { position: absolute; left: 0; top: 0; width: 0; height: 0; }
+/* The duration bar. Its width is set inline from the real elapsed time; it gets
+   no padding and no text, so nothing about a label can stretch it. */
+.dtg-task-bar {
+  position: absolute;
+  border-radius: 2px;
+  background: var(--dsw-alias-label-tertiary);
+  opacity: 0.85;
+}
+/* A task with no dated history has no knowable duration: a marker, not a bar. */
+.dtg-task-bar-live {
+  border-radius: 50%;
+  opacity: 1;
+  box-shadow: 0 0 0 2px var(--dsw-alias-bg-layer-1);
+}
+/* Hairline from the bar's end to a chip that had to hang outside it. */
+.dtg-task-anchor {
+  position: absolute;
+  height: 0;
+  border-top: 1px dashed var(--dsw-alias-label-dimmed);
+}
+/* The chip sits at the geometry the layout computed (inside the bar, or to its
+   right); position:absolute keeps it out of normal flow so it can never
+   influence the bar. */
 .dtg-task {
   position: absolute;
   display: flex;
@@ -258,6 +286,10 @@ export const BOARD_CSS = `
 .dtg-task:hover { background: var(--dsw-alias-interactive-bg-hover); }
 .dtg-task:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary); outline-offset: 1px; }
 .dtg-task[aria-pressed='true'] { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }
+.dtg-task-outside {
+  /* An outside chip is anchored to the bar by a connector, not by overlap. */
+  border-left-width: 2px;
+}
 .dtg-task-live {
   border-style: dashed;
   border-left-style: solid;
@@ -486,3 +518,42 @@ export const BOARD_CSS = `
 /* A hidden tab keeps the last frame but stops animating. */
 .dtg-paused .dtg-step-open { animation: none; }
 `
+
+// Fail loudly at module load if that character ever creeps into the literal
+// above (twice already: a token name, and a CSS position declaration inside a
+// comment). See assertNoBackticksInCss for why it is not spelled out here.
+assertNoBackticksInCss(BOARD_CSS, 'styles.ts BOARD_CSS')
+
+/* ------------------------------------------------------- development guard */
+
+/**
+ * Assert a CSS template literal never contains a stray backtick.
+ *
+ * This exists because the SAME mistake was made twice in this file: a backtick
+ * inside a CSS comment (documenting a token, then documenting
+ * position:absolute) terminates the enclosing template literal early, and the
+ * symptom is not a CSS problem at all — the whole module fails to transform, so
+ * every test that imports it dies at load. A one-line runtime check turns a
+ * 30-minute debugging detour into an immediate, named error.
+ *
+ * A CSS payload should never legitimately contain a backtick, so this is exact
+ * rather than heuristic.
+ *
+ * @param css - the template literal body to check.
+ * @param label - module name used in the thrown message.
+ * @throws when the payload contains a backtick.
+ */
+export function assertNoBackticksInCss(css: string, label: string): void {
+  // The character is built from its code point on purpose: writing a literal
+  // backtick here (even escaped) makes naive template scanners see an extra
+  // quote and mis-split the module's literals. Never spell it out in this file.
+  const TICK = String.fromCharCode(96)
+  const index = css.indexOf(TICK)
+  if (index !== -1) {
+    const line = css.slice(0, index).split('\n').length
+    throw new Error(
+      `${label}: stray ${TICK} in a CSS template literal at line ${line}. ` +
+        'Such a character inside a CSS comment terminates the template early and breaks the module transform.',
+    )
+  }
+}

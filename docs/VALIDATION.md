@@ -11,7 +11,7 @@
 | 门 | 命令 | 结果 | 原始证据 |
 |---|---|---|---|
 | 类型检查 | `pnpm run typecheck` | ✅ `typecheck_exit=0`（`tsc -p tsconfig.json --noEmit`，无任何输出） | `/tmp/gate2.txt` |
-| 单测 | `pnpm run test` | ✅ `Test Files 17 passed (17)` / `Tests 438 passed | 1 skipped (439)`（2026-10-12 00:17 复跑；契约 v2 见 §1.4–§1.5） | 00:17 复跑 |
+| 单测 | `pnpm run test` | ✅ `Test Files 17 passed (17)` / `Tests 444 passed | 1 skipped (445)`（2026-10-12 00:35 复跑；契约 v2 与任务条几何见 §1.4–§1.6） | 00:35 复跑 |
 | 构建 | `pnpm run build` | ✅ 产出 `lib/index.js` + `lib/client.js`（`.d.ts`/`.map` 同批） | `/tmp/gate2.txt` |
 | 产物形状（packaging 脚本） | `pnpm run verify:build` | ✅ `[verify-build] OK`（宿主半 ESM 导出 name/inject/apply，0 个非相对 import；客户端半 wrapper 调用一次且 factory 返回 exports） | `/tmp/gate2.txt` |
 | 展示元数据（packaging 脚本） | `pnpm run verify:meta` | ✅ `[verify-meta] OK`（`locale/en.json`、`locale/zh.json` 经 exports 解析；`icon.svg` 2277 B） | `/tmp/gate2.txt` |
@@ -178,6 +178,35 @@ Lead 扩展并冻结了 `src/shared/contract.ts`（`SpanSpeaker` / `MessageSpan`
 
 **本轮明确**未**覆盖（不假装有）**：ui-2 的缺口 B（`GanttChart.tsx` 渲染层 22 条，泳道头 button/`dtg-frozen`/`dtg-msg*`/title/aria 等）**一条都没落**；缺口 A 里 A1 的第 5 条我只做了退化分支、A2 的 12 条我做了 5 条（7/8/9/10/11/12 中的 7、8、9、11、12），A3 只做了 13。加上 stub 下 viewport 恒为 0（`cull:true` 会剪掉所有 bar），B 组需要专门的渲染遍历 helper；这是**已知缺口**，不是已覆盖。
 
+## 1.6 任务条几何修正（用户真机反馈）+ 模板字面量守卫
+
+**用户的原始观察**：「这些任务长度，应该是根据任务创建，到结束时间的长度，而不是每个都一样的长度」。
+根因：旧几何 `w = clamp((x1-x0)/msPerPx, TASK_MIN_WIDTH=148, TASK_MAX_WIDTH=260)` —— **148/260 是文字宽度**，把任何任务都夹进同一条 148–260px 窄带，**时长信息被抹掉**（Lead 按真机图上 10 万 ms/px 换算：148px ≈ 740 秒，而 demo 任务只有几十秒）。
+
+**新契约（ui-2，`src/client/ui/timeline-layout.ts` 文件头）**：`w = max(TASK_BAR_MIN_WIDTH=2, (clamp(last)-clamp(first))/msPerPx)`；**没有上限**；标签变成独立 chip（`labelPlacement/labelX/labelW`），`'inside'` 仅当 `w >= TASK_CHIP_INSIDE_MIN_WIDTH=148`；无 history → `w=2` 点标记、`durationMs=0`；`TASK_MIN_WIDTH`/`TASK_MAX_WIDTH` **已删除**（`grep -rn "TASK_MIN_WIDTH\|TASK_MAX_WIDTH" src/` 为空）。
+
+**我改的 3 条（都在 `tests/layout.spec.ts`，都是"钉旧行为"）**
+1. `anchors a card on its first history event…`：`w` 改为 `(last-first)/msPerPx` 真值 + `durationMs` + `x` 按窗口起点算，并断言 chip 挂在右侧（`labelPlacement==='right'`、`labelX === x+w+TASK_CHIP_GAP`）。
+2. `caps a very long-lived card at the maximum width` → **删除**（它正是用户指出错误行为的固化），换成两条正向：`has NO label-derived cap`（3960px 就是 3960px）与 `doubling the duration doubles the bar`。
+3. `anchors a card with no dated history at NOW`：`w = TASK_BAR_MIN_WIDTH`、`x = max(0, dataWidth - TASK_CHIP_WIDTH)`、**`durationMs === 0`**（时长未知不得画长条）。
+
+**新增的 4 条守护**
+| 用例 | 钉住的东西 |
+|---|---|
+| `doubling the duration doubles the bar` | `msPerPx=1000` 下 30s→**30.00px**、300s→**300.00px**、比值 **10.00**（用户需求的直接回归锁） |
+| `the floor only applies below it` | 1ms 任务 → 恰好 **2px**（防止上一条退化成"只要大于下限就绿"） |
+| `never lets the subject length move the bar` | subject 1 字符 vs **4000 字符** → `x`/`w` **完全相等**（实测 120px），且 `'inside'` 判定只看条宽不看文字 —— 根因级锁 |
+| `client stylesheets are intact template literals`（`tests/theme.spec.ts`） | CSS 模板字面量被反引号截断的守卫，见下 |
+
+**模板字面量守卫（ui-2 两次踩到）—— 我先写错了一版，实测后改准**
+- 我第一次用「反引号计数必须是偶数」。**实测证明它抓不到真实事故**：ui-2 两次写的都是**成对**反引号（`` `markdown-citation` ``），总数是偶数 → 该检查放过。
+- 真正的可判别信号是**模板体被切成碎片后留下未闭合的块注释**：把事故简化成 `` const css = `a { /* see `markdown-citation` here */ } b`; `` → 扫描出 **2** 个 body，且**两个都不平衡**（第一个开了注释、第二个才闭合）。健康文件测得的基线：`styles.ts` = **1** 个 body（17 430 字符，括号 115/115）、`panel-style.ts` = **3** 个 body（23/4123/54 字符，括号 15/15），所以断言写成「任何 body 不得有未闭合块注释」而**不是**写死 body 数量（对该文件的合法多模板免疫）。
+- 单个游离反引号的情形走另一条路径：字面量永不闭合 → 扫描器**抛错并点名原因**（比 esbuild 的 `Expected ";" but found …` 可读得多）。
+- 两条落地断言：① 每个 body 的 `/*` 与 `*/` 计数必须相等；② 拼接后的 CSS 必须保有选择器词汇（`.dtg-*` / `.dsh-task-gantt*`，两文件不同前缀，实测后按文件分别设阈值）、括号平衡、且不含 JS 行注释。
+- **守卫的边界（诚实）**：它只扫**模板体**。我在写这个守卫时自己踩了同类坑的变体 —— 把 `*/` 写进了 JSDoc 注释（`` `['a /* see ', ' */ b']` ``），提前闭合了文档注释、导致本文件语法错误；那次是 `tsc` 抓到的，本守卫**不覆盖**（注释不在模板体内）。
+
+**未动**：`MESSAGE_MARKER_MIN_GAP_PX(9) < MESSAGE_MARKER_WIDTH(11)`（Lead 裁定本轮不改，仍记 ❓19）。
+
 ## 2. 环境（实测值）
 
 | 事实 | 值 | 怎么测的 |
@@ -193,7 +222,7 @@ Lead 扩展并冻结了 `src/shared/contract.ts`（`SpanSpeaker` / `MessageSpan`
 
 ---
 
-## 3. 我写的测试（17 个 spec / 439 用例：438 passed + 1 skipped）
+## 3. 我写的测试（17 个 spec / 445 用例：444 passed + 1 skipped）
 
 写入范围（本任务独占）：`/Users/lzx/Documents/GitHub/dsh-task-gantt/tests/**`、`/Users/lzx/Documents/GitHub/dsh-task-gantt/vitest.config.ts`、`/Users/lzx/Documents/GitHub/dsh-task-gantt/.github/workflows/**`、本文件。
 

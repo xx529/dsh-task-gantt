@@ -127,3 +127,153 @@ describe('theme scanner calibration (negative controls: these must be GREEN)', (
     expect(stripped).not.toContain('#111')
   })
 })
+
+/* ------------------------------------------------------------------------- */
+/* The stylesheets are TEMPLATE LITERALS: a stray backtick breaks the file     */
+/* ------------------------------------------------------------------------- */
+
+/**
+ * ui-2 hit this TWICE in `styles.ts`: writing a backtick-quoted word inside a
+ * CSS comment (`` `markdown-citation` ``, `` `position: absolute` ``)
+ * terminates the enclosing template literal. The failure mode is nasty because
+ * the file is only imported indirectly: the whole importing spec fails to
+ * transform and reads like a code regression rather than a typo in prose.
+ *
+ * WHAT THE OBVIOUS CHECK MISSES (measured, not assumed): the incidents used a
+ * backtick PAIR, so the file has an even number of backticks and a parity test
+ * passes it. What actually happens is that the single 17 430-char CSS body of
+ * styles.ts is cut into two fragments, the first of which opens a block comment
+ * that never closes. That is the signal asserted here, because it is robust: it
+ * does not care how many template literals the file legitimately has
+ * (panel-source has 3, see the measurement in docs/VALIDATION.md 1.6).
+ *
+ * NOTE (learned the hard way while writing this file): the literal delimiters of
+ * a block comment must never appear inside this doc comment either — writing
+ * them closed the comment early and broke this very file.
+ */
+function templateBodies(source: string): string[] {
+  const bodies: string[] = []
+  let index = 0
+  let quote: string | null = null
+  while (index < source.length) {
+    const ch = source[index] as string
+    if (quote !== null) {
+      if (ch === '\\') {
+        index += 2
+        continue
+      }
+      if (ch === quote) quote = null
+      index += 1
+      continue
+    }
+    if (ch === '/' && source[index + 1] === '/') {
+      const end = source.indexOf('\n', index)
+      index = end === -1 ? source.length : end
+      continue
+    }
+    if (ch === '/' && source[index + 1] === '*') {
+      const end = source.indexOf('*/', index + 2)
+      index = end === -1 ? source.length : end + 2
+      continue
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch
+      index += 1
+      continue
+    }
+    if (ch === '`') {
+      let cursor = index + 1
+      let depth = 0
+      let body = ''
+      while (cursor < source.length) {
+        const inner = source[cursor] as string
+        if (inner === '\\') {
+          body += source.slice(cursor, cursor + 2)
+          cursor += 2
+          continue
+        }
+        if (inner === '$' && source[cursor + 1] === '{') {
+          depth += 1
+          body += '${'
+          cursor += 2
+          continue
+        }
+        if (depth > 0 && inner === '}') {
+          depth -= 1
+          body += inner
+          cursor += 1
+          continue
+        }
+        if (inner === '`' && depth === 0) break
+        body += inner
+        cursor += 1
+      }
+      if (cursor >= source.length) throw new Error(`unterminated template literal at offset ${index}`)
+      bodies.push(body)
+      index = cursor + 1
+      continue
+    }
+    index += 1
+  }
+  return bodies
+}
+
+/**
+ * Template bodies whose block comments do not close: the fingerprint of a
+ * template literal cut in half by a stray backtick.
+ */
+function unbalancedCommentBodies(bodies: readonly string[]): string[] {
+  return bodies.filter((body) => (body.match(/\/\*/g) ?? []).length !== (body.match(/\*\//g) ?? []).length)
+}
+
+describe('client stylesheets are intact template literals', () => {
+  // The two stylesheets do not share a class prefix: the chart owns `.dtg-*`,
+  // the panel surface owns `.dsh-task-gantt-*`. Measured: 115 brace pairs in
+  // styles.ts (one 17 430-char template) and 15 in panel-style.ts (3 templates).
+  const styles: { file: string; selector: RegExp; minSelectors: number }[] = [
+    { file: 'src/client/ui/styles.ts', selector: /\.dtg-[a-z0-9-]+/g, minSelectors: 10 },
+    { file: 'src/client/panel-style.ts', selector: /\.dsh-task-gantt[a-z-]*/g, minSelectors: 5 },
+  ]
+
+  it('never leaves a template body with an unterminated block comment', () => {
+    for (const { file } of styles) {
+      const bodies = templateBodies(readFileSync(resolve(ROOT, file), 'utf8'))
+      expect(bodies.length, `${file} has no template literal`).toBeGreaterThan(0)
+      const broken = unbalancedCommentBodies(bodies)
+      expect(
+        broken,
+        `${file}: a template literal looks cut in half (a stray backtick, usually inside a CSS comment). ` +
+          `Fragments: ${broken.map((body) => JSON.stringify(body.slice(-40))).join(' | ')}`,
+      ).toEqual([])
+    }
+  })
+
+  it('keeps the stylesheet vocabulary and balanced braces', () => {
+    for (const { file, selector, minSelectors } of styles) {
+      const css = templateBodies(readFileSync(resolve(ROOT, file), 'utf8')).join('\n')
+      expect((css.match(selector) ?? []).length, `${file} selectors ${selector}`).toBeGreaterThan(minSelectors)
+      const open = (css.match(/{/g) ?? []).length
+      const close = (css.match(/}/g) ?? []).length
+      expect(open, `${file}: ${open} '{' vs ${close} '}'`).toBe(close)
+      expect(css, `${file} must not contain a JS line comment`).not.toMatch(/^\s*\/\//m)
+    }
+  })
+
+  it('the check discriminates, including the exact shape ui-2 hit', () => {
+    // The reported incident, reduced: a backtick PAIR inside a CSS comment.
+    const incident = 'const css = `a { /* see `markdown-citation` here */ } b`;'
+    const incidentBodies = templateBodies(incident)
+    expect(incidentBodies.length, 'the pair splits one body into two').toBeGreaterThan(1)
+    // BOTH fragments are unbalanced: the first opens a comment, the second
+    // closes it. (My first version expected 1 and the test corrected me.)
+    expect(unbalancedCommentBodies(incidentBodies).length, 'the pair unbalances two fragments').toBe(2)
+    // A SINGLE stray backtick behaves differently: the literal never closes, so
+    // the scanner throws with a message that names the cause (esbuild's own
+    // message is "Expected \";\" but found …", which reads like a code bug).
+    const single = 'const css = `a { /* see `position: absolute */ } b`;'
+    expect(() => templateBodies(single)).toThrow(/unterminated template literal/)
+    // A healthy file has nothing to report, and nested interpolation is not a break.
+    expect(unbalancedCommentBodies(templateBodies('const css = `a { /* ok */ } b`;'))).toEqual([])
+    expect(templateBodies('const a = `v${`inner`}w`;')).toEqual(['v${`inner`}w'])
+  })
+})

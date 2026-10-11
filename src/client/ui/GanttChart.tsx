@@ -53,12 +53,14 @@ import {
   DEFAULT_HEADER_HEIGHT,
   DEFAULT_LANE_HEIGHT,
   LANE_HEAD_WIDTH,
+  TASK_CHIP_GAP,
   clampMsPerPx,
   computeWindow,
   fitMsPerPx,
   formatClock,
   formatDateTime,
   isLiveBoard,
+  taskDurationLine,
   layoutTimeline,
   type LaneBox,
   type MessageMarkerRect,
@@ -822,7 +824,17 @@ function TaskCard({
     status: statusText(task.status),
     anchor: selection,
   })
-  const full = `${task.subject}\n${task.description}`
+  // The tooltip carries the same endpoints + elapsed time as the details panel,
+  // so a user can check "why is this bar this long" on hover, without clicking.
+  const elapsed = taskDurationLine(task, (time) => formatDateTime(time, tzOffsetMinutes), {
+    created: uiLabel('taskCreatedAt'),
+    finished: uiLabel('taskFinishedAt'),
+    lastTransition: uiLabel('taskLastTransitionAt'),
+    duration: uiLabel('taskDuration'),
+    unknown: uiLabel('taskDurationUnknown'),
+    line: uiLabel('taskDurationLine'),
+  })
+  const full = `${task.subject}\n${task.description}${elapsed.known ? `\n${elapsed.from} → ${elapsed.label} ${elapsed.to} (${elapsed.duration})` : `\n${elapsed.text}`}`
   const onKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>): void => {
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault()
@@ -832,28 +844,54 @@ function TaskCard({
       onSelectTask(null)
     }
   }
+  const labelStyle: CSSProperties = {
+    left: rect.labelX,
+    top: rect.labelY,
+    width: rect.labelW,
+    height: rect.labelH,
+    ...(color === undefined ? {} : { borderLeftColor: color.bar }),
+  }
   return (
-    <button
-      type="button"
-      className={`dtg-task dtg-ink-${task.status}${rect.live ? ' dtg-task-live' : ''}`}
-      style={{
-        left: rect.x,
-        top: rect.y,
-        width: rect.w,
-        height: rect.h,
-        ...(color === undefined ? {} : { borderLeftColor: color.bar }),
-      }}
-      title={full}
-      aria-label={aria}
-      aria-pressed={selected}
-      onClick={() => onSelectTask(selected ? null : task.id)}
-      onKeyDown={onKeyDown}
-      data-task-id={task.id}
-      data-task-anchor={rect.anchor}
-    >
-      <span className="dtg-task-subject">{task.subject === '' ? '—' : task.subject}</span>
-      {task.description === '' ? null : <span className="dtg-task-desc">{task.description}</span>}
-      {rect.live ? <span className="dtg-task-flag">{uiLabel('liveBadge')}</span> : null}
-    </button>
+    <span className="dtg-task-wrap" data-task-id={task.id}>
+      {/* The BAR: its length is the task's real elapsed time, floored only at the
+          visual minimum. Never widened to fit the label — that is what made every
+          task look equally long. A duration-less task draws a marker, not a bar. */}
+      <span
+        className={`dtg-task-bar dtg-task-bar-${rect.anchor}${rect.live ? ' dtg-task-bar-live' : ''}`}
+        style={{
+          left: rect.x,
+          top: rect.y,
+          width: rect.w,
+          height: rect.h,
+          ...(color === undefined ? {} : { background: color.bar }),
+        }}
+        aria-hidden="true"
+      />
+      {/* The LABEL chip, decoupled: inside the bar when it fits, otherwise hung to
+          its right with a hairline anchor back to the bar's end. */}
+      {rect.labelPlacement === 'right' && !rect.live ? (
+        <span
+          className="dtg-task-anchor"
+          style={{ left: rect.x + rect.w, top: rect.y + rect.h / 2, width: Math.max(TASK_CHIP_GAP, rect.labelX - (rect.x + rect.w)) }}
+          aria-hidden="true"
+        />
+      ) : null}
+      <button
+        type="button"
+        className={`dtg-task dtg-ink-${task.status}${rect.live ? ' dtg-task-live' : ''}${rect.labelPlacement === 'right' ? ' dtg-task-outside' : ''}`}
+        style={labelStyle}
+        title={full}
+        aria-label={aria}
+        aria-pressed={selected}
+        onClick={() => onSelectTask(selected ? null : task.id)}
+        onKeyDown={onKeyDown}
+        data-task-anchor={rect.anchor}
+        data-label-placement={rect.labelPlacement}
+      >
+        <span className="dtg-task-subject">{task.subject === '' ? '—' : task.subject}</span>
+        {task.description === '' ? null : <span className="dtg-task-desc">{task.description}</span>}
+        {rect.live ? <span className="dtg-task-flag">{uiLabel('liveBadge')}</span> : null}
+      </button>
+    </span>
   )
 }

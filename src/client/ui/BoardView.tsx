@@ -29,7 +29,7 @@ import { GanttChart } from './GanttChart.tsx'
 import { uiLabel } from './labels.ts'
 import { historyActionText, taskStatusText } from './status.ts'
 import { BOARD_CSS, STYLE_ELEMENT_ID } from './styles.ts'
-import { formatClock, formatDateTime } from './timeline-layout.ts'
+import { formatClock, formatDateTime, taskDurationLine } from './timeline-layout.ts'
 
 /** Poll cadence while the tab is visible (the host folds the log on demand). */
 const POLL_MS = 5_000
@@ -279,6 +279,18 @@ function TaskDetails({
   tzOffsetMinutes: number
   onClose: () => void
 }): ReactNode {
+  // The user has to be able to CHECK the bar length, so the two endpoints and
+  // the elapsed time are spelled out (local time, same clock as the chart).
+  // Shared with the card tooltip so the hovered and opened numbers can't drift.
+  const duration = taskDurationLine(task, (time) => formatDateTime(time, tzOffsetMinutes), {
+    created: uiLabel('taskCreatedAt'),
+    finished: uiLabel('taskFinishedAt'),
+    lastTransition: uiLabel('taskLastTransitionAt'),
+    duration: uiLabel('taskDuration'),
+    unknown: uiLabel('taskDurationUnknown'),
+    line: uiLabel('taskDurationLine'),
+  })
+
   return (
     <div className="dtg-details" role="region" aria-label={uiLabel('detailsTitle')}>
       <div className="dtg-details-head">
@@ -288,6 +300,16 @@ function TaskDetails({
         </button>
       </div>
       <div className="dtg-details-body">{task.description === '' ? '—' : task.description}</div>
+      <div className="dtg-kv dtg-kv-duration" title={duration.text} data-duration-known={duration.known ? 'true' : 'false'}>
+        <span className="dtg-kv-key">
+          {duration.known ? uiLabel('taskCreatedAt') : uiLabel('taskDuration')}
+        </span>
+        <span className="dtg-kv-val">
+          {duration.known
+            ? `${duration.from} → ${duration.label} ${duration.to}（${duration.duration}）`
+            : duration.text}
+        </span>
+      </div>
       <div className="dtg-kv">
         <span className="dtg-kv-key">{t('taskOwner')}</span>
         <span className="dtg-kv-val">{task.owner ?? t('unassigned')}</span>

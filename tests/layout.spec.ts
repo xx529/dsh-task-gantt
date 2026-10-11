@@ -26,8 +26,10 @@ import {
   STEP_BAR_HEIGHT,
   TASK_CARD_HEIGHT,
   TASK_CARD_TOP,
-  TASK_MAX_WIDTH,
-  TASK_MIN_WIDTH,
+  TASK_BAR_MIN_WIDTH,
+  TASK_CHIP_GAP,
+  TASK_CHIP_WIDTH,
+  TASK_CHIP_INSIDE_MIN_WIDTH,
   TURN_BAND_HEIGHT,
   buildTicks,
   clamp,
@@ -350,29 +352,89 @@ describe('layoutTimeline — task cards', () => {
     const layout = layoutTimeline(withHistory, VIEWPORT, { now: 11_000, msPerPx: 100, tzOffsetMinutes: 0 })
     const card = layout.tasks[0]
     expect(card).toMatchObject({ anchor: 'history', historyIndex: 0, at: 2_000, durationMs: 1_500, live: false })
-    expect(card?.x).toBe(10)
-    // (3500-2000)/100 = 15px, floored to the readable width.
-    expect(card?.w).toBe(TASK_MIN_WIDTH)
+    expect(card?.x).toBe((2_000 - layout.window.start) / 100)
+    // LENGTH IS DURATION (the user's fix): (3500-2000)/100 = 15px, and only the
+    // 2px floor may intervene — never a label-derived width.
+    expect(card?.w).toBeCloseTo((3_500 - 2_000) / 100, 5)
+    expect(card?.w).toBeGreaterThan(TASK_BAR_MIN_WIDTH)
+    expect(card?.durationMs).toBe(1_500)
+    // The label chip is a separate rect: the bar itself is only 15px, so the
+    // chip hangs to its right rather than stretching the bar.
+    expect(card?.labelPlacement).toBe('right')
+    expect(card?.labelW).toBe(TASK_CHIP_WIDTH)
+    expect(card?.labelX).toBeCloseTo((card?.x ?? 0) + (card?.w ?? 0) + TASK_CHIP_GAP, 5)
     expect(card?.y).toBe(DEFAULT_HEADER_HEIGHT + TASK_CARD_TOP)
     expect(card?.h).toBe(TASK_CARD_HEIGHT)
   })
 
-  it('caps a very long-lived card at the maximum width', () => {
-    // The zoom is floored at MIN_MS_PER_PX, so the span must be wide enough in
-    // milliseconds to reach the cap: (199000-1000)/50 = 3960px → 260px.
+  it('has NO label-derived cap: a long task is drawn as long as it lasted', () => {
+    // This replaces `caps a very long-lived card at the maximum width` — that
+    // assertion pinned the very behaviour the user reported as wrong ("every
+    // task is the same length"). 148/260 were TEXT widths; a bar clamped into
+    // them erases duration.
     const long = withTasks(data, [task({ history: [{ time: 1_000, action: 'created', sessionId: 's' }, { time: 199_000, action: 'completed', sessionId: 's' }] })])
     const layout = layoutTimeline(long, VIEWPORT, { now: 200_000, msPerPx: MIN_MS_PER_PX, tzOffsetMinutes: 0 })
     expect(layout.msPerPx).toBe(MIN_MS_PER_PX)
-    expect(layout.tasks[0]?.w).toBe(TASK_MAX_WIDTH)
+    // (199000-1000)/50 = 3960px — far beyond any chip width, and that is correct.
+    expect(layout.tasks[0]?.w).toBeCloseTo(198_000 / MIN_MS_PER_PX, 5)
+    expect(layout.tasks[0]?.w).toBeGreaterThan(TASK_CHIP_WIDTH)
+  })
+
+  it('doubling the duration doubles the bar (no clamping band)', () => {
+    const msPerPx = 1_000
+    const build = (start: number, end: number): number => {
+      const one = withTasks(data, [task({ history: [{ time: start, action: 'created', sessionId: 's' }, { time: end, action: 'completed', sessionId: 's' }] })])
+      const layout = layoutTimeline(one, { ...VIEWPORT, width: 600 }, { now: start + 100_000, msPerPx, tzOffsetMinutes: 0 })
+      return layout.tasks[0]?.w ?? 0
+    }
+    const short = build(1_000, 31_000) // 30s
+    const long = build(1_000, 301_000) // 300s
+    expect(short).toBeCloseTo(30, 5)
+    expect(long).toBeCloseTo(300, 5)
+    expect(long / short).toBeCloseTo(10, 5)
+  })
+
+  it('the floor only applies below it (a 1ms task is a 2px marker, not a 2px rule)', () => {
+    const tiny = withTasks(data, [task({ history: [{ time: 1_000, action: 'created', sessionId: 's' }, { time: 1_001, action: 'completed', sessionId: 's' }] })])
+    const layout = layoutTimeline(tiny, VIEWPORT, { now: 11_000, msPerPx: 1_000, tzOffsetMinutes: 0 })
+    expect(layout.tasks[0]?.w).toBe(TASK_BAR_MIN_WIDTH)
+    expect(layout.tasks[0]?.durationMs).toBe(1)
+  })
+
+  it('never lets the subject length move the bar (label/bar decoupling)', () => {
+    // The root-cause lock: the previous geometry put TEXT width into the bar
+    // width, so a longer subject changed the bar. 1 char vs 4000 chars must be
+    // pixel-identical for x/w (the chip carries the text).
+    const msPerPx = 1_000
+    const build = (subject: string): { x: number; w: number } => {
+      const one = withTasks(data, [task({ subject, history: [{ time: 1_000, action: 'created', sessionId: 's' }, { time: 121_000, action: 'completed', sessionId: 's' }] })])
+      const layout = layoutTimeline(one, { ...VIEWPORT, width: 600 }, { now: 200_000, msPerPx, tzOffsetMinutes: 0 })
+      return { x: layout.tasks[0]?.x ?? -1, w: layout.tasks[0]?.w ?? -1 }
+    }
+    const oneChar = build('a')
+    const huge = build('x'.repeat(4_000))
+    expect(oneChar).toEqual(huge)
+    expect(oneChar.w).toBeCloseTo(120, 5)
+    // A 4000-char subject is truncated by CSS, so `inside` must consider ONLY
+    // the bar width — never the text. 120px < TASK_CHIP_INSIDE_MIN_WIDTH(148).
+    const withHugeSubject = withTasks(data, [
+      task({ subject: 'x'.repeat(4_000), history: [{ time: 1_000, action: 'created', sessionId: 's' }, { time: 121_000, action: 'completed', sessionId: 's' }] }),
+    ])
+    const placement = layoutTimeline(withHugeSubject, { ...VIEWPORT, width: 600 }, { now: 200_000, msPerPx, tzOffsetMinutes: 0 }).tasks[0]?.labelPlacement
+    expect(placement).toBe('right')
   })
 
   it('anchors a card with no dated history at NOW and flags it live', () => {
     const live = withTasks(data, [task({ history: [] })])
     const layout = layoutTimeline(live, VIEWPORT, { now: 11_000, msPerPx: 100, tzOffsetMinutes: 0 })
     const card = layout.tasks[0]
-    expect(card).toMatchObject({ anchor: 'live', historyIndex: -1, live: true, at: 11_000, durationMs: 0, w: TASK_MIN_WIDTH })
+    expect(card).toMatchObject({ anchor: 'live', historyIndex: -1, live: true, at: 11_000, durationMs: 0, w: TASK_BAR_MIN_WIDTH })
+    // An unknown duration must be a POINT, not a bar: 2px.
+    expect(card?.w).toBe(TASK_BAR_MIN_WIDTH)
+    expect(card?.durationMs).toBe(0)
+    expect(card?.labelPlacement).toBe('right')
     // Right-aligned to NOW, but never pushed off the left edge of the canvas.
-    expect(card?.x).toBe(Math.max(0, layout.dataWidth - TASK_MIN_WIDTH))
+    expect(card?.x).toBe(Math.max(0, layout.dataWidth - TASK_CHIP_WIDTH))
     expect(card?.x).toBe(0)
   })
 
