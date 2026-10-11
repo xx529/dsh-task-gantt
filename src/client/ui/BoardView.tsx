@@ -23,14 +23,21 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { LaneNavigation, TimelineResponse, TimelineTask } from '../../shared/contract.ts'
-import { BUILD_LABEL } from '../../shared/contract.ts'
+import { BUILD_LABEL, MESSAGE_PREVIEW_MAX, type MessageSpan } from '../../shared/contract.ts'
 import { fetchTimeline, type RouteBase } from '../api.ts'
 import { t } from '../i18n.ts'
 import { GanttChart } from './GanttChart.tsx'
 import { uiLabel } from './labels.ts'
 import { historyActionText, taskStatusText } from './status.ts'
 import { BOARD_CSS, STYLE_ELEMENT_ID } from './styles.ts'
-import { formatClock, formatDateTime, taskDurationLine } from './timeline-layout.ts'
+import {
+  formatClock,
+  formatDateTime,
+  messageDetail,
+  resolveMessageDirection,
+  speakerLaneMapper,
+  taskDurationLine,
+} from './timeline-layout.ts'
 
 /** Poll cadence while the tab is visible (the host folds the log on demand). */
 const POLL_MS = 5_000
@@ -86,6 +93,12 @@ export function BoardView({ sessionId, visible, routeBase, navigate }: BoardView
   const [now, setNow] = useState(() => Date.now())
   const [reloadKey, setReloadKey] = useState(0)
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null)
+  /**
+   * The selected MESSAGE marker, kept separate from the task selection on
+   * purpose: they are two independent readers (a task's duration vs one message's
+   * body), so selecting one does not clear the other. Both can be open at once.
+   */
+  const [selectedMessageKey, setSelectedMessageKey] = useState<string | null>(null)
 
   useBoardStyles()
 
@@ -177,6 +190,37 @@ export function BoardView({ sessionId, visible, routeBase, navigate }: BoardView
   }, [selectedTaskId, selectedTask, data])
 
   const onSelectTask = useCallback((taskId: string | null) => setSelectedTaskId(taskId), [])
+  const onSelectMessage = useCallback((key: string | null) => setSelectedMessageKey(key), [])
+
+  /** The selected marker, looked up in the payload so its body survives re-renders. */
+  const selectedMessage = useMemo(() => {
+    if (data === null || selectedMessageKey === null) return null
+    const laneIdOf = speakerLaneMapper(data.lanes)
+    for (const lane of data.lanes) {
+      const list = lane.messages ?? []
+      for (let index = 0; index < list.length; index += 1) {
+        const message = list[index]
+        if (message === undefined) continue
+        const key = message.messageId ?? `${lane.id}:${message.kind}:${message.time}:${index}`
+        if (key === selectedMessageKey) {
+          return { laneId: lane.id, message, direction: resolveMessageDirection(message, lane.id, laneIdOf).direction }
+        }
+      }
+    }
+    return null
+  }, [data, selectedMessageKey])
+
+  /* Esc closes whichever detail is open (task or message). */
+  useEffect(() => {
+    if (!visible) return
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      if (selectedMessageKey !== null) setSelectedMessageKey(null)
+      else if (selectedTaskId !== null) setSelectedTaskId(null)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [visible, selectedMessageKey, selectedTaskId])
   const retry = useCallback(() => setReloadKey((key) => key + 1), [])
 
   /* -------------------------------------------------------------- states */
@@ -241,6 +285,8 @@ export function BoardView({ sessionId, visible, routeBase, navigate }: BoardView
           now={now}
           selectedTaskId={selectedTaskId}
           onSelectTask={onSelectTask}
+          selectedMessageKey={selectedMessageKey}
+          onSelectMessage={onSelectMessage}
           navigate={onNavigate}
         />
       )}
@@ -251,6 +297,16 @@ export function BoardView({ sessionId, visible, routeBase, navigate }: BoardView
           generatedAt={data.generatedAt}
           tzOffsetMinutes={tzOffsetMinutes}
           onClose={() => setSelectedTaskId(null)}
+        />
+      )}
+
+      {selectedMessage === null ? null : (
+        <MessageDetails
+          laneId={selectedMessage.laneId}
+          message={selectedMessage.message}
+          direction={selectedMessage.direction}
+          tzOffsetMinutes={tzOffsetMinutes}
+          onClose={() => setSelectedMessageKey(null)}
         />
       )}
 
@@ -278,6 +334,84 @@ export function BoardView({ sessionId, visible, routeBase, navigate }: BoardView
 }
 
 /* --------------------------------------------------------------- details */
+
+/**
+ * The detail view for one message marker.
+ *
+ * This is where a message's FULL body lives. It is deliberately not in the
+ * marker's `title`: real bodies run to several thousand characters, and a browser
+ * tooltip both truncates and cannot scroll, so a tooltip could only ever show a
+ * prefix while looking like the whole thing.
+ *
+ * A marker is one span, so the body shown is always that marker's own text —
+ * the "+N" badge beside it counts separate, undrawn messages and is not
+ * expanded here.
+ */
+function MessageDetails({
+  laneId,
+  message,
+  direction,
+  tzOffsetMinutes,
+  onClose,
+}: {
+  laneId: string
+  message: MessageSpan
+  direction: 'outgoing' | 'incoming'
+  tzOffsetMinutes: number
+  onClose: () => void
+}): ReactNode {
+  const detail = messageDetail(
+    {
+      kind: message.kind,
+      time: message.time,
+      direction,
+      from: message.from,
+      to: message.to,
+      preview: message.preview,
+    },
+    { you: t('you'), peerFallback: uiLabel('messageNoPeer') },
+    (time: number) => formatDateTime(time, tzOffsetMinutes),
+  )
+  const outgoing = detail.direction === 'outgoing'
+  return (
+    <div className="dtg-details dtg-message-details" role="region" aria-label={uiLabel('messageDetailTitle')}>
+      <div className="dtg-details-head">
+        <span className="dtg-details-title dtg-message-route" data-message-route={detail.route}>
+          {detail.route}
+        </span>
+        <span className="dtg-details-kind" data-message-direction={detail.direction}>
+          {outgoing ? uiLabel('messageSentMark') : uiLabel('messageReceivedMark')}
+        </span>
+        <button type="button" className="dtg-btn dtg-details-close" onClick={onClose} aria-label={uiLabel('close')}>
+          ✕
+        </button>
+      </div>
+      <div className="dtg-kv">
+        <span className="dtg-kv-key">{uiLabel('messageWhenLabel')}</span>
+        <span className="dtg-kv-val">{detail.when}</span>
+      </div>
+      <div className="dtg-kv">
+        <span className="dtg-kv-key">{uiLabel('messageKindLabel')}</span>
+        <span className="dtg-kv-val">{detail.kind}</span>
+      </div>
+      <div className="dtg-kv">
+        <span className="dtg-kv-key">{uiLabel('messageLaneLabel')}</span>
+        <span className="dtg-kv-val">{laneId}</span>
+      </div>
+      {detail.maybeTruncated ? (
+        <div className="dtg-notice">{uiLabel('messageTruncated', { max: MESSAGE_PREVIEW_MAX })}</div>
+      ) : null}
+      <div
+        className="dtg-message-body"
+        data-message-body=""
+        data-message-body-length={detail.body.length}
+        data-message-has-body={detail.hasBody ? 'true' : 'false'}
+      >
+        {detail.hasBody ? detail.body : <span className="dtg-muted">{uiLabel('messageNoBody')}</span>}
+      </div>
+    </div>
+  )
+}
 
 function TaskDetails({
   task,

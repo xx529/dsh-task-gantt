@@ -367,6 +367,78 @@ host-data-2 在 `docs/FINDINGS-host.md` §18.8 发布了 **13 条 host 侧不变
 
 **我接受他们的范围决定**：他们**没有**为 `laneTracks` / 条高 / chip 高声明任何不变量，理由是会变成"第三个口头契约"（描述漂移的来源）。几何以 ui-2 的 `laneTracks` 文档注释 + 我的 `tests/layout.spec.ts` 为准；host 侧只为上面 13 条背书。真机几何数据到手后我做交叉对账。
 
+## 1.11 消息正文契约放开到 16384（Lead 改契约）+ 详情视图锁
+
+**契约变更（Lead，附实测理由）**：`MESSAGE_PREVIEW_MAX` `140 → 16384`；语义从"单行摘要"改为"**完整正文（空白折叠）**"，16384 只是防病态记录的护栏，超限必须在 host 侧留痕。Lead 的实测依据：真实 56 条 `team/message`（他统计 177 条）正文 `min 600 / median 1839 / max 7135`，**全部**超过旧上限 140 —— 旧契约下"点开看说了什么"这条需求**根本无法实现**。
+
+**我发现的第一个问题：我的主 fixture 会让这条锁变成空转。** `tests/fixtures/lead-team-journal.json` 为控制体积把所有 `content[].text` **裁到 90 字符**，于是它的 preview 全是 **91**（实测：56 条，min=median=max=91）—— 在它上面断言"median > 140"**必红**，而它又完全不能代表真实分布。
+**处置**：新增 `tests/fixtures/message-bodies.json`（**不裁剪**正文，24 条真实 body，`min 600 / median 2399 / max 7135`，含最长的一条，116 KB），专供这条锁；并在注释里写明两份 fixture 的分工。**同一教训第三次出现：决定断言是否有意义的还是数据形状。**
+
+**新增/更新的锁**
+
+| 位置 | 锁 |
+|---|---|
+| `tests/host-messages.spec.ts` | 400 字符正文**完整保留**（旧契约下不可能）；**2000 字符**正文端到端完整（`length === 2000`、无省略号、`truncatedBodies === 0`）—— 这条在旧契约上必红；超限时 preview 恰为 `MESSAGE_PREVIEW_MAX`、以 `…` 结尾、`record.truncated === true`、`diagnostics.truncatedBodies` **逐条累加**（恰等于上限**不算**截断） |
+| `tests/host-integration.spec.ts` | 用**全正文 fixture** 断言端到端 `median preview length > 140`、`max > 1000`、`max <= MESSAGE_PREVIEW_MAX`，且**最长真实正文的折叠长度被逐字保留**（与 fixture 自身文本比对，不写魔数） |
+| `tests/message-paint.spec.ts` | `messageDetail` 四锁：**`body === marker.preview` 逐字相等**（"点开看到的就是数据本身"，2000 字符仍成立）、缺正文时 `hasBody === false` 且 `body === ''`（UI 据此写"无正文"）、`route` 含**双方**名称（`fromName → toName`）、`maybeTruncated` 在恰达上限时为 true |
+
+**本轮我自己的三处缺陷（已修，记录在案）**
+1. **对 `diagnostics` 用了 `toEqual` 全等**：host-data-2 新增 `truncatedBodies` 后我两条用例红 —— **新增字段应当无痛**，已改为 `toMatchObject`（+ 单独断言新字段），与"加字段是安全变更"的原则一致；
+2. **`data-build` 的 import 断言写了逐字子串**：ui-2 正常地把 import 列表扩成 `{ BUILD_LABEL, MESSAGE_PREVIEW_MAX, MessageSpan }` 就让我的守护红 → 改为**结构化正则**；
+3. **全正文用例第一版传了 `members: []`**：消息是挂在**发送方泳道**上的，没有 roster 就没有发送方泳道 ⇒ 24 条只画出 11 条（我一度怀疑 fixture 计数）→ 已修，并在注释里写明这个前提。
+
+**一处待 Lead/ui-2 确认的口径**：Lead 的真机验收写"点 incoming 应看到 `B ← A`"，而 `messageDetail` 目前**恒定返回规范序 `fromName → toName`**，把 `direction` 作为独立字段交给 UI。两者不一致 ⇒ 翻转必须发生在 JSX（或函数内）。我只断言了"含双方名称 + 规范序 + `direction` 已携带"，**没有**假定翻转位置。
+
+**当前工作树的红（过渡态，非回归）**：`tests/i18n.spec.ts` 的"每个 `t('…')` 必须是已声明 key"红在 ui-2 正在落地的 `BoardView.tsx:385` 的 `t('close')` —— 两份词典里都没有 `close`，且 tsc 同样报 `'close'` 不在 key 联合类型里。**这正是该守护存在的意义**（新增 UI 文案必须同时进 zh/en），已在消息里把精确定位给 ui-2。已提交的 `HEAD = 5f995db` 树仍是绿的。
+
+## 1.12 ui-2 报"真机正文仍卡 140"→ 我核到**不是代码问题，是运行中的进程旧于产物**
+
+ui-2 对活动实例采样后报：`501` 条带 preview 的 span，`min 0 / median 140 / max 140`、`>140: 0/501`、`empty: 114`，并归因于"host-data-2 的 `fold.ts` 未同步"。**我逐项复核后这个归因不成立**：
+```
+src/host/fold.ts:500        const PREVIEW_MAX = 16384        （与契约一致）
+src/shared/contract.ts:153  MESSAGE_PREVIEW_MAX = 16384
+lib/index.js                PREVIEW_MAX = 16384  ×2          （构建产物已含新值）
+mtime:  src/host/fold.ts 01:50 / src/shared/contract.ts 01:49
+        lib/index.js     01:54   ← 产物晚于源码，不是陈旧产物
+```
+⇒ 我第一版结论是"代码与产物都不需要改，**重启实例即可**"。**这个结论是不完整的，已由 host-data-2 往前推了一层并被我在本机独立证实**：
+```
+仓库产物      /Users/lzx/Documents/GitHub/dsh-task-gantt/lib/index.js
+              mtime 01:58 · PREVIEW_MAX = 16384 ×2      ← 新
+安装副本      /Users/lzx/.dsh/profiles/web/node_modules/dsh-task-gantt/lib/index.js
+              mtime 01:11 · PREVIEW_MAX = 140          ← 旧（19501 真正加载的就是这份）
+仅 web 这一个 profile 装了本插件（desktop / dsh-tui 都没有）
+```
+**根因：profile 的 `node_modules/dsh-task-gantt/` 是"安装那一刻"的独立拷贝，不跟随仓库 `lib/`。** 所以**只重启会从磁盘上的旧安装副本重新加载，仍然是 140** —— 正确处置是**重装（host-data-2 已打包 `/tmp/dtg-body-pack/dsh-task-gantt-0.1.0.tgz`）后再重启**。
+**可复用的判别方法（避免下次把归因停在内存层）**：
+```bash
+grep -o "PREVIEW_MAX = [0-9]*" <repo>/lib/index.js ~/.dsh/profiles/<p>/node_modules/dsh-task-gantt/lib/index.js
+# 两边不一致 ⇒ 问题在「安装副本」，重启无用，必须重装
+# 两边一致而行为仍旧 ⇒ 才是「内存陈旧」，重启即可
+```
+**我的两条方法论错误已记档**：① 只看了仓库 `lib/` 就下结论，**没有看插件真正的加载路径**（profile 的安装副本）；② 把"产物是新的"等同于"跑的是新产物"。这与 F1（产物 vs 源码）同族，但多出一层：**源码 → 仓库产物 → 安装副本 → 进程内存，四层里任何一层旧都会表现为同一个症状**。
+（另：真实正文分布我另行复算过：`team/message` 56 条 `min 600 / median 1887 / max 7135`，与 Lead 的 `min 600 / median 1839 / max 7135` 一致 —— 所以一旦进程重启，preview 应当跳到千级而不是 140。）
+
+**本轮另加的两组守护**
+1. **`speakerLaneMapper`（ui-2 新抽出的唯一映射实现）**：`tests/message-paint.spec.ts` 4 条 —— ① lane id → 自身（hop 1）；② 会话 id → 经 `navigation` 的两种形态（`session` 与 `address.value.sessionId`）映到 lane（hop 2）；③ 未知 speaker → `null`（不猜）；④ **它是 layout 真正在用的那份映射**：构造 `lane.id='lead'` + `from.id='session-a'` 的 payload 走 `layoutTimeline`，断言 marker 的 `direction === 'outgoing'` —— 这条**补上了我此前 fixture 的缺口**（我一直手写 `laneIdOf`，真实推导那一步从未被跑到）。
+2. **第二本词典（`src/client/ui/labels.ts`）纳入 i18n 守护**：起因是我发现 `BoardView` 用 `uiLabel('close')` 而不是 `t('close')`，而我原来的扫描只看 `t(…)`。现将 `uiLabel('…')` 调用点一并扫描；并断言该文件的 **en 保 `Record<UiMessageKey, string>` 注解 + `UiMessageKey = keyof typeof zh`** —— 这两行是"只加一种语言就编译报错"的机制本身（有人把它放宽成 `Record<string,string>`，健壮性会静默消失）；另断言两本词典都无空串、`uiLabel` 与 tab 用同一套 locale 探测。
+
+**已解决的口径**：`messageDetail` 的 `route` **恒为规范序 `fromName → toName`**，方向由 `direction` 单独承载；**`←` 的翻转属于渲染层**（ui-2 确认）。我的用例因此只断言"双方名都在 + 规范序 + `direction` 已携带"，不再把它当开放问题。
+
+## 1.13 待安装产物的独立核验（Lead 执行安装前，verify 只读检查）
+
+host-data-2 打的包 `/tmp/dtg-body-pack/dsh-task-gantt-0.1.0.tgz`（193 537 B，mtime 01:58）我在**安装前**解开逐项核过：
+
+| 检查 | 结果 |
+|---|---|
+| `package/lib/index.js` 的正文上限 | `PREVIEW_MAX = 16384` ✅（新契约） |
+| 截断留痕是否进包 | `truncatedBodies` 出现 **7** 次 ✅ |
+| 详情视图钩子是否进包 | `package/lib/client.js` 含 `data-message-route` ×1、`data-message-body` ×2、`uiLabel` ×93 ✅ |
+| 包内清单 | `LICENSE`、`lib/{index,client}.js`（+map）、`locale/{en,zh}.json`、`package.json`、`docs/INSTALL.md`、`README*.md`、`icon.svg` |
+| `locale/{en,zh}.json` | **只含插件元数据**（`meta.title` / `meta.description`），zh/en 键集一致、无空值；**UI 文案不依赖它** —— 已核对 `tabTitle`/`sourceLive`/`statusRunning`/`taskOwner` 等键**都打进了 `lib/client.js`**（分别命中 4/4/3/3 次），与我 §1.11 的 i18n 守护（源码层）一致 ✅ |
+
+⇒ **这个包可以装**：安装副本里的 `PREVIEW_MAX = 140` 正是本轮真机"正文仍卡 140"的直接原因，重装本包 + 重启后应变为千级正文。**核验方法可复用**（见 `tests/e2e/README.md` §1.4）。
+
 ## 2. 环境（实测值）
 
 | 事实 | 值 | 怎么测的 |

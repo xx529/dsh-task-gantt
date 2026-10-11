@@ -129,8 +129,9 @@ export interface MessageSpan {
    */
   to?: SpanSpeaker
   /**
-   * The message's own first line of text, whitespace-collapsed and already
-   * clipped to {@link MESSAGE_PREVIEW_MAX} — the panel shows it as-is.
+   * The message's own text, whitespace-collapsed: the **full body**, not a
+   * teaser. The marker shows a short prefix of it; clicking the marker shows
+   * all of it.
    */
   preview?: string
   /** The journal's message id, for correlating a queue with its delivery. */
@@ -139,8 +140,17 @@ export interface MessageSpan {
   sessionId: string
 }
 
-/** Hard clip applied to {@link MessageSpan.preview} by the host half. */
-export const MESSAGE_PREVIEW_MAX = 140
+/**
+ * Defensive ceiling applied to {@link MessageSpan.preview} by the host half.
+ *
+ * This is a guard against one pathological record, NOT a display budget. It was
+ * 140 while the field was treated as a one-line teaser, which silently discarded
+ * almost every message: across 177 real `team/message` records the collapsed
+ * text runs 600-7135 characters (median 1839), so 177 of 177 were truncated and
+ * the panel could never show what was actually sent. Anything still clipped at
+ * this size is reported in the host's `notes`, never silently.
+ */
+export const MESSAGE_PREVIEW_MAX = 16384
 
 /**
  * The next hop for a lane head: a session this chart can navigate to.

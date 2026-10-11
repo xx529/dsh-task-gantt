@@ -153,14 +153,15 @@
  * or malformed payloads (no lanes, no spans, no tasks) return empty arrays and
  * still produce ticks — `layoutTimeline` never throws.
  */
-import type {
-  ActivitySpan,
-  LaneColorTokens,
-  MessageSpan,
-  SpanSpeaker,
-  TimelineLane,
-  TimelineResponse,
-  TimelineTask,
+import {
+  MESSAGE_PREVIEW_MAX,
+  type ActivitySpan,
+  type LaneColorTokens,
+  type MessageSpan,
+  type SpanSpeaker,
+  type TimelineLane,
+  type TimelineResponse,
+  type TimelineTask,
 } from '../../shared/contract.ts'
 
 /* ------------------------------------------------------------------ units */
@@ -595,6 +596,12 @@ export interface MessageMarkerRect {
   from: SpanSpeaker
   to?: SpanSpeaker
   preview?: string
+  /**
+   * Which way this message points ON THIS LANE (sent from here vs received
+   * here). Resolved while laying out, so the renderer and the detail view agree
+   * without recomputing anything.
+   */
+  direction: MessageDirection
   /** Stable key: the journal id when present, else `lane:kind:time:index`. */
   key: string
   /** 0-based index of this marker among its lane's messages (time order). */
@@ -1183,6 +1190,109 @@ const LANE_COLOR_FALLBACKS: LaneColorTokens[] = [
   { bar: '--dsw-alias-state-idle-primary', on: '--dsw-alias-label-primary-inverted' },
 ]
 
+/** A message marker's full detail, assembled without a renderer. */
+export interface MessageDetail {
+  /** `A → B` when sent from this lane, `B → A` when received (as displayed). */
+  route: string
+  /** Sender name and recipient name, separately, for a testable assertion. */
+  fromName: string
+  toName: string
+  direction: MessageDirection
+  /** Local time of the message record, seconds included. */
+  when: string
+  kind: MessageSpan['kind']
+  /** The COMPLETE body. Never a prefix; never truncated here. */
+  body: string
+  /** `false` when the host recorded no text at all (render "no body", not ""). */
+  hasBody: boolean
+  /**
+   * `true` when the body is exactly at the contract's ceiling, i.e. the host may
+   * have clipped it. The panel must SAY so rather than imply completeness.
+   */
+  maybeTruncated: boolean
+}
+
+/**
+ * Build everything the detail view shows for one message marker.
+ *
+ * Exported so the panel's assembly is testable without a DOM, and so the body is
+ * guaranteed to be the marker's OWN text: a marker represents one span, and the
+ * "+N" badge on it counts DIFFERENT, undrawn messages — clicking never shows a
+ * neighbour's body.
+ *
+ * @param marker - the drawn marker (carries its own exact `preview`).
+ * @param input - the span's identity, direction, speakers and body. Deliberately
+ *   a narrow shape rather than a full marker rect, so a caller that only has a
+ *   `MessageSpan` (the details panel) can use it without inventing geometry.
+ * @param texts - display strings, injected so this stays label-agnostic.
+ * @param formatTime - formats one epoch ms as local time.
+ * @param previewMax - the contract's ceiling, used only to flag a possible clip.
+ */
+export function messageDetail(
+  input: {
+    kind: MessageSpan['kind']
+    time: number
+    direction: MessageDirection
+    from: SpanSpeaker
+    to?: SpanSpeaker | undefined
+    preview?: string | undefined
+  },
+  texts: { you: string; peerFallback: string },
+  formatTime: (time: number) => string,
+  previewMax: number = MESSAGE_PREVIEW_MAX,
+): MessageDetail {
+  const marker = input
+  const body = marker.preview ?? ''
+  const isUser = marker.from.kind === 'user'
+  const fromName = isUser ? texts.you : marker.from.name !== '' ? marker.from.name : marker.from.id
+  const toName =
+    marker.to === undefined
+      ? texts.peerFallback
+      : marker.to.name !== '' && marker.to.name !== undefined
+        ? marker.to.name
+        : marker.to.id
+  return {
+    route: `${fromName} → ${toName}`,
+    fromName,
+    toName,
+    direction: marker.direction,
+    when: formatTime(marker.time),
+    kind: marker.kind,
+    body,
+    hasBody: body !== '',
+    maybeTruncated: body.length >= previewMax,
+    // The direction-specific arrow form (`B ← A`) is built by the renderer from
+    // `route` + `direction`, so both languages can order the arrow correctly.
+  }
+}
+
+/**
+ * Build the speaker-id -> lane-id mapper for a payload.
+ *
+ * Exported because two places need the SAME mapping (the layout's density pass
+ * and the message details panel). A second implementation would be free to drift,
+ * and the failure mode of drifting is a silently wrong direction.
+ *
+ * A teammate's lane id IS its session id; the lead's session id only appears in
+ * its `navigation`, which is why lane-id equality alone is not enough.
+ *
+ * @param lanes - the board's lanes.
+ */
+export function speakerLaneMapper(
+  lanes: readonly TimelineLane[],
+): (speakerId: string) => string | null {
+  const lanesById = new Set(lanes.map((lane) => lane.id))
+  const bySessionId = new Map<string, string>()
+  for (const lane of lanes) {
+    const navigation = lane.navigation
+    const sessionId =
+      navigation === undefined ? undefined : navigation.type === 'session' ? navigation.value : navigation.value?.sessionId
+    if (typeof sessionId === 'string' && sessionId !== '') bySessionId.set(sessionId, lane.id)
+  }
+  return (speakerId: string): string | null =>
+    lanesById.has(speakerId) ? speakerId : bySessionId.get(speakerId) ?? null
+}
+
 /** See the TICKS table in the module doc. */
 export function buildTicks(input: {  window: TimelineWindow
   msPerPx: number
@@ -1424,6 +1534,7 @@ export function layoutTimeline(
         laneId: lane.id,
         laneIndex: index,
         kind: message.kind,
+        direction: resolveMessageDirection(message, lane.id, speakerToLane).direction,
         time,
         end: typeof message.end === 'number' && Number.isFinite(message.end) ? message.end : null,
         from: message.from,

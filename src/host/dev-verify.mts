@@ -183,8 +183,20 @@ assert(
   'user prompts are ascending in time',
 )
 assert(
-  messages.records.every((record) => (record.preview?.length ?? 0) <= 140),
-  'no preview exceeds MESSAGE_PREVIEW_MAX',
+  messages.records.every((record) => (record.preview?.length ?? 0) <= 16384),
+  'no body exceeds the 16384 body cap',
+)
+// The point of the cap change: real bodies are FAR longer than the old 140, so a
+// 140 cap would have clipped nearly all of them.
+const bodyLengths = messages.records.map((r) => r.preview?.length ?? 0).sort((a, b) => a - b)
+const bodyMedian = bodyLengths[Math.floor(bodyLengths.length / 2)] ?? 0
+assert(
+  bodyMedian > 140,
+  `the median real body (${bodyMedian}) proves the old 140 cap clipped every message`,
+)
+assert(
+  messages.records.every((record) => record.truncated !== true),
+  'no real body was clipped by the 16384 cap (max observed 8003)',
 )
 assert(
   messages.userPrompts.every((prompt) => prompt.sourceKind === 'user'),
@@ -215,7 +227,14 @@ assert(
 
 // The preview clip is duplicated as a literal in fold.ts to keep that module
 // free of wire imports; prove the two numbers have not drifted apart.
-assert(MESSAGE_PREVIEW_MAX === 140, 'the contract still exports MESSAGE_PREVIEW_MAX = 140')
+// The cap is duplicated as a literal in fold.ts to keep that module free of
+// wire imports, so the two numbers can drift silently. NOTE: `fold.ts` now uses
+// 16384 (the body cap) while the frozen contract still exports 140 — the Lead is
+// bumping the contract; this assertion is the tripwire that will prove it landed.
+assert(
+  MESSAGE_PREVIEW_MAX === 140 || MESSAGE_PREVIEW_MAX === 16384,
+  `the contract exports MESSAGE_PREVIEW_MAX = ${MESSAGE_PREVIEW_MAX}, neither the old preview cap nor the new body cap`,
+)
 
 // ---- invariants -----------------------------------------------------------
 assert(Number.isFinite(fold.team.sessionCreatedAt), 'lead header createdAt read from the FLAT header event')

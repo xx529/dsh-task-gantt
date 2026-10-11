@@ -61,6 +61,7 @@ import {
   formatDateTime,
   isLiveBoard,
   messageMarkerPaint,
+  speakerLaneMapper,
   taskDurationLine,
   layoutTimeline,
   type LaneBox,
@@ -151,6 +152,10 @@ export interface GanttChartProps {
   onSelectTask: (taskId: string | null) => void
   /** Clicking a navigable lane head opens that session (shell-injected). */
   navigate?: (target: LaneNavigation) => boolean
+  /** Key of the selected marker, or null (independent of the task selection). */
+  selectedMessageKey?: string | null
+  /** Clicking a marker toggles it; Esc closes it (handled by the parent). */
+  onSelectMessage?: (key: string | null) => void
 }
 
 /** A lane's identity colour, with a stable fallback when the host omits it. */
@@ -171,7 +176,7 @@ function laneColor(lane: TimelineResponse['lanes'][number], index: number): Lane
 }
 
 export function GanttChart(props: GanttChartProps): ReactNode {
-  const { data, now, visible, selectedTaskId, onSelectTask, navigate } = props
+  const { data, now, visible, selectedTaskId, onSelectTask, navigate, selectedMessageKey, onSelectMessage } = props
 
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const frameRef = useRef(0)
@@ -214,19 +219,9 @@ export function GanttChart(props: GanttChartProps): ReactNode {
    *     'lead' while its session id is 'session-…'.
    * Returning null means "not on this board" (system, or a member that left).
    */
-  const laneIdOf = useMemo(() => {
-    const byLaneId = new Set(data.lanes.map((lane) => lane.id))
-    const bySessionId = new Map<string, string>()
-    for (const lane of data.lanes) {
-      const navigation = lane.navigation
-      const sessionId = navigation === undefined ? undefined : navigation.type === 'session' ? navigation.value : navigation.value?.sessionId
-      if (typeof sessionId === 'string' && sessionId !== '') bySessionId.set(sessionId, lane.id)
-    }
-    return (speakerId: string): string | null => {
-      if (byLaneId.has(speakerId)) return speakerId
-      return bySessionId.get(speakerId) ?? null
-    }
-  }, [data])
+  // Shared with the layout's density pass and the details panel, so a speaker id
+  // can never be mapped one way while being drawn another way.
+  const laneIdOf = useMemo(() => speakerLaneMapper(data.lanes), [data])
   const markerCount = data.lanes.reduce((total, lane) => total + (lane.messages?.length ?? 0), 0)
   const userPaint = useMemo(() => ({ bar: lanePaint(USER_COLOR.bar), on: lanePaint(USER_COLOR.on) }), [])
   const systemPaint = useMemo(() => ({ bar: lanePaint(SYSTEM_COLOR.bar), on: lanePaint(SYSTEM_COLOR.on) }), [])
@@ -462,6 +457,8 @@ export function GanttChart(props: GanttChartProps): ReactNode {
                   key={`msg:${marker.key}`}
                   marker={marker}
                   paint={markerPaint(marker, laneColors, laneIdOf, userPaint, systemPaint)}
+                  selected={marker.key === selectedMessageKey}
+                  onSelect={onSelectMessage}
                   tzOffsetMinutes={tzOffsetMinutes}
                 />
               ))}
@@ -842,16 +839,21 @@ function MessageMarker({
   marker,
   paint,
   tzOffsetMinutes,
+  selected,
+  onSelect,
 }: {
   marker: MessageMarkerRect
   paint: MarkerPaint
   tzOffsetMinutes: number
+  selected: boolean
+  onSelect?: ((key: string | null) => void) | undefined
 }): ReactNode {
   const color = paint.paint
   const outgoing = paint.direction === 'outgoing'
   const isUser = paint.isUser
   const classes = ['dtg-msg', isUser ? 'dtg-msg-user' : 'dtg-msg-agent', outgoing ? 'dtg-msg-out' : 'dtg-msg-in']
   if (marker.kind === 'turn') classes.push('dtg-msg-turn')
+  if (selected) classes.push('dtg-msg-active')
   const when = formatDateTime(marker.time, tzOffsetMinutes)
   // The route is stated from THIS lane's point of view, so it is self-evident
   // which way the message went and who the other side is.
@@ -875,15 +877,22 @@ function MessageMarker({
       ? { boxShadow: `0 0 0 2px var(${UR_MARKER_RING_TOKENS[0]}), 0 0 0 3.5px var(${UR_MARKER_RING_TOKENS[1]})` }
       : {}),
   }
+  // A BUTTON, so the body is reachable by mouse and keyboard. The long body is
+  // deliberately NOT in `title` (browser tooltips truncate and cannot scroll):
+  // the tooltip stays the one-line summary, and the detail view carries the text.
+  const interactive = typeof onSelect === 'function'
+  const Tag = interactive ? 'button' : 'span'
   return (
-    <span
+    <Tag
+      {...(interactive ? { type: 'button', onClick: () => onSelect(selected ? null : marker.key), 'aria-pressed': selected } : {})}
       className={classes.join(' ')}
       style={style}
-      title={`${when} · ${route}${peerNote}${dropped}${marker.preview === undefined || marker.preview === '' ? '' : `\n${marker.preview}`}`}
+      title={`${when} · ${route}${peerNote}${dropped}`}
       aria-label={label}
       data-msg-kind={marker.kind}
       data-msg-direction={paint.direction}
       data-msg-peer={paint.peerName}
+      data-msg-key={marker.key}
       data-msg-from={marker.from.id}
       {...(marker.to === undefined ? {} : { 'data-msg-to': marker.to.id })}
     >
@@ -891,7 +900,7 @@ function MessageMarker({
         {marker.kind === 'turn' ? '▸' : outgoing ? '↗' : '↙'}
       </span>
       {marker.droppedBefore > 0 ? <span className="dtg-msg-count" aria-hidden="true">{`+${marker.droppedBefore}`}</span> : null}
-    </span>
+    </Tag>
   )
 }
 

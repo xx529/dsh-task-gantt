@@ -475,13 +475,29 @@ export function foldActivitySpans(events: readonly unknown[]): FoldedActivity {
 const USER_SOURCE_KIND = 'user'
 
 /**
- * The longest preview this module emits, mirroring `MESSAGE_PREVIEW_MAX`.
+ * The longest body this module emits, mirroring `MESSAGE_PREVIEW_MAX`.
  *
  * Duplicated as a literal on purpose: `fold.ts` is the pure-data layer and must
  * not gain a dependency on the wire contract just to read one number. The
  * `dev-verify` self-check asserts the two stay equal.
+ *
+ * ## Why this is no longer 140
+ *
+ * The field used to be a *preview*: 140 characters were enough to tell two
+ * messages apart in a one-line marker. The panel now shows the whole message
+ * when a marker is clicked, so this is a **defensive body cap**, not a display
+ * budget. Measured over every real `team/message/queued` on this machine (360
+ * exchanges, whitespace-collapsed exactly as {@link previewOf} does):
+ *
+ * ```
+ * min 110 · median 1790 · max 8003 · over 140: 358 / 360
+ * ```
+ *
+ * At 140 the panel therefore held the opening line of essentially every
+ * message. 16384 clears the observed maximum by ~2x while still refusing an
+ * adversarial payload (a runaway log line cannot hand the panel a megabyte).
  */
-const PREVIEW_MAX = 140
+const PREVIEW_MAX = 16384
 
 /** One `team/message/*` exchange as the durable journal records it. */
 export interface FoldedMessageRecord {
@@ -502,6 +518,11 @@ export interface FoldedMessageRecord {
   targetId?: string
   /** Collapsed `content[].text`, clipped to {@link PREVIEW_MAX}. */
   preview?: string
+  /**
+   * True when {@link PREVIEW_MAX} clipped this body — i.e. `preview` is the head
+   * of a longer message and the tail is gone.
+   */
+  truncated?: boolean
   /** Log `seq` of the record that opened this exchange (stable ordering). */
   seq: number
 }
@@ -536,6 +557,14 @@ export interface MessageFoldDiagnostics {
   userPrompts: number
   /** `user/message` events that were runtime injections, not the human. */
   injectedUserMessages: number
+  /**
+   * Message bodies that exceeded {@link PREVIEW_MAX} and were clipped.
+   *
+   * Present so a truncation is never silent: the reader of a panel that shows
+   * "the whole message" must be able to tell that the tail was dropped.
+   * Measured zero on all 360 real exchanges (max 8003 < 16384).
+   */
+  truncatedBodies: number
 }
 
 /** The message fold of one session log. */
@@ -549,9 +578,30 @@ export interface FoldedMessages {
 
 /** Collapse every whitespace run to one space and clip to {@link PREVIEW_MAX}. */
 function previewOf(value: string): string | undefined {
-  const collapsed = value.replace(/\s+/g, ' ').trim()
+  const collapsed = collapseWhitespace(value)
   if (collapsed === '') return undefined
   return collapsed.length <= PREVIEW_MAX ? collapsed : `${collapsed.slice(0, PREVIEW_MAX - 1)}\u2026`
+}
+
+/**
+ * The full collapsed text of a journal `content` array — the value
+ * {@link previewFromContent} then clips. Used to detect clipping exactly.
+ */
+function previewFromText(content: unknown): string {
+  if (!Array.isArray(content)) return ''
+  const parts: string[] = []
+  for (const item of content) {
+    const record = asRecord(item)
+    if (record === undefined) continue
+    const value = record.text
+    if (typeof value === 'string' && value !== '') parts.push(value)
+  }
+  return parts.join(' ')
+}
+
+/** Collapse every whitespace run to one space and trim — the shared normal form. */
+function collapseWhitespace(value: string): string {
+  return value.replace(/\s+/g, ' ').trim()
 }
 
 /**
@@ -598,6 +648,7 @@ export function foldMessageRecords(events: readonly unknown[]): FoldedMessages {
     unpairedDeliveries: 0,
     userPrompts: 0,
     injectedUserMessages: 0,
+    truncatedBodies: 0,
   }
 
   /** The queue half of every exchange: what the sender actually did. */
@@ -627,7 +678,16 @@ export function foldMessageRecords(events: readonly unknown[]): FoldedMessages {
       const targetId = asText(message.targetId)
       if (targetId !== undefined) record.targetId = targetId
       const preview = previewFromContent(message.content)
-      if (preview !== undefined) record.preview = preview
+      if (preview !== undefined) {
+        record.preview = preview
+        // Flag by comparing the collapsed source, not by looking for the ellipsis
+        // (a message may legitimately end with one).
+        const collapsed = collapseWhitespace(previewFromText(message.content))
+        if (collapsed.length > PREVIEW_MAX) {
+          record.truncated = true
+          diagnostics.truncatedBodies += 1
+        }
+      }
       // First queue wins: a duplicate queued event is a re-append, not a
       // second message, and the earliest timestamp is the real hand-over.
       if (!queues.has(messageId)) queues.set(messageId, record)

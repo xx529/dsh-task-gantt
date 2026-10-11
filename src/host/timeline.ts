@@ -35,6 +35,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import {
   API_VERSION,
+  MESSAGE_PREVIEW_MAX,
   type MemberPhase,
   type MemberStatus,
   type MessageSpan,
@@ -950,9 +951,11 @@ async function deriveTimeline(ctx: Context, sessionId: string, generatedAt: numb
   for (const lane of lanes) lane.messages = sortMessageSpans(lane.messages)
   let unpairedDeliveries = 0
   let injectedUserMessages = 0
+  let truncatedBodies = 0
   for (const diagnostics of messageDiagnostics) {
     unpairedDeliveries += diagnostics.unpairedDeliveries
     injectedUserMessages += diagnostics.injectedUserMessages
+    truncatedBodies += diagnostics.truncatedBodies
   }
   if (offRosterTargets > 0) {
     notes.push(
@@ -972,6 +975,13 @@ async function deriveTimeline(ctx: Context, sessionId: string, generatedAt: numb
   if (unpairedDeliveries > 0) {
     notes.push(
       `${unpairedDeliveries} team message delivery(ies) had no queued twin in the readable window; those spans carry no sender (the journal does not name one)`,
+    )
+  }
+  if (truncatedBodies > 0) {
+    // A body cap is defensive, but hitting it must be visible: the panel shows
+    // "the whole message", so a silent clip would read as a complete one.
+    notes.push(
+      `${truncatedBodies} message body(ies) exceeded the ${MESSAGE_PREVIEW_MAX}-character cap and were clipped; the tail is not in this response`,
     )
   }
   if (injectedUserMessages > 0) {

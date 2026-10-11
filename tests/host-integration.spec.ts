@@ -758,6 +758,55 @@ describe('host invariants published in FINDINGS §18.8', () => {
   })
 })
 
+describe('whole message bodies survive the host path (full-body fixture)', () => {
+  // WHY A SECOND FIXTURE: `lead-team-journal.json` clips every content[].text to
+  // 90 characters to stay small, so all of its previews are ~91 long and it
+  // cannot say anything about the 140-character cap that used to stub every real
+  // message. `message-bodies.json` keeps REAL, unclipped bodies (24 of them,
+  // spanning the real 600–7135 character range and including the longest one).
+  // Asserting the new contract on the clipped fixture would have been a vacuous
+  // test — the same lesson as the id-space and channel fixtures.
+  const bodies = JSON.parse(readFileSync(resolve(ROOT, 'tests/fixtures/message-bodies.json'), 'utf8')) as {
+    events: { type?: string; data?: Record<string, unknown> }[]
+  }
+
+  /** The whitespace-collapsed length of every queued body, as the fold computes it. */
+  function realBodyLengths(): number[] {
+    return bodies.events
+      .filter((event) => event.type === 'team/message/queued')
+      .map((event) => {
+        const content = (event.data?.message as { content?: { text?: string }[] } | undefined)?.content ?? []
+        const text = content.map((part) => part.text ?? '').join(' ')
+        return text.replace(/\s+/g, ' ').trim().length
+      })
+  }
+
+  it('reports whole bodies, not 140-character stubs', async () => {
+    // The roster MUST stay intact even though the bodies live in the root log:
+    // a message is placed on its SENDER's lane, so with `members: []` every
+    // teammate-sent message finds no lane and is dropped (my first version of
+    // this test saw only the 11 lead-sent bodies and blamed the fixture).
+    const data = await buildTimeline(host({ rootEvents: bodies.events }), ROOT_SESSION)
+    assertTimeline(data)
+    const lengths = data.lanes
+      .flatMap((lane) => lane.messages)
+      .map((message) => message.preview)
+      .filter((preview): preview is string => typeof preview === 'string')
+      .map((preview) => preview.length)
+      .sort((a, b) => a - b)
+    expect(lengths.length, 'the fixture must deliver its bodies').toBeGreaterThanOrEqual(20)
+
+    const median = lengths[Math.floor(lengths.length / 2)] as number
+    // RED under the old contract: a 140-character cap made every preview ≤ 140.
+    expect(median, `median preview length ${median}`).toBeGreaterThan(140)
+    expect(Math.max(...lengths)).toBeGreaterThan(1_000)
+    expect(Math.max(...lengths)).toBeLessThanOrEqual(MESSAGE_PREVIEW_MAX)
+    // The strongest form, against the fixture's own text rather than a magic
+    // number: the longest REAL body arrives complete (whitespace collapsed).
+    expect(Math.max(...lengths)).toBe(Math.max(...realBodyLengths()))
+  })
+})
+
 describe('buildTimeline degradation paths', () => {
   it('reports partial when one member log is unreadable, and still validates', async () => {
     const failing = MEMBERS[0]?.name

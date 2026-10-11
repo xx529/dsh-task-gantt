@@ -199,12 +199,26 @@ describe('foldMessageRecords — previews', () => {
     expect(folded.records[0]?.preview).toBe('line one line two')
   })
 
-  it('clips to MESSAGE_PREVIEW_MAX with an ellipsis, never longer', () => {
-    const folded = foldMessageRecords([queued({ seq: 1, time: T, id: 'm-1', text: 'x'.repeat(400) })])
-    const preview = folded.records[0]?.preview ?? ''
-    expect(preview.length).toBeLessThanOrEqual(MESSAGE_PREVIEW_MAX)
-    expect(preview.length).toBe(MESSAGE_PREVIEW_MAX)
-    expect(preview.endsWith('\u2026')).toBe(true)
+  it('keeps a 400-character body IN FULL (the old cap was 140)', () => {
+    // The contract used to cap previews at 140, which turned every real message
+    // into a stub: all 56 bodies in the real lead log are 600–7135 characters.
+    // 400 must now survive untouched — no ellipsis, no truncation flag.
+    const body = 'x'.repeat(400)
+    const folded = foldMessageRecords([queued({ seq: 1, time: T, id: 'm-1', text: body })])
+    expect(folded.records[0]?.preview).toBe(body)
+    expect(folded.records[0]?.preview?.length).toBe(400)
+    expect(folded.records[0]?.truncated).toBeUndefined()
+    expect(folded.diagnostics.truncatedBodies).toBe(0)
+  })
+
+  it('carries a 2000-character body end to end', () => {
+    // The lock for "opening the ceiling actually took effect": this length was
+    // IMPOSSIBLE under the old contract, so this test is red on it.
+    const body = 'y'.repeat(2_000)
+    const folded = foldMessageRecords([queued({ seq: 1, time: T, id: 'm-1', text: body })])
+    expect(folded.records[0]?.preview).toBe(body)
+    expect(folded.records[0]?.preview?.length).toBe(2_000)
+    expect(folded.diagnostics.truncatedBodies).toBe(0)
   })
 
   it('joins multiple content parts and drops non-text items', () => {
@@ -276,27 +290,47 @@ describe('foldMessageRecords — ordering, tolerance and determinism', () => {
     const folded = foldMessageRecords(junk)
     expect(folded.records).toEqual([])
     expect(folded.userPrompts).toEqual([])
-    expect(folded.diagnostics).toEqual({
+    // `toMatchObject`, not `toEqual`: the diagnostics object gains fields as the
+    // fold grows (e.g. `truncatedBodies`), and an additive field must not red a
+    // test that is about counts being zero.
+    expect(folded.diagnostics).toMatchObject({
       queued: 0,
       delivered: 0,
       unpairedDeliveries: 0,
       userPrompts: 0,
       injectedUserMessages: 0,
     })
+    expect(folded.diagnostics.truncatedBodies).toBe(0)
   })
 
   it('returns an empty fold for an empty log', () => {
-    expect(foldMessageRecords([])).toEqual({
-      records: [],
-      userPrompts: [],
-      diagnostics: { queued: 0, delivered: 0, unpairedDeliveries: 0, userPrompts: 0, injectedUserMessages: 0 },
-    })
+    const empty = foldMessageRecords([])
+    expect(empty.records).toEqual([])
+    expect(empty.userPrompts).toEqual([])
+    expect(empty.diagnostics).toMatchObject({ queued: 0, delivered: 0, unpairedDeliveries: 0, userPrompts: 0, injectedUserMessages: 0 })
   })
 
-  it('the preview cap it enforces matches the frozen contract constant', () => {
+  it('the preview cap it enforces matches the frozen contract constant, and over-limit is NEVER silent', () => {
     // `fold.ts` duplicates the number deliberately (it must not import the wire
     // contract); the duplication is only safe while they agree.
     const folded = foldMessageRecords([queued({ seq: 1, time: T, id: 'm-1', text: 'y'.repeat(MESSAGE_PREVIEW_MAX + 50) })])
-    expect((folded.records[0]?.preview ?? '').length).toBe(MESSAGE_PREVIEW_MAX)
+    const record = folded.records[0]
+    expect(record?.preview?.length).toBe(MESSAGE_PREVIEW_MAX)
+    expect(record?.preview?.endsWith('\u2026')).toBe(true)
+    // Not silent: the record is flagged and the diagnostics count it, so a panel
+    // that claims to show "the whole message" can tell the tail was dropped.
+    expect(record?.truncated, 'a clipped body must be marked').toBe(true)
+    expect(folded.diagnostics.truncatedBodies).toBe(1)
+  })
+
+  it('counts every clipped body, not just the first', () => {
+    const folded = foldMessageRecords([
+      queued({ seq: 1, time: T, id: 'm-1', text: 'z'.repeat(MESSAGE_PREVIEW_MAX + 1) }),
+      queued({ seq: 2, time: T + 1, id: 'm-2', text: 'z'.repeat(MESSAGE_PREVIEW_MAX + 1) }),
+      queued({ seq: 3, time: T + 2, id: 'm-3', text: 'z'.repeat(MESSAGE_PREVIEW_MAX) }),
+    ])
+    // Exactly-at-the-limit is NOT a truncation (the tail is intact).
+    expect(folded.diagnostics.truncatedBodies).toBe(2)
+    expect(folded.records.map((entry) => entry.truncated === true)).toEqual([true, true, false])
   })
 })

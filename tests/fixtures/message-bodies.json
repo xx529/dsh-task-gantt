@@ -1,0 +1,784 @@
+{
+ "_note": "Full-body subset of the REAL Lead log's team/message exchangess (queued+delivered), selected to span the real length distribution and to include the longest body. Unlike tests/fixtures/lead-team-journal.json, content[].text is NOT clipped here: this fixture exists so the 'whole body, not a 140-char stub' lock is non-vacuous.",
+ "_source": "~/.dsh/sessions/--Users-lzx-Documents-GitHub-dsh-task-gantt--/session-4d51254b-…/session.v4.jsonl.zstd (unzstd -c), team/message/queued + team/message/delivered only",
+ "events": [
+  {
+   "type": "session",
+   "version": 4,
+   "id": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+   "createdAt": 1791647755015,
+   "cwd": "/Users/lzx/Documents/GitHub/dsh-task-gantt",
+   "isSeeded": false,
+   "delegationDepth": 0,
+   "agentPreset": "standard"
+  },
+  {
+   "type": "team/message/queued",
+   "seq": 580,
+   "time": 1791648848562,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "message": {
+     "id": "team-message-cc4c9e30-260a-4a2c-b807-eed1df8e55e3",
+     "senderId": "91410edb-5869-4183-bb36-01a655321fb4",
+     "senderName": "docs",
+     "targetId": "66b9735d-8df4-44df-9d74-b4083057e02f",
+     "content": [
+      {
+       "type": "text",
+       "text": "[docs → packaging] 我是 docs（task-6，负责 README/README.zh.md/docs/DESIGN.md/MARKET.md/SCREENSHOTS.md）。\n\n需求：README 里的「安装 / 打开 / 卸载」三条命令必须与你的实测一致，我不能自己编。\n\n请给我（或写进 docs/INSTALL.md，我引用绝对路径 + 逐字命令）：\n1. 从 GitHub 直装的最终逐字命令（含 --profile 名、包名与 spec 形式，例如 `dsh plugin --profile web add \"dsh-task-gantt@github:xx529/dsh-task-gantt\"` 是否就是你实测/推荐的形态）；\n2. 本地开发 link 形式的逐字命令；\n3. 卸载的逐字命令（是 `dsh plugin --profile web remove dsh-task-gantt` 还是别的名字？请给出你在一手源码里确认的子命令名与出处：文件路径+行号）；\n4. 「打开面板」的操作路径（右侧栏 + 菜单点哪个条目；tab title 用的是 package.json 里的什么值/中文名？）；\n5. 你是否实测过其中哪一条、命令的原始输出摘要。\n\n如果你还没确认，直接告诉我「未确认」即可，我会在 README 里标 TODO 而不是编造。谢谢。"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "type": "team/message/delivered",
+   "seq": 581,
+   "time": 1791648848609,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "messageId": "team-message-cc4c9e30-260a-4a2c-b807-eed1df8e55e3",
+    "targetId": "66b9735d-8df4-44df-9d74-b4083057e02f"
+   }
+  },
+  {
+   "type": "team/message/queued",
+   "seq": 675,
+   "time": 1791648971104,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "message": {
+     "id": "team-message-bd9635c5-41af-4c33-8879-fb8164680721",
+     "senderId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+     "senderName": "lead",
+     "targetId": "87589993-ee13-46d7-a8a4-53972f697519",
+     "content": [
+      {
+       "type": "text",
+       "text": "[Lead → host-data] 给你两条已验证线索，省你时间（都是本机已装包的一手位置，自己再复核一遍再采信）：\n\n1) **活会话读事件**：`ctx.get('agents').get(sessionId)?.session.snapshotEvents()`。\n   出处：~/.dsh/profiles/web/node_modules/dsh-better-sidebar/src/sidechat-routes.ts:197-213（注释写「the live log is `Session.snapshotEvents()`, the 0.1.2-alpha.4 rename of …」）。返回 `readonly { type, seq, time, data }[]`。\n\n2) **冷会话读事件**：`ctx.get('sessionPersistence')` 存在时的句柄模式（open('read') → read() → close()）。\n   出处：同上文件的 `readPersistedSession(persistence, childId)` 调用点（L142 / L208 / L419）+ 该插件的 src/session-store.ts 实现；结构类型见 src/context-types.ts L470-500 的 `SidebarSessionPersistenceService`。**注意它只被 `ctx.get(...)` 取用并在 undefined 时降级**，所以你的降级分支必须是这条路径的默认行为。\n\n3) 你还要自己查清的两件事（我给不了结论，必须你实测）：\n   - 任务看板变更到底在不在会话日志里。本会话（Lead 会话）解压后 157 条事件里**没有任何 `team/*`**，只有 tool/call 38-39 条。请确认真实工具名与 tool/call 的 data 形状（可解压你自己的会话日志：`zstd -d -c ~/.dsh/sessions/--Users-lzx-Documents-GitHub-dsh-task-gantt--/session-*/session.v4.jsonl.zstd | head`；更直接的是看宿主 app.asar 里 agent-team 包的工具注册）。\n   - `sessionPersistence` 在本机 0.2.0-rc.2 上是否真的被 compose 进来。\n\n另外提醒一条容错硬要求（来自我实测）：**事件 open/close 不配对是常态**（本会话 `turn/start` 只有 1 条而 `step/start` 20 条、`step/end` 19 条）。fold 逻辑必须：进行中的 span 记 `end: null`；孤立的 `step/end` 不得造出负长度 span；`time` 相同的按 `seq` 稳定排序。"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "type": "team/message/delivered",
+   "seq": 676,
+   "time": 1791648971120,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "messageId": "team-message-bd9635c5-41af-4c33-8879-fb8164680721",
+    "targetId": "87589993-ee13-46d7-a8a4-53972f697519"
+   }
+  },
+  {
+   "type": "team/message/queued",
+   "seq": 680,
+   "time": 1791648978749,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "message": {
+     "id": "team-message-4fbc775f-c277-4067-b006-5a70d6f64da0",
+     "senderId": "f828dda6-e91d-4dcc-bbf0-9a9d73d9555e",
+     "senderName": "verify",
+     "targetId": "87589993-ee13-46d7-a8a4-53972f697519",
+     "content": [
+      {
+       "type": "text",
+       "text": "[verify→host-data] 独立实测：**brief §3.4 的「本会话日志里没有 team/* 类型」已经过时**。真正的 team 会话日志里有 `team/task` 与 `team/member` 事件，可以直接当权威时间轴，不必只靠 tool/call 扫描。\n\n证据（一手，命令与原文件）：\n文件 `~/.dsh/sessions/--Users-lzx-Documents-GitHub-dsh-task-gantt--/session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99/session.v4.jsonl.zstd`（Lead 会话），`unzstd -c ... > /tmp/lead-session.jsonl`（647 行）后统计 type：\n`tool/call 148, tool/result 148, step/start 99, assistant/message 98, step/end 98, team/member 12, team/task 11, user/message 6, subagent/catalog 6, agent/inbox/spliced 4, ..., turn/start 1, team/message/queued 1, team/message/delivered 1`\n\n事件形状（逐字，来自该文件）：\n1) `{\"type\":\"team/task\",\"seq\":485,\"time\":1791648711980,\"data\":{\"version\":2,\"teamId\":\"session-4d51254b-…\",\"task\":{\"id\":\"task-1\",\"revision\":1,\"subject\":\"…\",\"description\":\"…\",\"status\":\"pending\",\"blockedBy\":[…],\"writeScopes\":[…]}}}`\n   - `data.task` 的**完整 key 集合实测只有 7 个**：`blockedBy, description, id, revision, status, subject, writeScopes`。\n   - **没有** `ownerName`、**没有** `ready`、**没有** `writeScopeWarnings`。\n   - 每个 task 一条一事件：task-1 rev1@1791648711980 → rev2 in_progress@1791648758846；task-5 rev1 pending@1791648729826 → rev2 in_progress@1791648815077（后者正是我 `team_task_update claim` 产生的）。→ **revision 单调递增、status 变化可回放**，但 action 必须由 status delta + revision 推导（事件里没有 action 字段）。\n2) `{\"type\":\"team/member\",\"seq\":512,\"time\":1791648739342,\"data\":{\"version\":2,\"teamId\":\"…\",\"member\":{\"id\":\"66b9735d-8df4-44df-9d74-b4083057e02f\",\"name\":\"packaging\",\"description\":\"…\",\"provider\":\"spawn\",\"context\":\"fresh\",\"phase\":\"provisioning\"}}}`，随后同 id 一条 `phase:\"active\"`。\n   - ⚠️ **`member.id` 就是 teammate 的子会话 id**（与 `~/.dsh/sessions/.../<id>/` 目录名一致，我用 6 个目录名逐个核对过：66b9735d=packaging、87589993=host-data、7484fccf=shell、c79a18f7=ui、f828dda6=verify、91410edb=docs）。→ 泳道↔会话日志的映射不需要猜。\n3) `subagent/catalog` 事件 data keys = `childCreatedAt, childId, label, mode, version` → 另有一条 createdAt 来源。\n4) 另一侧：teammate 自己的日志**没有** `team/*` 事件（我 decompress 了自己 `f828dda6…` 的 133 行：只有 `tool/call 33, tool/result 32, step/start 18, step/end 17, turn/start 1`），但**有** `tool/call` `name:\"team_task_update\"`，`data.arguments` 是 JSON 字符串，例如 `{\"task_id\":\"task-5\",\"expected_revision\":1,\"action\":\"claim\"}`；`data` 形状 = `{turn, step, callId, name, arguments}`，`time` 是 epoch ms。Lead 日志里也有 6 条 `team_task_create`（如 `time 1791648711965 seq 484` → 对应 `team/task` 事件 `time 1791648711980 seq 485`，事件比调用晚 15ms）。\n\n建议：把「遍历该会话全部日志文件的 `team/task` 事件、按 task.id 分组、按 time 升序生成 history」作为**第一优先级**实现，status delta→action 映射建议：rev1&pending→`created`；pending→in_progress→`claimed`；…→completed→`completed`；completed→in_progress/pending→`reopened`；其余→`updated`。泳道归属仍需 live 投影的 `ownerName`（事件里没有），所以投影不可用时 lane 只能落到 `unassigned`（如实降级，别发明）。\n\n未验证（❓，我留着，别当成事实）：completed / reopen 的 `team/task` 事件在真实日志里长什么样（目前全队还没有任务被 complete，我只有 pending→in_progress 的样本）。\n\n我这边的守护测试会按「输入 = team/task 事件序列 + tool/call 序列」来写，你实现 `src/host/fold.ts` 时请把纯函数导出（见我给 lead 的同批消息），我随后补用例。"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "type": "team/message/delivered",
+   "seq": 681,
+   "time": 1791648978872,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "messageId": "team-message-4fbc775f-c277-4067-b006-5a70d6f64da0",
+    "targetId": "87589993-ee13-46d7-a8a4-53972f697519"
+   }
+  },
+  {
+   "type": "team/message/queued",
+   "seq": 806,
+   "time": 1791649365759,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "message": {
+     "id": "team-message-8bf91b01-9450-4351-b87b-a11e9bc415ea",
+     "senderId": "7484fccf-2cb1-450c-9993-610a8930073e",
+     "senderName": "shell",
+     "targetId": "c79a18f7-d3c4-41c7-a689-9ba3b0ca483f",
+     "content": [
+      {
+       "type": "text",
+       "text": "[shell → ui] 两件事：一个阻塞所有人的语法错误 + 接口约定确认。\n\n1) 你的 src/client/ui/styles.ts 目前是语法错误，pnpm run typecheck 与 pnpm run build 现在都因此失败（client bundle 直接构建不出来）：\n   src/client/ui/styles.ts:151:43 — ERROR: Expected \";\" but found \"currentColor\"\n   原因：该行在 CSS 模板字符串里写了未转义的反引号：\n     /* Status ink: the dot and the glyph take `currentColor`, so the colour rule\n   模板字符串里的反引号必须写成 \\`（或把注释里的反引号去掉）。改完 `pnpm run build` 就能过。我没有动你的文件。\n\n2) 接口约定（我这边 src/client/index.ts 已按此消费，请保持 BoardViewProps 不变）：\n   - BoardView 的 props 恰好是 `{ sessionId: string; visible: boolean }`，我用\n     `createElement(BoardView, { sessionId: scope.sessionId, visible })` 挂载；\n   - `visible` 来自 better-sidebar（Sidebar.tsx:639 `visible={state.bottomOpen && active}`，面板折叠或非激活 tab 时为 false），暂停轮询/定时器由你在 BoardView 内部实现；\n   - 我不传 ctx/store/scope，api.ts 由你持有，面板只经 HTTP 路由取数；\n   - 挂载层保证：你的根元素会被包在宿主 `<div class=\"nativeTabHost\">`（display:flex; flex-direction:column; height:100%; min-height:0）里，所以根上写 flex:1/min-height:0 即可填满面板。\n\n3) 样式接口：我已在 src/client/panel-style.ts 注入面板级样式（模块加载器 materialization 时注入，自标记 data-plugin=\"dsh-task-gantt\" + data-plugin-css=\"dsh-task-gantt/styles.css\"，HMR 时由宿主 removeOwnedStyles 清掉）。可复用 hook：\n   - 根：[data-dsh-task-gantt] 或 .dsh-task-gantt-panel（flex column / 100% / --dsw-alias-bg-layer-1 / no-drag）\n   - .dsh-task-gantt-chrome（工具栏行，带 no-drag）、.dsh-task-gantt-scroll（唯一滚动区）、.dsh-task-gantt-notice、.dsh-task-gantt-error、.dsh-task-gantt-button、.dsh-task-gantt-nodrag、.dsh-task-gantt-mono\n   你自己的 .dtg-* 样式串你自己注入即可，注意 verify 的主题守护会扫颜色字面量：只允许 var(--dsw-*)/var(--ds-*)/transparent/currentColor/inherit。\n\n4) i18n：src/client/i18n.ts 归我。现有 key 覆盖 tab/状态/空态，我新加了 now / zoomIn / zoomOut / zoomReset / liveOnly / notes（zh+en 都有）。你还需要别的 key 就把清单发我，我加；不要直接改 i18n.ts（会撞写入范围）。"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "type": "team/message/delivered",
+   "seq": 807,
+   "time": 1791649365857,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "messageId": "team-message-8bf91b01-9450-4351-b87b-a11e9bc415ea",
+    "targetId": "c79a18f7-d3c4-41c7-a689-9ba3b0ca483f"
+   }
+  },
+  {
+   "type": "team/message/queued",
+   "seq": 808,
+   "time": 1791649404809,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "message": {
+     "id": "team-message-daf3f6d4-4d00-49f6-8deb-0f4208d8ef93",
+     "senderId": "c79a18f7-d3c4-41c7-a689-9ba3b0ca483f",
+     "senderName": "ui",
+     "targetId": "7484fccf-2cb1-450c-9993-610a8930073e",
+     "content": [
+      {
+       "type": "text",
+       "text": "[ui → shell] 1) 反引号已修（styles.ts:151 注释里的 `currentColor` 去掉了反引号），`pnpm run typecheck` 现在 0 error。\n\n2) BoardViewProps 保持 `{ sessionId: string; visible: boolean }` 不变，我不会改；visible=false 时 BoardView 内部不轮询、不跑 now 定时器（effect 早退），重新可见立即 fetch。\n\n3) 收到宿主 nativeTabHost 的 flex 约定：我的根 `.dtg-root` 已带 flex column + height:100% + min-height:0，但**不会**依赖它填满——如果 nativeTabHost 已经是 flex column，我的 `.dtg-chart`(flex:1 1 auto; min-height:0) 会撑开。请在挂载后确认面板能填满，我这边按 100% 高设计。你的 panel-style.ts 类名我不复用（避免跨 owner 耦合），我只注入自己的 `.dtg-*`：id=`dsh-task-gantt-ui-style`，挂在 `<head>`，带挂载计数，最后一个实例卸载才移除；颜色只有 var(--dsw-*)/var(--ds-*)/transparent/currentColor，颜色字面量 0。\n\n4) i18n：我不改 src/client/i18n.ts。我新增的 UI 专用词条放在 src/client/ui/labels.ts（只 import 你的 `locale`），但 tabTitle/taskOwner/status*/source*/empty*/error*/retry/noTask 等仍走你的 `t()`。你新加的 now/zoomIn/zoomOut/zoomReset 我不抢——我 labels.ts 里同名键只服务面板内部按钮 title，两套不会互相覆盖（我不改你的文件，也不导出同名符号）。"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "type": "team/message/delivered",
+   "seq": 809,
+   "time": 1791649405006,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "messageId": "team-message-daf3f6d4-4d00-49f6-8deb-0f4208d8ef93",
+    "targetId": "7484fccf-2cb1-450c-9993-610a8930073e"
+   }
+  },
+  {
+   "type": "team/message/queued",
+   "seq": 821,
+   "time": 1791649602620,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "message": {
+     "id": "team-message-ea5bcf81-0e4a-4847-94a3-07d02d543df7",
+     "senderId": "7484fccf-2cb1-450c-9993-610a8930073e",
+     "senderName": "shell",
+     "targetId": "f828dda6-e91d-4dcc-bbf0-9a9d73d9555e",
+     "content": [
+      {
+       "type": "text",
+       "text": "[shell → verify] 你的 tests/client-tab.spec.ts 现在对我这边全绿了（8 passed / 1 skipped），我按你的断言改了两处实现，一并同步结论供你更新 docs/VALIDATION.md：\n\n1) `is a single, deduplicated tab`：我之前只写了 `single: true`（指南 §4.1 说它是 `dedupeKey: () => id` 的语法糖，所以省略了显式 key）。你的断言要求 `dedupeKey` 必须是函数——我采纳：现在两者都声明（指南 §4.1「显式 dedupeKey 优先于 single」），`dedupeKey: () => TAB_TYPE_ID`，返回值就是冻结的 `dsh-task-gantt:board`。\n\n2) `stays dormant and warns instead of throwing`：你的假 ctx 没有 `ctx.inject`，我原来直接调用会 `TypeError: ctx.inject is not a function`。这是**真实**的健壮性缺口（我自己的 harness 也复现了同类问题），已修：`apply()` 先探测 `typeof ctx.inject === 'function'`，不能等待的 context 走另一条 warn 分支，绝不抛。\n\n3) 你在 spec 里 skip 的 KNOWN RISK（第 79-92 行）现在**已经不成立**，建议更新 docs/VALIDATION.md 的 findings 1-2：我不再依赖 apply 时的探测结果决定成败，而是在探测失败时用 cordis 的动态注入 `ctx.inject(['betterSidebar'], cb)` 等待服务就绪（cordis 4.0.4 `lib/types/registry.d.ts:111`「Run a callback once the requested services are available」，依赖变化时会 unload 并重跑），并在回调里用 `scope.effect(...)` 注册。因此「Loader 先 apply 本行 → 永久静默休眠」这条顺序竞态被消除了；只有「宿主连 ctx.inject 都没有」这一条降级路径会保持 dormant，而它会 warn。`inject` 导出仍按 brief §2.2 保持空数组。\n\n4) 顺带报两个**不属于我写入范围**的当前红灯（我没动 tests/**、src/host/**）：\n   - `pnpm run typecheck` 现在唯一错误：tests/host-timeline.spec.ts(153,17): error TS2339: Property 'add' does not exist on type 'string[]'（应该是 set 写成数组了），它让全仓 typecheck 门变红，麻烦看一下。\n   - `pnpm run test` 有 1 个 host 用例失败：tests/host-timeline.spec.ts:193 `surfaces every problem as data, never as a thrown error (fuzz over empty ids)` — 收到的问题里含 `$.rootSessionId must be a non-empty string`，而断言只允许 `$.sessionId` 回声；这属于 host-data/contract 口径，供你与 host-data 对齐。\n\n我这边可复现的证据（都在 /tmp，未写入仓库）：/tmp/shell-check/{panel-style,index,artifact}.check.mjs，共 78 项断言全绿，其中 artifact 那组是直接跑仓库真实产物 lib/client.js：模拟宿主的 queue→materialize→claimStyles→apply→removeOwnedStyles 全链路。"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "type": "team/message/delivered",
+   "seq": 822,
+   "time": 1791649602632,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "messageId": "team-message-ea5bcf81-0e4a-4847-94a3-07d02d543df7",
+    "targetId": "f828dda6-e91d-4dcc-bbf0-9a9d73d9555e"
+   }
+  },
+  {
+   "type": "team/message/queued",
+   "seq": 823,
+   "time": 1791649610975,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "message": {
+     "id": "team-message-bb55eea0-4b01-48c9-a6b2-3d456c269137",
+     "senderId": "66b9735d-8df4-44df-9d74-b4083057e02f",
+     "senderName": "packaging",
+     "targetId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+     "content": [
+      {
+       "type": "text",
+       "text": "[task-1] status=完成（两个待裁决项见末尾，均不阻塞交付）\n\n**改了哪些文件**\n- /Users/lzx/Documents/GitHub/dsh-task-gantt/package.json —— devDependencies 加 `react ^18.3.1` + `react-dom ^18.3.1`（你交办）；新增 `scripts.verify:build` 并把它接进 `check`；`exports` 加 `\"./locale/*.json\"`；`files` 加 `icon.svg`（原本缺，`icon` 字段声明了却不发布=静默失效）、`locale/*.json`、`docs/INSTALL.md`。repository/homepage/bugs/license/keywords 已齐全（原本就在）。\n- /Users/lzx/Documents/GitHub/dsh-task-gantt/scripts/build.mjs —— **修掉一个静默失效**：client 半 `format:'iife'`+`globalName` → `format:'cjs'`（原因与证据见下）。\n- /Users/lzx/Documents/GitHub/dsh-task-gantt/scripts/verify-build.mjs —— 新增（产物形状回归门，见下）。\n- /Users/lzx/Documents/GitHub/dsh-task-gantt/icon.svg —— 新增 36×36、平涂无描边、双色渐变（蓝→青 + 绿色 now 边 + 三条任务条）。\n- /Users/lzx/Documents/GitHub/dsh-task-gantt/docs/INSTALL.md —— 新增：安装/激活/发现验证/打开/卸载逐字命令 + 17 行\"实际跑过的命令与原始输出\"表。\n- /Users/lzx/Documents/GitHub/dsh-task-gantt/pnpm-lock.yaml —— `pnpm install` 产物（你交办，+5 包）。\n- lib/*（index.js/index.js.map/index.d.ts/client.js/client.js.map）—— 重新构建的产物。\n\n**跑过的命令 + 关键输出**\n- `pnpm install --registry https://registry.npmjs.org` → `Packages: +5 … Done in 47.6s using pnpm v11.22.0`；`react`/`react-dom` 18.3.1 落地。\n- `pnpm run build` → `lib/index.js 37.8kb`、`lib/client.js 67.8kb`、`lib/index.js.map 112.3kb`、`lib/client.js.map 142.1kb`；`[dsh-task-gantt] built lib/index.js + lib/client.js`。\n- `node scripts/verify-build.mjs` → `[verify-build] OK` + `host half lib/index.js — ESM, exports name/inject/apply (0 specifier(s), all @deepseek-ai/* or relative)` + `client half lib/client.js — window.__ModuleLoader__.load({ id: \"dsh-task-gantt\", factory }) invoked once, factory returned exports`。\n- 产物逐字：首行 `window.__ModuleLoader__.load({ id: \"dsh-task-gantt\", factory: (require) => { var module = { exports: {} }; var exports = module.exports;`，结尾 `rn module.exports; } });`（完整为 `return module.exports; } });`）。bundle 里只有 `require(\"react\")`×3、`require(\"react/jsx-runtime\")`×2，`grep -c 'react.element|Symbol.for(\"react' lib/client.js` = **0** → React 没被 inline；`dsw-alias` 出现 91 次 → 令牌驱动样式确实进了 bundle。\n- 硬约束审计（脚本化）：deps/peer/optional 里的 `cordis` = none；peerDependencies 里的 `@deepseek-ai/dsh-*` = none（peer 只有 `{\"@deepseek-ai/cordis\":\"^4.0.0\"}`）；install 类 scripts = none。\n- 交叉一致性：`package.json#name` = `cordis.patch.yml` 行的 `name` = `dsh-task-gantt`；`main`/`exports[\"./client\"]`/`icon` 三个指向的文件都存在。\n- `pnpm run pack:check` → tarball 含 `lib/*`、`cordis.patch.yml`、`icon.svg`、`docs/INSTALL.md`、两个 README、LICENSE、package.json。\n- `cordis.patch.yml` 用 python yaml 解析：单顶层数组、单 `insert` 行、键恰好 `id`+`name`（= `dshmarket` 热挂载支持的 plain insert，src/verify.ts `parseSimplePatch`）。\n- 全 profile 装载器 id 碰撞扫描（`~/.dsh/profiles/web/node_modules/**/cordis.patch.yml` + profile 自己的 patch）：17 个不同 row id，**`dsh-task-gantt` 不在其中** → 不会触发\"重复 id 让 cordis 拒绝整棵树\"（dshmarket/src/install.ts `validateAddedPlugins`→`conflictingEntryIds`）。\n- `pnpm run typecheck`：**1 个 error，在 `tests/host-timeline.spec.ts:153`（`Property 'add' does not exist on type 'string[]'`，verify 的测试桩）**。`src/**` 与我范围内全部干净（我前后抓到过 `src/host/fold.ts` 75 个、`src/client/ui/styles.ts` 2 个，都是那两位正在写，现已自行消失）。\n- `pnpm run test`：3 failed | 184 passed（失败在 tests/host-timeline.spec.ts 等 verify 的面）。\n\n**dsh.plugin.json —— 我没有创建，这是有据的结论（不是跳步）**\n| 主张 | 出处 |\n|---|---|\n| DSH 没有这个文件，唯一真 manifest 是 package.json 的 `dsh` 字段 | https://deepseekdocs.com/en/docs/learn/core/plugin-anatomy §2：*\"There's no `dsh.plugin.json` file: the only real manifest is the `dsh` field in package.json.\"* |\n| 0.1.7 全树 grep 0 命中，它只服务第三方 registry 通道 | /tmp/dsh-better-sidebar-src/AGENTS.md:103 第 11 条 |\n| 本机 DSH 0.2.0-rc.2 桌面壳不读它 | `/Applications/DeepSeek Harness.app/Contents/Resources/app.asar`（121 MB，可 grep 明文）grep `dsh.plugin.json` = **0 命中** |\n| 市场客户端不读它 | dshmarket@1.10.1 `src/*.ts` + `lib/*.js` grep `dsh.plugin.json`/`plugin.json` = **0 命中**；它只读 package.json#dsh.bundle / #dsh.client / exports[\"./client\"] / cordis.patch.yml（src/profile.ts:121-128 `hasDshManifest` 读 `manifest.dsh`；src/verify.ts `readPkgDsh`) |\n| 上架 CI 也不读它 | /tmp/awesome-dsh-plugin/scripts/check-submission.mjs + contributing.md 内 grep `dsh.plugin.json`/`manifestVersion`/`icon`/`locale` = **0 命中** |\n| 旁证：同一生态里 schema 互不兼容且可缺省 | dsh-chat-tidy 是 `{id,version,main,description,engines.dsh,contributes}`；dsh-interconnect 是 `{name,description,version,entry:{name,inject}}`；dsh-better-sidebar 0.22.1 **没有**该文件 |\n\n**B. 顺带交付的真实显示元数据契约（DSH 0.1.7+，你之前让我查的\"市场/插件页字段\"真正指的是这个）**\n出处：/tmp/dsh-better-sidebar-src/AGENTS.md:103 第 11 条 + 135。三条硬规则：① `package.json#icon` 必须是**包内相对路径**且写进 `files`；② `locale/en.json` 是**发现基线**（缺它整个 locale 目录都不读）；③ `exports` 必须暴露 `./locale/*.json` 与 `./package.json`。**失败全静默**，只退化成一行纯文字。我已交付 icon.svg 并把 ②③ 的声明写好（`exports[\"./locale/*.json\"]` + `files` 已含 `locale/*.json`）。\n\n**C. 我修掉的静默失效（原脚本会让 tab 永远不出现，请务必让 shell 知情）**\nbanner 预先注入 `var module`/`var exports`，esbuild 的 **iife** runner 因此在作用域里嗅到 CommonJS → **跳过** `return __toCommonJS(index_exports)` 收尾 → 真实导出写进注入的 module 对象，factory 对宿主 `return undefined`。用 `git archive HEAD` 的干净树复现：iife → `FAIL: the client factory returned undefined`；只把 `format` 换成 `cjs`（去掉 globalName）→ `OK: factory returned exports`。改动只在我的 scripts/**，shell 的 src/client/index.ts 无需改。新增的 `scripts/verify-build.mjs` 会真 import lib/index.js 断言 name/inject/apply + 非相对 import 只能是 `@deepseek-ai/*`，并真调 factory 断言拿回导出（react 用桩），另扫 bundle 字符串里的硬编码颜色（当前 0 命中）。\n\n**D. 未验证假设 / 阻塞**\n1. **真机安装没法实测**：`xx529/dsh-task-gantt` 在 GitHub 上不存在（`gh repo view xx529/dsh-task-gantt` → Could not resolve to a Repository），所以 §1.1 GitHub 直装标 **[not run]**。我实测的是同 spec 形式装真包：`pnpm add \"github:Fisfzy/ego-browser\"` → `+ dsh-ego-browser 0.8.6`、目录 `node_modules/dsh-ego-browser`。\n2. **`dsh plugin --profile web add \"dsh-task-gantt@github:xx529/dsh-task-gantt\"` 我已从文档删除**，换成无别名形式 `add \"github:xx529/dsh-task-gantt\"`。理由：CLI 原样转发 pnpm（bin.js:96），pnpm 确实接受别名 spec（实测 `+ ego-alias <- dsh-ego-browser 0.8.6`），但包会落在 `node_modules/<别名>` 而包内 `package.json#name` 仍是真名（实测），而 profile bundles / Loader row 按**包名**记账 → 名字不一致正是\"warn, then skip\"那一类。若你坚持别名形式，请告诉 docs 改回，但我不建议。\n3. **待你裁决（不阻塞）**：`locale/en.json` + `locale/zh.json` 无人认领（不在 task-1 范围，也不属 shell/ui/docs）。要我补吗？内容各 4 行、形状照 `~/.dsh/profiles/web/node_modules/dsh-better-sidebar/locale/en.json`。**在你点头前我没有创建它们**——目前 `exports`/`files` 已声明 `./locale/*.json` 但目录不存在，这是唯一的悬空面（失败静默，不影响装载）。\n4. **待你裁决**：是否要按 dsh-chat-tidy 形状补 `dsh.plugin.json`（我判定不该补，理由见上）。若你要求交付，我加，但会在文件头写明\"非 DSH 契约、零读取方\"。\n5. tsconfig 我没动（现有配置够用：ES2022/ESNext/Bundler/jsx react-jsx/strict/noUncheckedIndexedAccess/verbatimModuleSyntax，include 覆盖 src+tests）。\n6. 我没有执行任何 git commit（没人授权），lib/ 与我的文件都在工作区里等你统一提交。\n\n**E. 你问的第 2 件（复核 awesome-dsh-plugin CI）**：**不止** `dsh.bundle`。硬门槛 6 条（contributing.md + scripts/check-submission.mjs）：① package.json 声明 `dsh.bundle`（只声明 dsh.client 是最常见打回原因）② 仓库创建满 1 天（MIN_AGE_DAYS=1；无 commit 数门槛）③ 仓库存在/未归档/非 DSH 本体 ④ 有真实可用代码 ⑤ 加 topic `dsh-plugin` ⑥ 单 PR ≤3 条（MAX_ENTRIES_PER_PR=3）。**整个上架动作 = 新增一个 `data/plugins/<owner>__<repo>.yml`**（`url`/`name`/`category`/`description.en`，category 必须是那 22 个取值之一）。我用 `gg` 扫过 contributing.md 与 scripts/*.mjs 里的 `dsh.plugin.json`/`manifestVersion`/`icon`/`locale`：**0 命中**。§7.1 可以照用，建议把那句\"只要求 dsh.bundle + cordis.patch.yml\"精确化成这 6 条，并补上\"上架=提一个 YAML 文件\"。"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "type": "team/message/delivered",
+   "seq": 825,
+   "time": 1791649611016,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "messageId": "team-message-bb55eea0-4b01-48c9-a6b2-3d456c269137",
+    "targetId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99"
+   }
+  },
+  {
+   "type": "team/message/queued",
+   "seq": 877,
+   "time": 1791649682840,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "message": {
+     "id": "team-message-967f35e6-fadf-4389-97ff-4cbcaf53c1e1",
+     "senderId": "91410edb-5869-4183-bb36-01a655321fb4",
+     "senderName": "docs",
+     "targetId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+     "content": [
+      {
+       "type": "text",
+       "text": "[task-6] status=完成（task-6 已 complete，revision 3）\n\n## 写了哪些文件（绝对路径）\n- /Users/lzx/Documents/GitHub/dsh-task-gantt/README.md（英文主）\n- /Users/lzx/Documents/GitHub/dsh-task-gantt/README.zh.md\n- /Users/lzx/Documents/GitHub/dsh-task-gantt/docs/DESIGN.md\n- /Users/lzx/Documents/GitHub/dsh-task-gantt/docs/MARKET.md\n- /Users/lzx/Documents/GitHub/dsh-task-gantt/docs/SCREENSHOTS.md\n未动任何写入范围外的文件。\n\n## 安装命令取自哪里\n**docs/INSTALL.md（packaging 交付，逐字引用，不改写）**。README/DESIGN/MARKET 里的命令与 INSTALL.md 逐字一致，已脚本核对：\n- 装：`cd ~/.dsh && dsh plugin --profile web add \"github:xx529/dsh-task-gantt\"`（**[not run]**，仓库不存在）\n- 本地：`cd ~/.dsh && dsh plugin --profile web add \"link:/Users/lzx/Documents/GitHub/dsh-task-gantt\"`（[not run]）\n- 卸：`cd ~/.dsh && dsh plugin --profile web remove dsh-task-gantt`（[not run]）\n- 打开：右侧栏 → `+` → 任务甘特图 / Task Gantt（来源：tab descriptor 的 title resolver，src/client/index.ts:113 + src/client/i18n.ts:26,63）\n三条都保留了 packaging 要求的别名警告与 remove 不回收 patch 层 insert 行的警告。\n\n## MARKET.md 每条要求的出处清单\n- 目录收录规则（dsh.bundle 必需 / 只有 dsh.client 不可装 / 真实代码 / 仓库满 1 天 / dsh-plugin topic / 描述必须与代码相符 / 分类 / 单 PR ≤3 条 / CI 检查项 / 截图 screenshots.json 1–8 张仅 GitHub https 或仓库相对路径 / npm 可选）：https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/blob/main/contributing.md（含 README 的 \"What it takes to be listed here\"）\n- 市场读什么、如何进市场：/Users/lzx/.dsh/profiles/web/node_modules/dshmarket/README.md:47、:57-59；src/registry.ts:9-27、:36-59；src/verify.ts:1-19、:98-187；data/registry-snapshot.json（真实条目形状，plugins[0].install）\n- 上架硬约束（无 cordis、无 lifecycle scripts、bundle patch 相对安全路径、repository 无凭据 https owner/repo、精确 SemVer、preflight 只卡 @deepseek-ai/dsh*）：/tmp/dsh-better-sidebar-src/tests/market-manifest.spec.ts:6-16、:67-99、:101-116、:118-146 与 /tmp/dsh-better-sidebar-src/AGENTS.md:23\n- 展示元数据（icon + locale/en.json 为发现基线、失败静默）：/tmp/dsh-better-sidebar-src/AGENTS.md:103\n- Community Market 自动安装要求 npm latest 精确稳定版：https://github.com/anywhere-labs/deepseek-harness-desktop/blob/master/dsh-community-market/docs/install-and-uninstall.zh.md\n- 正式差异：`dsh.plugin.json` 不是 DSH 契约（AGENTS.md:103），本仓库不产出，MARKET.md §7 已写清\n- 安装/卸载动词：packaging 的 docs/INSTALL.md（转引 bin.js:96 与官方文档 https://deepseekdocs.com/en/docs/user-guide/plugins §2/§7）\n\n## 需要你决策 / 仍未确认的点\n1. ⛔ **上架前置全部未满足**：`gh repo view xx529/dsh-task-gantt` → \"Could not resolve to a Repository\"；`git remote -v` 为空。没有仓库就没有 1 天年龄、没有 dsh-plugin topic、没有 catalog PR。MARKET.md §8 已备好可直接提交的 `data/plugins/xx529__dsh-task-gantt.yml` 内容。\n2. ⚠️ **截图**：README/README.zh.md 只放了指向 docs/SCREENSHOTS.md 的占位，明确写\"不用 mock-up 冒充\"。需要你在真机冒烟时拍 3 张：面板全貌 / 任务卡详情 / 降级态。另外 `screenshots.json` 不在任何人的写入范围（TEAM-BRIEF §6 把仓库根给了 packaging），请你指派。\n3. ⚠️ **locale 元数据缺口**：package.json 已 export `./locale/*.json` 且 files 含 `locale/*.json`，但**仓库里没有 locale/ 目录**（缺失是静默失败）。归属未定，packaging 说已请你裁决。MARKET.md O4 如实标注为 ⚠️。\n4. ⚠️ **跨文档冲突（需你更新 TEAM-BRIEF）**：host-data 的 docs/FINDINGS-host.md §4.1/§8 实测推翻 brief §3.4 —— `team/task` 事件**存在**（Lead 日志 618 行里 11 条 + team/member 12 条，teammate 日志 0 条），时间锚点稳定落在**第 1 级**；sessionPersistence 也确实存在（§2）。我已按实测改写 DESIGN.md §3.1 与 README 的\"任务时间从哪里来\"，并注明\"以实测为准、brief 待更新\"。另外 `complete`/`reopen` 的 team/task 真实样本**尚不存在**（全队任务只走到 pending→in_progress），我在 DESIGN.md §9 标 ❓unverified。\n5. ⚠️ **我发现的实现-文档分歧，建议你复核**：`src/client/api.ts:17-23` 用 **页面 origin** 解析路由（不是 document.baseURI），理由写在文件头 :6-12——本插件的路由是 host 绝对 prefix。但这与 better-sidebar 官方指南 :625-634 的\"绝不写前导斜杠 / 反代子路径会 404\"规则方向相反。我在 DESIGN.md §5.1 如实记为 \"Documented divergence, to be verified on the mounted profile\"，并建议 features 里有 hostRouteUrl 时优先用它。**这条需要真机（尤其反代子路径场景）验证**，请纳入挂载冒烟清单。\n6. ⚠️ **仓库卫生（不在我写入范围，仅报告）**：package.json `files` 含 README.md / README.zh.md / docs/INSTALL.md，但 README 链接了 docs/DESIGN.md、docs/MARKET.md、docs/VALIDATION.md、docs/FINDINGS-host.md —— 这些不在 files 里。GitHub 浏览无影响，只有 npm 发布时会有死链。package.json 归 packaging。\n7. ⏳ README/DESIGN 链接了 docs/VALIDATION.md，该文件目前还不存在（verify 的交付物 task-5）。verify 交付后即自洽；若 task-5 最终不产出该文件，请告知我补链接处理。\n\n## 自查结果\n- 安装/打开/卸载三条命令在 README.md、README.zh.md、docs/MARKET.md 中逐字可复制且与 docs/INSTALL.md 一致（grep 核对）。README 里的命令均标注 [not run]，未把未跑过的说成跑过。\n- MARKET.md 每条要求均带出处（上列清单），无凭印象条目。\n- 所有引用的本机文件+行号在提交前用 grep/awk 复核过；shell/host-data 改过 src 后我重新校准了 src/client/index.ts、src/client/i18n.ts、src/client/api.ts 的行号引用。\n- 未承诺投影里不存在的时间信息：DESIGN.md §2.1 与 README\"工作原理\"明确写了投影无任何时间戳，时间只来自会话日志。"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "type": "team/message/delivered",
+   "seq": 879,
+   "time": 1791649683850,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "messageId": "team-message-967f35e6-fadf-4389-97ff-4cbcaf53c1e1",
+    "targetId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99"
+   }
+  },
+  {
+   "type": "team/message/queued",
+   "seq": 892,
+   "time": 1791649719595,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "message": {
+     "id": "team-message-2be45fc7-6ae2-4d84-aff1-c2c84efcdc44",
+     "senderId": "7484fccf-2cb1-450c-9993-610a8930073e",
+     "senderName": "shell",
+     "targetId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+     "content": [
+      {
+       "type": "text",
+       "text": "[task-3] status=完成（task-3 已 complete；真机挂载冒烟未做——按 brief §7 那是你统一执行的部分，见下「未验证」）\n\n■ 改动的文件（全部在授权写入范围内，未碰 ui/host/shared/package.json/tests）\n- /Users/lzx/Documents/GitHub/dsh-task-gantt/src/client/index.ts（重写：注册 + 生命周期 + 图标）\n- /Users/lzx/Documents/GitHub/dsh-task-gantt/src/client/panel-style.ts（新建：PANEL_CSS + injectPanelStyles）\n- /Users/lzx/Documents/GitHub/dsh-task-gantt/src/client/i18n.ts（扩 key：now/zoomIn/zoomOut/zoomReset/liveOnly/notes；t() 改为调用时重探语言）\n- /Users/lzx/Documents/GitHub/dsh-task-gantt/src/client/env.d.ts（补 __ModuleLoader__ 的可选 styles 声明，注明未验证）\n- 未创建 src/client/tab.ts（brief §6 提到它，但共享 task-3 的写入范围没有它；descriptor 直接放 index.ts）\n- lib/ 的 4 个产物是共享 build 命令重新生成的（不是我手改）\n\n■ 跑过的命令 + 关键输出\n1) `cd /Users/lzx/Documents/GitHub/dsh-task-gantt && pnpm run typecheck && pnpm run build` → 合并退出码 0\n   - typecheck 输出仅 `$ tsc -p tsconfig.json --noEmit`，0 error\n   - build: lib/index.js 37.8kb / lib/client.js 69.1kb，末行 `[dsh-task-gantt] built lib/index.js + lib/client.js`\n2) `pnpm run test` → 退出码 0，`Test Files 9 passed (9)` / `Tests 191 passed | 1 skipped (192)`\n3) lib/client.js 首行（逐字）：\n   `window.__ModuleLoader__.load({ id: \"dsh-task-gantt\", factory: (require) => { var module = { exports: {} }; var exports = module.exports;`\n   末两行（逐字）：\n   `return module.exports; } });`\n   `//# sourceMappingURL=client.js.map`\n   （sourcemap 注释在最后一行；最后一行 JS 代码是 `return module.exports; } });`，与真实上架插件 dsh-chat-tidy/lib/client.js 的结尾形态一致）\n4) bundle 依赖面：`grep -o 'require(\"[^\"]*\")' lib/client.js | sort -u` → 只有 `react` 与 `react/jsx-runtime`；`require(\"dsh-better-sidebar\")` 计数 0；`grep -c 'dtg-' lib/client.js` = 181（ui 的图表代码与样式都在里面）\n5) 我自己写的 3 个一次性 harness（都在 /tmp，未写入仓库；直接编译/加载真实源码与真实产物）：\n   - `node /tmp/shell-check/panel-style.check.mjs` → 17/17（无 document 不抛、`<style>` 三属性、幂等、已有样式表不复插、loader sink 优先、sink 抛错回退、半残 DOM 降级、零颜色字面量、var() 全是 --dsw-/--ds-、消费 --dsw-alias-bg-layer-1、绝不消费 --dsw-specific-sidebar-fill、no-drag≥3 处）\n   - `node /tmp/shell-check/index.check.mjs` → 47/47（inject 为空数组、无 better-sidebar/@deepseek-ai value import、缺席时 dormant+warn、晚到服务补注册、effect 包裹与 disposer 透传、descriptor 全字段、icon(14)、component props 恰好两项、registerTab 抛错不崩、语言实时切换）\n   - `node /tmp/shell-check/artifact.check.mjs` → 15/15（跑**真实产物** lib/client.js，模拟宿主 queue→materialize(require 表白名单只给 react/react/jsx-runtime)→claimStyles→apply→removeOwnedStyles 全链路）\n\n■ 与 ui 的最终接口约定（已双向确认，ui 回信认可）\n- `BoardView` 的 props 恰好是 `{ sessionId: string; visible: boolean }`，不再多传任何东西；我调用形态：\n  `component: ({ scope, visible }) => createElement(BoardView, { sessionId: scope.sessionId, visible })`\n- `visible` 取自 better-sidebar（宿主 `src/client/Sidebar.tsx:639` `visible={state.bottomOpen && active}`）；暂停轮询/定时器由 ui 在 BoardView 内实现\n- ui 的根节点是 `<div className=\"dtg-root\" data-dsh-task-gantt=\"\">`——**它复用了我的标记属性**；它的组件级样式自己注入（id `dsh-task-gantt-ui-style`），不复用我的 `.dsh-task-gantt-*` 类\n- i18n.ts 归我；ui 的 labels.ts 只 import 我的 `locale` 导出（该导出保留）\n\n■ 三个需要你仲裁/知悉的技术结论（都有一手出处）\n1) **brief 里说的 `styles.insert(css)` 在 DSH 0.2.0-rc.2 上不存在**。实测 app.asar 里 `@deepseek-ai/dsh-client-modules` 的 `bootInjections()` 装的 facade 只有 `mode/pendingQueue/load/create`；materialize 时记录 `{id,exports,styles:claimStyles(ownerId),edges}`，而 `claimStyles` 是「给所有**未打标签**的 `<style>` 补 `data-plugin`」，卸载时 `removeOwnedStyles(id)` 按 `data-plugin` 删。所以实际生效路径是我写的 `<style data-dsh-task-gantt>` 回退，且我**自打标签**（`data-plugin=\"dsh-task-gantt\"` + `data-plugin-css=\"dsh-task-gantt/styles.css\"`，与 dsh-code-nav、better-sidebar 自己的做法一致），保证不会被别的插件 materialize 时误领走、HMR 时能被正确清掉。`styles.insert` 的探测保留作为前向兼容，签名标 ❓。\n2) **激活顺序竞态已消除，但 `inject` 仍按 brief §2.2 保持空数组**：探测不到 `betterSidebar` 时，我用 cordis 动态注入 `ctx.inject(['betterSidebar'], cb)` 等待服务（cordis 4.0.4 `lib/types/registry.d.ts:111` + `src/registry.ts:300` 实现为 `ctx.plugin({inject, apply})`，服务变化时 fiber 会 unload 后重跑，见 `src/fiber.ts:632` `_reload()`），回调里再 `scope.effect(...)` 注册。verify 的 spec 里那条 KNOWN RISK「先 apply 就永久静默休眠」因此不再成立，我已请 verify 更新 docs/VALIDATION.md。唯一仍会 dormant 的路径是「宿主连 ctx.inject 都没有」，该路径会 warn 不抛（也是 verify 那条用例暴露的真实缺口，已修）。\n3) descriptor 同时给了 `single: true` 与显式 `dedupeKey: () => TAB_TYPE_ID`（指南 §4.1：显式 dedupeKey 优先于 single），并且根选择器写成 `[data-dsh-task-gantt]:not(style)`——否则面板根规则会套到我自己注入的 `<style>` 上。\n\n■ 未验证假设 / 阻塞\n- **未做真机挂载冒烟**：我没有任何证据表明 + 菜单里真出现了「任务甘特图」。我做的是产物级宿主模拟（上面 artifact harness），它证明 bundle 形状、materialize、注册、claimStyles、HMR 清理都对；真实 profile 的 `dsh plugin --profile web add` + 硬刷新 + + 菜单仍需你执行。\n- ❓ `styles.insert` 的具体签名（是否存在、参数序）——host 上不存在，纯前向兼容分支。\n- ❓ `document.documentElement.lang` 在真实页面跟随 DSH locale：我在 asar 里确认了 `@deepseek-ai/dsh-client-locale` 的 `syncDocumentLanguage()` 会写 `zh-CN`/原语言，但没在活页面里验过；我们的回退是 `navigator.language`。\n- ❓ `ctx.inject` 在**客户端** cordis runner 里的运行时行为：类型与 cordis 源码已确认，但没在活的 DSH 客户端里跑过；若它意外不生效，退化表现是「有 betterSidebar 时仍 dormant + 一条 warn」，不会崩。\n- 我自己的阻塞：无。过程中遇到的两处红灯均非我文件（ui 的 styles.ts 模板字符串反引号语法错误、verify 的 tests/host-timeline.spec.ts 类型错误 + 一条 fuzz 断言），当时都已直接把诊断发给对应 owner；此刻全仓 typecheck/build/test 均已绿。"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "type": "team/message/delivered",
+   "seq": 894,
+   "time": 1791649719794,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "messageId": "team-message-2be45fc7-6ae2-4d84-aff1-c2c84efcdc44",
+    "targetId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99"
+   }
+  },
+  {
+   "type": "team/message/queued",
+   "seq": 942,
+   "time": 1791649859574,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "message": {
+     "id": "team-message-3b717bdc-3ad9-4545-a42a-0a0a764cc289",
+     "senderId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+     "senderName": "lead",
+     "targetId": "c79a18f7-d3c4-41c7-a689-9ba3b0ca483f",
+     "content": [
+      {
+       "type": "text",
+       "text": "[Lead → ui] **必须改一处真实缺陷（跨半路由解析），请优先处理。**\n\n问题：`src/client/api.ts:17-23` 的 `routeUrl()` 用页面 **origin** 解析路由（`new URL(path, origin)`）。这在\"反代把 GUI 挂在子路径\"或桌面壳（`dsh-app://app/`）下会 404；DSH 自己的客户端**不这么做**。\n\n一手证据（我在 shipped bundle 里挖到的 DSH 官方片段，逐字）：\n```\n// The mux route is registered absolute; a page resolves its document-relative\n// form against its own document base. A shell-owned Host on another origin\n// supplies that base through the transport.\nconst url = new URL(REMOTE_STREAM_MUX_PATH.slice(1),\n  globalThis.__DSH_TRANSPORT__?.streamBaseUrl ?? document.baseURI)\n```\n出处：`/Applications/DeepSeek Harness.app/Contents/Resources/app.asar` → `stream-client.js`（grep `streamBaseUrl ?? document.baseURI`）。两条 load-bearing 规则：① `.slice(1)` 去前导斜杠让路径**文档相对**、保住页面前缀；② base 先取 `__DSH_TRANSPORT__.streamBaseUrl`（壳自有 Host 在别的 origin），再退 `document.baseURI`。\n同样的规则也写在 better-sidebar 官方指南 §6（`/tmp/dsh-better-sidebar-src/docs/external-plugin-guide.md:625-634`：「**绝不写前导斜杠**…反代把 GUI 挂在子路径时…JSON API 404」）。\n\n我已经把解析器写成共享模块（**Lead 所有，你可直接 import**）：\n`/Users/lzx/Documents/GitHub/dsh-task-gantt/src/client/transport.ts`\n```ts\nexport function resolveHostRoute(path: string, sidebar?: { hostRouteUrl?(p: string): string } | undefined): string\n```\n优先级：`sidebar.hostRouteUrl(path)`（服务在挂载时优先，它知道壳的真实基底）→ `__DSH_TRANSPORT__?.streamBaseUrl` → `document.baseURI`（去前导斜杠）→ 兜底返回文档相对路径。\n\n**请做**：把 `src/client/api.ts` 的 `routeUrl(method)` 改成调用 `resolveHostRoute(`${ROUTE_PREFIX}/${method}`, sidebar)`；`sidebar` 从哪来由你决定，两种都行：\n- (a) 在 `src/client/api.ts` 里用 `ctx.get('betterSidebar')` 取（但 api.ts 目前是纯函数、没有 ctx，改动较大）；或\n- (b) **推荐**：让 `BoardView` 的 props 增加一个可选的 `routeBase?: (path: string) => string`，由 shell 在 `src/client/index.ts` 里注入（shell 那里有 ctx 和已挂载的 sidebar service）。这条路需要你和 shell 同步签名，请直接 send_message 给 shell 约定。\n\n无论哪条，`src/client/api.ts` 的注释也要改：**现在那段\"用 origin 而非 baseURI\"的理由是错的**（它假设路由必须根绝对，而 DSH 官方做法正好相反），改成引用上面的 asar 出处。\n\n其余：`postJson` / `fetchTimeline` / `ApiHttpError` 的结构我看了没问题，保留。改完跑 `pnpm run typecheck && pnpm run build`，并把最终 `routeUrl` 的实现贴给 verify（它要加反代子路径的用例）。"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "type": "team/message/delivered",
+   "seq": 943,
+   "time": 1791649859590,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "messageId": "team-message-3b717bdc-3ad9-4545-a42a-0a0a764cc289",
+    "targetId": "c79a18f7-d3c4-41c7-a689-9ba3b0ca483f"
+   }
+  },
+  {
+   "type": "team/message/queued",
+   "seq": 986,
+   "time": 1791649900713,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "message": {
+     "id": "team-message-5506d8a6-66ee-4971-a73e-30b7ceedc201",
+     "senderId": "7484fccf-2cb1-450c-9993-610a8930073e",
+     "senderName": "shell",
+     "targetId": "c79a18f7-d3c4-41c7-a689-9ba3b0ca483f",
+     "content": [
+      {
+       "type": "text",
+       "text": "[shell → ui] Lead 要我们俩协同改一处真实缺陷：反代子路径/桌面壳下路由基底错误。我这边先把手印对齐，别各写一套。\n\n1) Lead 已写好共享解析器（Lead 所有，直接 import，别自己实现）：\n   `/Users/lzx/Documents/GitHub/dsh-task-gantt/src/client/transport.ts`\n   `export function resolveHostRoute(path: string, sidebar?: { hostRouteUrl?(path: string): string } | undefined): string`\n   优先级：`sidebar.hostRouteUrl(path)` → `globalThis.__DSH_TRANSPORT__?.streamBaseUrl` → `document.baseURI`，并统一 `path.slice(1)` 去前导斜杠（前两者都失败时返回文档相对路径）。\n   我已独立复核过出处：app.asar `stream-client.js` 里 `new URL(REMOTE_STREAM_MUX_PATH.slice(1), globals.__DSH_TRANSPORT__?.streamBaseUrl ?? document.baseURI)`（我在 asar offset 15096864 逐字看到），与指南 §6 一致；你的 `src/client/api.ts:18 routeUrl()` 现在按页面 origin 解析，反代子路径下会 404。\n\n2) 我在 `src/client/index.ts` 会这么传（就是 Lead 给的签名，不另创）：\n```tsx\ncomponent: ({ scope, visible }) => createElement(BoardView, {\n  sessionId: scope.sessionId,\n  visible,\n  routeBase: (path: string) => resolveHostRoute(path, service),\n})\n```\n其中 `service` 就是我 `readTabService()` 探测到的那个已挂载 better-sidebar 实例（我的 `BetterSidebarTabService` 已声明 `hostRouteUrl?(path: string): string`，与 `resolveHostRoute` 的第二参结构兼容，typecheck 已确认）。\n\n3) 请你做的（我不动你的文件）：\n   - `BoardViewProps` 加可选 `routeBase?: (path: string) => string`；\n   - `api.ts` 的 host 路由统一走它：有 `routeBase` 就用 `routeBase(HOST_ROUTE_PREFIX + '/' + method)`（或你现有拼法），**没有则 fallback 到 `resolveHostRoute(path)`**（无 sidebar 的那支），不要退回 origin 解析；\n   - 注意 `routeBase` 可能每次 render 都是新函数引用：如果它进了 `useEffect` 依赖数组会导致重复 fetch，请用 ref 或把它排除出依赖（按你现有 reloadKey 模式处理）。\n\n4) 落地顺序（否则会红）：**你先把 `routeBase` 加到 `BoardViewProps` 后回我一句**，我再把上面那段写进 index.ts 一起跑闸门；如果我先写，`createElement` 会对多出来的 prop 报 excess property error。你若已经加了就直接回我，我立刻落。\n\n5) 你没意见的话我就按 `routeBase` 这个名字/签名走——Lead 说这条优先，别改名。"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "type": "team/message/delivered",
+   "seq": 987,
+   "time": 1791649900731,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "messageId": "team-message-5506d8a6-66ee-4971-a73e-30b7ceedc201",
+    "targetId": "c79a18f7-d3c4-41c7-a689-9ba3b0ca483f"
+   }
+  },
+  {
+   "type": "team/message/queued",
+   "seq": 1017,
+   "time": 1791649946449,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "message": {
+     "id": "team-message-de148bb7-2ffa-49e0-ab98-6382a1ad1580",
+     "senderId": "c79a18f7-d3c4-41c7-a689-9ba3b0ca483f",
+     "senderName": "ui",
+     "targetId": "f828dda6-e91d-4dcc-bbf0-9a9d73d9555e",
+     "content": [
+      {
+       "type": "text",
+       "text": "[ui → verify] task-4 的最终实现与精确契约，供你写单测。两件事：路由解析（Lead 要求的缺陷修复）与 timeline-layout 的输入输出契约。\n\n## 1) 路由解析（请加反代子路径的用例）\n`src/client/api.ts`（ui 所有）现在这样解析，**不再用 origin**：\n```ts\nexport type RouteBase = (path: string) => string\nexport interface RequestOptions { signal?: AbortSignal; routeBase?: RouteBase }\n\nexport function routeUrl(method: string, options?: RequestOptions): string {\n  const path = `${ROUTE_PREFIX}/${method}`            // '/dsh-task-gantt/api' + '/' + method\n  if (options?.routeBase !== undefined) return options.routeBase(path)\n  return resolveHostRoute(path)                        // from './transport.ts' (Lead 所有)\n}\nexport async function postJson<T>(method, body, options?): Promise<T>   // 非 2xx/非 JSON → throw ApiHttpError(status, msg)\nexport async function fetchTimeline(sessionId, options?): Promise<TimelineResponse>  // body: { sessionId, apiVersion }\n```\n可测点（不需要 DOM）：`routeUrl('timeline')` 在 `document.baseURI = 'https://h/dataops/proxy/3080/'` 时必须得到 `https://h/dataops/proxy/3080/dsh-task-gantt/api/timeline`（**前导斜杠被去掉**，即文档相对），而不是 `https://h/dsh-task-gantt/api/timeline`；`routeBase` 存在时优先于两者。\n\n## 2) timeline-layout 契约\n文件：`src/client/ui/timeline-layout.ts`。文件头注释有完整公式表（COORDINATE SPACES / WINDOW RESOLUTION / TICKS / LANE-BAR GEOMETRY / SPAN RECTS / TASK CARDS / CULLING）。要点：\n\n入口\n```ts\nlayoutTimeline(data: TimelineResponse, viewport: {width:number; height?:number; laneHeight:number; headerHeight:number},\n               options: {now:number; msPerPx?:number; scrollLeft?:number; scrollTop?:number; tickCount?:number; cull?:boolean; tzOffsetMinutes?:number})\n  : TimelineLayout\n```\n其他纯函数：`computeWindow(data, now)`、`buildTicks({...})`、`pickTickStep(ms)`、`clampMsPerPx(v)`、`fitMsPerPx(duration,width)`、`formatClock(t,tz?)`、`formatDateTime(t,tz?)`、`formatTickLabel(t,kind,tz?)`、`clamp(v,lo,hi)`；常量 `MIN_MS_PER_PX=50`、`MAX_MS_PER_PX=600000`、`DEFAULT_MS_PER_PX=1000`、`DEFAULT_LANE_HEIGHT=56`、`DEFAULT_HEADER_HEIGHT=28`、`LANE_HEAD_WIDTH=132`、`LANE_PAD_Y=3`、`TURN_BAND_HEIGHT=10`、`STEP_BAR_HEIGHT=8`、`TASK_CARD_TOP=17`、`TASK_CARD_HEIGHT=36`、`TASK_MIN_WIDTH=148`、`TASK_MAX_WIDTH=260`、`MIN_SPAN_PX=2`、`MAX_TICKS=400`、`TICK_STEPS`。\n\n关键不变式\n- `window.start = min(range.start, 所有 span.start/span.end(非 null), 所有 history[].time)`；`window.end = max(range.end ?? max(now,…), 上面最大值, start+1)`；`live = range.end === null`；`durationMs >= 1`。**窗口永远覆盖全部数据**，所以 span 不可能越界（没有 clipped 字段）。\n- `dataWidth = contentWidth = durationMs / msPerPx`。\n- `viewX = x - scrollLeft`，`visible = viewX + w >= 0 && viewX <= viewportWidth`；`cull:true` 时丢掉 `!visible` 的 span/task（lane 永远返回）。\n- span：`x=(clamp(start)-window.start)/msPerPx`，`w=max(2,(clamp(end)-clamp(start))/msPerPx)`；`end===null` 的 span `end=min(max(now,start),window.end)` 且 `open:true`。\n- task：有 history → `anchor:'history'`、`at=history[0].time`、`durationMs=max(history[].time)-at`、`x=(clamp(at)-window.start)/msPerPx`、`w=clamp(durationMs/msPerPx,148,260)`；无 history → `anchor:'live'`、`live:true`、`at=window.end`、`durationMs=0`、`w=148`、`x=max(0,dataWidth-148)`。卡片来源：先 `lane.tasks`（保持输入顺序），再 `data.tasks` 里未出现过的按 `laneId` 归位；`laneId` 找不到泳道的进 `unplacedTaskIds` 且不绘制。\n- ticks：`targetStep = msPerPx*viewportWidth/tickCount`，取 `TICK_STEPS` 里 ≥ target 的最小步长（都不够则最大步长）；`first = ceil((start-align)/step)*step + align`，`align = step>=DAY? tzOffsetMs : 0`；`labelKind = step<DAY?'time':'date'`；`major = date ? true : (time-align)%HOUR===0`；超过 `MAX_TICKS` 时截断并置 `truncatedTicks:true`。\n- 消毒：非有限/超范围 `msPerPx` → 1000 再 clamp；`scrollLeft/scrollTop` 非有限或负 → 0；`width` → 1；`laneHeight/headerHeight` ≤0 或非有限 → 默认；`tickCount` ≤0 或非有限 → 6；`now` 非有限 → 0。空/畸形 payload 不抛异常，返回空数组并仍产出 ticks。\n- `formatTickLabel(t,'time',tz)` = `HH:mm`，`'date'` = `MM-DD`（本地时区，`tzOffsetMinutes` 东经为正，默认 `-new Date(now).getTimezoneOffset()`）。\n\n我自己的验证脚本（可整段抄进 tests/，它在 Node 22 下直接跑 TS 源）：`/tmp/dtg-layout-check.mjs` —— 覆盖空 payload、live/historic 窗口、open span 延长到 now、非 live 窗口截断、MIN_SPAN_PX、cull、scrollLeft/viewX、history vs live 卡片、宽度上下限、unplacedTaskIds、tick 对齐/步长/上限、now 标记、lane.visible。运行：`node /tmp/dtg-layout-check.mjs` → `ALL LAYOUT CHECKS PASSED`。\n\n提醒一个 stub 陷阱：`tests/stubs/react.ts` 的 `useState` 只返回初值、`useEffect` 不执行，所以 `GanttChart` 的 `viewport` 永远是 `{width:0,height:0}` → `cull:true` 会把所有 rect 剪掉（只剩 lane heads / ticks / 图例）。要断言 bar/card 几何请直接调 `layoutTimeline`（这也是我设计的测试面）；要断言组件结构就断言 axis/lane 列表/细节面板。\n\n你的 tests/theme.spec.ts 我这边 37 passed（扫到 src/client/ui/**，我的 `.dtg-*` CSS 字符串只有 var(--dsw-*)/var(--ds-*)/transparent/currentColor）。提醒：better-sidebar 官方 `tests/theme.spec.ts`（/tmp/dsh-better-sidebar-src/tests/theme.spec.ts:101-160）**不扫颜色名**，只扫 `#hex`/`\\brgba?\\(` 和每条 `color:` 声明解析到令牌——如果按字面「颜色名都要红」实现，`white-space: nowrap` 会误报（我的 styles.ts 里有 12 处）。"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "type": "team/message/delivered",
+   "seq": 1018,
+   "time": 1791649946463,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "messageId": "team-message-de148bb7-2ffa-49e0-ab98-6382a1ad1580",
+    "targetId": "f828dda6-e91d-4dcc-bbf0-9a9d73d9555e"
+   }
+  },
+  {
+   "type": "team/message/queued",
+   "seq": 1032,
+   "time": 1791649983485,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "message": {
+     "id": "team-message-fd479e54-953d-41a4-82c0-d5210c52d40e",
+     "senderId": "66b9735d-8df4-44df-9d74-b4083057e02f",
+     "senderName": "packaging",
+     "targetId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+     "content": [
+      {
+       "type": "text",
+       "text": "[packaging → lead] **最终验收输出（全绿）**。时序确认无漂移：`lib/index.js`/`lib/client.js` mtime 00:32:45，`src/**`+`tests/**` 最后写入 00:32:06（src/client/index.ts）→ 产物比全部源码新，所以这次输出对当前树有效。\n\n```\n### TYPECHECK ###   $ tsc -p tsconfig.json --noEmit        → 0 errors\n### TESTS ###       Test Files 11 passed (11) | Tests 288 passed | 1 skipped (289), 2.89s\n### BUILD ###       lib/index.js 39.2kb / lib/index.js.map 114.8kb\n                    lib/client.js 70.3kb / lib/client.js.map 149.9kb\n                    [dsh-task-gantt] built lib/index.js + lib/client.js\n### VERIFY-BUILD ###\n[verify-build] OK\n  host half   lib/index.js  — ESM, exports name/inject/apply (0 specifier(s), all @deepseek-ai/* or relative)\n  client half lib/client.js — window.__ModuleLoader__.load({ id: \"dsh-task-gantt\", factory }) invoked once, factory returned exports\n### VERIFY-META ###\n[verify-meta] OK\n  dsh-task-gantt/locale/en.json resolves through exports (/Users/lzx/Documents/GitHub/dsh-task-gantt/locale/en.json)\n  locale dictionaries: en, zh\n  dsh-task-gantt/package.json resolves (fallback title/description) → /Users/lzx/Documents/GitHub/dsh-task-gantt/package.json\n  icon ./icon.svg → image/svg+xml, 2277 bytes (limit 262144)\n### REACT EXTERNAL ###   3 require(\"react\")  |  2 require(\"react/jsx-runtime\")   （React 未 inline，仍是宿主单例）\n### BUNDLE SHAPE ###\n首行: window.__ModuleLoader__.load({ id: \"dsh-task-gantt\", factory: (require) => { var module = { exports: {} }; var exports = module.exports;\n末行: return module.exports; } });\n      //# sourceMappingURL=client.js.map\n### HOST EXPORTS ###  export { apply, inject, name };\n### 硬约束 ###      all hard constraints OK（deps/peer/optional 无 cordis；peer 恰为 {\"@deepseek-ai/cordis\":\"^4.0.0\"}；无 install 类 scripts）\n### 文件存在性 ###  ./lib/index.js  ./lib/client.js  ./icon.svg  locale/en.json  locale/zh.json  cordis.patch.yml  全部 OK\n```\n\n`pnpm run check` 现在串起：typecheck → test → build → verify:build → verify:meta → `git diff --exit-code -- lib`（最后一条会抓住\"源码改了但忘记重建\"）。\n\n**A/B 均已落地**（详见上一条消息）：§7 记录了\"特意不提供 dsh.plugin.json\"的结论与 6 条证据；`locale/en.json` + `locale/zh.json` 已交付并通过宿主 schema 复刻校验；顺带更正了你的前提——真正决定 locale 读不读的是 **`exports` 能否解析到 `en.json`**（宿主 `readPluginMeta` 走 Node ESM 解析器），我已用\"删掉 exports 就 FAIL、恢复就 OK\"做了带牙齿的实证，§6 第 19–22 行有原始记录。\n\n**没有 git commit**，等你统一提交 + 真机挂载。若挂载后 `dsh web --dump-config | grep -A2 dsh-task-gantt` 为空，把输出发我，我按 §3/§7 的判定树继续查（空结果=row 被静默跳过，最常见原因是 name 不一致或 profile 未重启）。"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "type": "team/message/delivered",
+   "seq": 1034,
+   "time": 1791649983498,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "messageId": "team-message-fd479e54-953d-41a4-82c0-d5210c52d40e",
+    "targetId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99"
+   }
+  },
+  {
+   "type": "team/message/queued",
+   "seq": 1035,
+   "time": 1791649983968,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "message": {
+     "id": "team-message-980fcb5d-4023-4383-9ffc-b6ec1eff284d",
+     "senderId": "7484fccf-2cb1-450c-9993-610a8930073e",
+     "senderName": "shell",
+     "targetId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+     "content": [
+      {
+       "type": "text",
+       "text": "[shell → lead] 路由基底已改完，闸门全绿，未 commit。\n\n■ 改动（只动我自己的文件；transport.ts 是你的，我只 import）\n- `/Users/lzx/Documents/GitHub/dsh-task-gantt/src/client/index.ts`\n  - `:26` 新增 `import { resolveHostRoute } from './transport.ts'`\n  - `:139-146` `registerTab()` 里改传第三个 prop，就是你给的签名（没改名、没另创一套）：\n    ```ts\n    component: ({ scope, visible }) =>\n      createElement(BoardView, {\n        sessionId: scope.sessionId,\n        visible,\n        routeBase: (path: string) => resolveHostRoute(path, service),\n      }),\n    ```\n    其中 `service` 是 `readTabService()` 探测到的那个已挂载 better-sidebar 实例（两条注册路径——立即挂载与 `ctx.inject` 晚到——都带同一个实例进来），所以 `sidebar.hostRouteUrl()` 那一级优先能生效。\n- 其余三个文件（panel-style.ts / i18n.ts / env.d.ts）本轮未再改动。\n\n■ 与 ui 的手印（已完成双向确认，我落了代码后 ui 也回信确认）\n- ui 侧 `BoardViewProps.routeBase?: RouteBase`（`RouteBase = (path: string) => string`，从 `src/client/api.ts` 导出），并且把它放进 **ref**（`routeBaseRef.current = routeBase`）、**不进** useEffect 依赖数组 —— 所以我每次 render 传新箭头函数不会重启轮询。\n- ui 侧 `api.ts:routeUrl()` 的 origin 解析已删除：有 `routeBase` 就用它，没有则 `resolveHostRoute(path)` 兜底。\n\n■ 跑过的命令 + 关键输出（全部真实执行，退出码逐个单独取）\n1) `pnpm run typecheck` → **TYPECHECK_EXIT=0**，`error TS` 计数 0（verify 已修完 tests/**，现在全仓是干净的，不再是只 src 干净）\n2) `pnpm run build` → **BUILD_EXIT=0**，`[dsh-task-gantt] built lib/index.js + lib/client.js`\n   - lib/client.js 首行：`window.__ModuleLoader__.load({ id: \"dsh-task-gantt\", factory: (require) => { var module = { exports: {} }; var exports = module.exports;`\n   - 末两行：`return module.exports; } });` / `//# sourceMappingURL=client.js.map`\n3) `pnpm run test` → **TEST_EXIT=0**，`Test Files 11 passed (11)` / `Tests 288 passed | 1 skipped (289)`\n4) 我的 3 个 harness（/tmp，未入仓）→ panel-style **17/17**、index **54/54**、artifact **16/16**（artifact 组跑的是**真实产物** lib/client.js，模拟宿主 queue→materialize→apply→claimStyles→removeOwnedStyles）\n5) 产物级旁证：`grep -c streamBaseUrl lib/client.js` = 1（transport.ts 已进 bundle）；`grep -o 'origin[^,;)]*' lib/client.js` 无输出（bundle 里**已无 origin 解析**）\n\n■ 我针对你指出的缺陷新写的断言（走我的注入链路，不是直接测 transport.ts）\n- 服务有 `hostRouteUrl` → 用它（前缀保留）\n- 无 `hostRouteUrl` + `__DSH_TRANSPORT__.streamBaseUrl='https://host.example/dataops/proxy/3080/'` → 解析出 `.../dataops/proxy/3080/dsh-task-gantt/api/timeline`，且 pathname 逐字等于 `/dataops/proxy/3080/dsh-task-gantt/api/timeline`\n- 无 transport + `document.baseURI='dsh-app://app/index.html'` → `dsh-app://app/dsh-task-gantt/api/timeline`（桌面壳）\n- 三者都没有 → 文档相对 `dsh-task-gantt/api/timeline`（前导斜杠已去）\n- `hostRouteUrl` 抛异常 → 优雅退化到 transport 基底，不冒泡\n- 另外我独立复核了你的出处：app.asar offset 15096864 逐字命中 `new URL(REMOTE_STREAM_MUX_PATH.slice(1), globals.__DSH_TRANSPORT__?.streamBaseUrl ?? document.baseURI)`，与指南 §6 一致。\n\n■ 未验证/待你\n- 真机挂载冒烟仍未做（你的 scratch profile 那步）：我没有证据表明 + 菜单里真出现该 tab；我这边只到「产物级宿主模拟全链路绿」。\n- 建议真机冒烟时顺带确认反代子路径那一档：面板能取到 `/dsh-task-gantt/api/timeline` 而 404 消失（这一档我只有单测级证据，没有真反代环境）。\n- 按你要求**未 git commit**（工作区保持 modified/untracked 状态）。"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "type": "team/message/delivered",
+   "seq": 1037,
+   "time": 1791649983981,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "messageId": "team-message-980fcb5d-4023-4383-9ffc-b6ec1eff284d",
+    "targetId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99"
+   }
+  },
+  {
+   "type": "team/message/queued",
+   "seq": 1062,
+   "time": 1791649997002,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "message": {
+     "id": "team-message-f3291a4b-85c7-4d82-9a86-41fefbd97eb6",
+     "senderId": "c79a18f7-d3c4-41c7-a689-9ba3b0ca483f",
+     "senderName": "ui",
+     "targetId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+     "content": [
+      {
+       "type": "text",
+       "text": "[task-4] status=完成\n\n## 改了哪些文件（绝对路径）\n1. `/Users/lzx/Documents/GitHub/dsh-task-gantt/src/client/ui/timeline-layout.ts`（新建，主测试面）\n2. `/Users/lzx/Documents/GitHub/dsh-task-gantt/src/client/ui/BoardView.tsx`（重写：取数/轮询/now 心跳/空错误加载态/详情面板/source 三态）\n3. `/Users/lzx/Documents/GitHub/dsh-task-gantt/src/client/ui/GanttChart.tsx`（新建：泳道头+时间轴+bar+任务卡+缩放/滚动+无障碍）\n4. `/Users/lzx/Documents/GitHub/dsh-task-gantt/src/client/ui/styles.ts`（新建：`.dtg-*` CSS 字符串，令牌-only，注入 id=`dsh-task-gantt-ui-style`）\n5. `/Users/lzx/Documents/GitHub/dsh-task-gantt/src/client/ui/labels.ts`（新建：面板 UI 专用 zh/en 词典，只 import shell 的 `locale`；不改 i18n.ts）\n6. `/Users/lzx/Documents/GitHub/dsh-task-gantt/src/client/ui/status.ts`（新建：状态/角色/迁移词 + 非颜色冗余 glyph）\n7. `/Users/lzx/Documents/GitHub/dsh-task-gantt/src/client/api.ts`（重写：**Lead 指出的路由缺陷已修**，见下）\n未动 `src/shared/contract.ts`、`src/client/index.ts`、`src/client/i18n.ts`、`src/host/**`、`tests/**`。\n\n## 路由缺陷修复（按你的 evidence，已落地）\n`routeUrl(method, options?)`：`path = `${ROUTE_PREFIX}/${method}`` → 有 `options.routeBase` 用它 → 否则 `resolveHostRoute(path)`（import 你写的 `src/client/transport.ts`，不再用 origin）。`postJson`/`fetchTimeline` 第二参改成 `{ signal?, routeBase? }`，`ApiHttpError` 保留。文件头注释改成引用 asar `stream-client.js` 的 `streamBaseUrl ?? document.baseURI` + 指南 §6，并写明 origin 解析为何错。\n与 shell 的接口：`BoardViewProps` 增加**可选** `routeBase?: RouteBase`（`(path)=>string`，从 api.ts 导出）；我放在 ref 里、**不进 effect 依赖**（shell 传新箭头函数也不会重启轮询）。已 send_message 通知 shell 可以落 index.ts；他们落之前 `createElement(BoardView,{sessionId,visible})` 也照样过 typecheck（prop 可选）。\n\n## timeline-layout.ts 精确输入输出契约（verify 用；文件头注释是同一份，verify 的 tests/layout.spec.ts 39 个用例已全绿）\n```ts\nlayoutTimeline(data: TimelineResponse,\n  viewport: { width: number; height?: number; laneHeight: number; headerHeight: number },\n  options: { now: number; msPerPx?: number; scrollLeft?: number; scrollTop?: number;\n             tickCount?: number; cull?: boolean; tzOffsetMinutes?: number }): TimelineLayout\n```\n另有纯函数 `computeWindow(data,now)`、`buildTicks({window,msPerPx,viewportWidth,scrollLeft,tickCount,tzOffsetMinutes})`、`pickTickStep`、`clampMsPerPx`、`fitMsPerPx`、`formatClock`、`formatDateTime`、`formatTickLabel`、`clamp`；返回 `TimelineLayout { window{start,end,durationMs,live}, msPerPx, scrollLeft/Top, viewportWidth/Height, dataWidth, contentWidth(=dataWidth), contentHeight, lanes[], spans[], tasks[], ticks[], now, nowX, nowViewX, nowVisible, tzOffsetMinutes, truncatedTicks, unplacedTaskIds[] }`。\n不变式：① 窗口 = 全部 datum 的并集（`range` ∪ 所有 span start/end ∪ 所有 history.time），`end = max(range.end ?? max(now,…), 最大值, start+1)`，`live = range.end===null`，`durationMs>=1`；② 三个坐标空间 TIME/CONTENT/VIEW，`viewX = x - scrollLeft`；③ `visible = viewX + w >= 0 && viewX <= viewportWidth`，`cull:true` 丢 `!visible` 的 rect（lane 永远返回）；④ open span（`end===null`）→ `end=min(max(now,start),window.end)`,`open:true`；⑤ 卡片：有 history → `anchor:'history'`,`at=history[0].time`,`w=clamp((last-first)/msPerPx,148,260)`；无 history → `anchor:'live'`,`at=window.end`,`w=148`,`x=max(0,dataWidth-148)`（右贴 now），`durationMs=0`；⑥ tick：`targetStep=msPerPx*width/tickCount`→ ladder 最小 ≥ 者，`align=step>=DAY?tzOffset:0`，`labelKind=step<DAY?'time':'date'`，`MAX_TICKS=400` 截断置 `truncatedTicks`；⑦ 全部数值入参消毒、空/畸形 payload 不抛。常量：`MIN_MS_PER_PX=50/MAX=600000/DEFAULT=1000`、`DEFAULT_LANE_HEIGHT=56`、`DEFAULT_HEADER_HEIGHT=28`、`LANE_HEAD_WIDTH=132`、`LANE_PAD_Y=3`、`TURN_BAND_HEIGHT=10`、`STEP_BAR_HEIGHT=8`、`TASK_CARD_TOP=17`、`TASK_CARD_HEIGHT=36`、`TASK_MIN_WIDTH=148`、`TASK_MAX_WIDTH=260`、`MIN_SPAN_PX=2`。\n\n## 跑过的命令 + 关键输出（都在 /Users/lzx/Documents/GitHub/dsh-task-gantt 下跑）\n- `pnpm run typecheck` → **0 error**（整仓，包含 tests/**）\n- `pnpm run test` → **11 files / 288 passed | 1 skipped**（其中 verify 的 `tests/layout.spec.ts` 39 passed、`tests/theme.spec.ts` 37 passed、`tests/client-tab.spec.ts` 13 passed/1 skipped、`tests/bundle.spec.ts` 13 passed）\n- `pnpm run build` → 成功，产出 `lib/index.js`(114.8kb map) + `lib/client.js`；首行 `window.__ModuleLoader__.load({ id: \"dsh-task-gantt\", factory: (require) => {…`，末尾 `return module.exports; } });`\n- `node /tmp/dtg-layout-check.mjs`（我自己的 8 组断言：空 payload / 窗口解析 / 缩放 / span 几何+open 延长+cull+viewX / 卡片 history-vs-live+宽度上下限+unplaced / tick 对齐步长上限 / now 标记 / lane.visible）→ `ALL LAYOUT CHECKS PASSED`\n- 主题自审（照 better-sidebar `tests/theme.spec.ts:101-160` 的原版匹配器）扫 `src/client/**` 11 个文件 → `THEME CLEAN`：0 处 `#hex`/`rgb(`/`hsl(`，每条 `color:` 都解析到 `--dsw-*`/`--ds-*`/currentColor\n- `node_modules/.bin/tsc -p /tmp/tsconfig.ui-only.json --noEmit`（只扫 src/**，等价于项目 tsconfig）→ exit 0\n\n## 交付物对照\n- 左固定泳道头（132px：名字+状态点+role+状态词+任务数），右可横向滚动时间轴；表头 HH:mm / MM-DD 自适应；`now` 竖线 + 跟随 1s 心跳；Ctrl/⌘+滚轮以指针为锚点缩放，−/⤢适应窗口/+ 按钮，原生水平滚动（Shift+滚轮）。\n- turn 带（`--dsw-alias-bg-layer-3`, 10px）两趟渲染保证**恒在 step 条之下**；step 条实色；`end===null` 的 open span 画到 now 并带斜纹+脉动（`prefers-reduced-motion` 与 `visible=false` 时停动画）。\n- 任务卡：subject 一行 + description 一行截断（36px=18+14+padding，与 `--dsw-font-xxs-strong-12`/`--dsw-font-xxxs-11` 实测行高对齐）；有 history 按 created→最后迁移的时长画条（宽度夹在 148–260px），**无 history 的卡右贴 now、虚线边框 + 「实时」角标 + aria 明说 live**，不伪装成历史区间；hover 用原生 `title`（含完整 subject+description），点击/Enter/Space 开底部详情面板（完整 subject/description/owner/lane/status+revision/ready/blockedBy/writeScopes/writeScopeWarnings/逐条历史+tz 本地时间），Esc 关闭。\n- 无障碍：chart `role=\"group\"`+aria-label（含 lanes/tasks/时间范围），泳道头部 `role=\"list\"/\"listitem\"`+aria-label，任务卡 `<button>`+`aria-pressed`+完整 aria-label（状态是词不是色），状态另配 glyph（▶⏸…✕○✓），滚动容器 `tabIndex=0`+aria-label。\n- 性能：`cull:true` 只把可视窗口内的 rect 放进 DOM，滚动用 rAF 节流（每帧最多一次 setState），`layoutTimeline` 无副作用。\n\n## 未验证假设 / 阻塞（重要）\n1. **没有真机/浏览器验证**：插件还没挂进 profile（你的挂载冒烟），且仓库里没有 react 运行时与 jsdom（`node_modules` 只有 @types/react），所以我**从未用真实渲染器渲染过组件**。目前的证据是：typecheck + build + 纯函数（我的脚本 + verify 39 例）+ verify stub 层面的元素树测试。滚动/粘性表头/缩放手感/窄栏换行这些只能等挂载后目视。\n2. `visible` 的语义（面板折叠或非激活 tab 时为 false）来自 shell 的引用，我按其实现\"暂停轮询/心跳\"，未实测。\n3. auto（fit）模式在 live 下**每秒按增长后的窗口重算缩放**：长会话每帧位移亚像素、可接受；一分钟级短会话约每秒 ~1.7% 缩放漂移，若你不喜欢我可以改成\"首次测量后冻结，仅点 ⤢ 时重算\"（一行改动）。\n4. `.dtg-task-live` 宽度固定 148px 且右贴 now；`dataWidth < 148` 的极端缩放下卡片会盖住时间轴左段（仍在画布内，不产生幻影滚动）。\n5. `sidebar.hostRouteUrl` 在本机 web profile 上是否真的存在未实测——降级链已覆盖（transport → baseURI → 文档相对）。\n6. verify 的 react stub 里 `useEffect` 不执行、`useState` 只有初值，所以组件层面 `GanttChart` 的 viewport 恒为 0、`cull:true` 会剪掉所有 bar（我已把这点和 `layoutTimeline` 才是测试面写进给 verify 的消息）。"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "type": "team/message/delivered",
+   "seq": 1064,
+   "time": 1791649997018,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "messageId": "team-message-f3291a4b-85c7-4d82-9a86-41fefbd97eb6",
+    "targetId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99"
+   }
+  },
+  {
+   "type": "team/message/queued",
+   "seq": 1308,
+   "time": 1791650476542,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "message": {
+     "id": "team-message-ba198f52-4dae-4437-adf0-be1b4b0538de",
+     "senderId": "f828dda6-e91d-4dcc-bbf0-9a9d73d9555e",
+     "senderName": "verify",
+     "targetId": "87589993-ee13-46d7-a8a4-53972f697519",
+     "content": [
+      {
+       "type": "text",
+       "text": "[verify→host-data] 两件事：你的 typecheck 提醒已处理（我的两处 `unknown[]` + helper `time?` 都改了，现在 `pnpm run typecheck` exit 0）；另报一个**已实测确认的低危潜在缺陷**（F2），以及对你 `src/host/index.ts` 改动的验证结果。\n\n## F2（你的文件 `src/host/fold.ts`）：`memberIdByName` 在 catalog-先-于-member 的顺序下漏索引\n复现（我实测，非推断）：\n```ts\nfoldTeamEvents([\n  subagentCatalogEvent({ seq: 1, time: T, childId: 'm-1', childCreatedAt: T }),\n  teamMemberEvent({ seq: 2, time: T + 5, id: 'm-1', name: 'ui', phase: 'active' }),\n], 'session-lead')\n// → memberIdByName = []            ← 空\n// → memberById.get('m-1') = { name: 'ui', phase: 'active', … }  ← 正确\n```\n根因：`subagent/catalog` 分支先建了 placeholder record 并 push 进 `members`；随后 `team/member` 分支因为 `record !== undefined` 跳过了 `if (record === undefined) { … if (!team.memberIdByName.has(member.name)) team.memberIdByName.set(member.name, member.id) }` —— 这是唯一写 `memberIdByName` 的地方。\n\n影响面（我已核对调用链）：`src/host/timeline.ts` 的 `laneIdFor()` 用 `memberIdByName.get(ownerName)` 把 board 的 owner 映射到泳道。当 `agentTeams` 不可用（board-less 降级路径）且该成员是 catalog 先到时，owner 有名有姓的任务会落到 `unassigned` 泳道，而不是本人泳道。**当前不可见**：我在真实 lead 日志里逐个核对了 6 个成员，`team/member`(provisioning) 全部**先于** `subagent/catalog`（6/6），而且 live 投影会独立往 `memberIdByName` 里补一遍，所以只有「无投影 + 反序日志」这一组合才会显形。\n\n建议修法：把 `memberIdByName` 的写入移出 `record === undefined` 分支（只要 name/id 已知且未映射就补）。修好后去掉我加的那条 skip 即可：\n`tests/host-fold.spec.ts` → `it.skip('indexes a member name when subagent/catalog precedes team/member')`（我已把复现与影响面写进注释，去掉 `.skip` 就会红→绿）。\n\n## 你改 `src/host/index.ts` 的时序，我这边已覆盖\n你把宿主半从「一次性探测 webServer」改成「`ctx.inject(['webServer'], scoped => scoped.effect(register))` 延迟注册」后，我原来的用例（假设 apply 时注册成功）确实红了——我把它**重写成覆盖新时序的三条路径**，现在 8/8 绿（`tests/host-mount.spec.ts`）：webServer 已在→同步注册且 handler 真能答 POST `/ping`；未在→`inject` 被调用且延迟回调触发后才注册；无动态 inject→仅告警不抛；register 抛异常不被吞。文件头注释里「live composition 实测 webServer 尚未挂载」这一条我按你的结论采信，未独立复测真机。\n\n## 我确认过的真实日志形状（供你对照，全部一手）\n- `data.task` 恰 7 key：`blockedBy, description, id, revision, status, subject, writeScopes`（无 `ownerName`/`ownerId`/`ready`）→ 你的 `ownerId` 是防御性读法，我加了用例固定「真实形状下 `snapshot.ownerId === undefined`」与「日志真带 ownerId 时读得到」。\n- `team/member` 的 `id` 就是子会话 id（6/6 与 `~/.dsh/sessions/…/<id>/` 目录名对上）。\n- 你 fold 的 `completed`/`reopen` 迁移我按你构造事件的写法补了纯函数 + 回放两层用例；真实日志里仍**只有** pending→in_progress 样本（已写进 ❓）。\n- 我另加了端到端集成用例跑在**真实日志 fixture**上：`tests/host-integration.spec.ts`（13/13 绿）—— 真实 lead 日志 234 条事件（session header + 全部 turn/step + 全部 team/* + 全部 team_task_* 调用，长文本截 90 字符，keys/seq/time/status/revision/顺序原样）驱动 `buildTimeline`，断言了 CAS 归因（rev2 的 claimed 归到真正执行 claim 的 teammate 会话）、level-2 tool-call 补日期、board 缺失时从日志重建、deleted 不出现、ghost owner → `unassigned`、partial/live 降级。你如果重构 fold，这套会立刻响。"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "type": "team/message/delivered",
+   "seq": 1314,
+   "time": 1791650498476,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "messageId": "team-message-ba198f52-4dae-4437-adf0-be1b4b0538de",
+    "targetId": "87589993-ee13-46d7-a8a4-53972f697519"
+   }
+  },
+  {
+   "type": "team/message/queued",
+   "seq": 1388,
+   "time": 1791650578952,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "message": {
+     "id": "team-message-d59b938f-e03a-40d6-b3fb-7adde3bc8b17",
+     "senderId": "66b9735d-8df4-44df-9d74-b4083057e02f",
+     "senderName": "packaging",
+     "targetId": "f828dda6-e91d-4dcc-bbf0-9a9d73d9555e",
+     "content": [
+      {
+       "type": "text",
+       "text": "[packaging → verify] 收到，F1 确认成立，处置如下。\n\n**F1 = 发布前置条件，不是缺陷，我来兜。** 我核过 `lib/` 的差异性质：HEAD 里的 `lib/` 是 Lead 最初的脚手架构建（`lib/index.js` 4526 B，里面还是 `notes: [\"timeline derivation not implemented yet\"]`、`lanes: []` 的占位实现），工作区里是当前源码的真产物（40504 B；client 7219 B → 71996 B）。所以 `git diff --exit-code -- lib` 现在必红是**预期的**——它在恰当地告诉我们\"提交的产物 ≠ 当前源码\"。\n\n**我可以背书的一条关键结论：产物是新的、且构建是幂等的（重建 0 变化）。** 证据：`lib/*` mtime 00:40:47，全 `src/**` 最后写入 00:37:03（src/host/index.ts）→ 产物严格晚于所有源码；我在 00:41 之后又跑了一次 `pnpm run build`，mtime 与内容都没再变，`git diff --stat -- lib` 仍是同一组 4 files / 2871 insertions / 197 deletions → 源码没漂、重建不产生新差异。之后 `verify:build` / `verify:meta` 仍 OK。\n**所以 `git add lib` 之后这条就绿，不需要再改任何东西。** 具体命令我已写进 docs/INSTALL.md 新增的 §9「Publishing preconditions (bundle channel)」：\n```\npnpm run build && pnpm run verify:build && pnpm run verify:meta\ngit add lib && git status --short lib     # add 后应为空\ngit diff --exit-code -- lib               # 提交前必红，提交后绿\n```\n**但 commit 我不执行**——Lead 明确要求\"先不要 git commit，Lead 统一提交并做真机挂载\"，且提交是你我都不是 owner。我已把这条 F1 + 上述命令原文发给 Lead，请 Lead 在 push 前 `git add lib`。\n\n**你的两条提醒我都复核了，并且独立挖到了宿主侧的原始实现，确认你的结论正确（还多找到两个静默失败点，已固化进 docs/INSTALL.md §8）：**\n1. `clientExportOf()` 逐字确认（app.asar 内 `@deepseek-ai/dsh-client-modules/lib/index.js`）：`exports[\"./client\"]` 接受 **string 或 `{default: string}`**，否则 `throw new Error(\"client-modules: <pkg> exports[\\\"./client\\\"] must be a string or an object with a string default\")`；另外若声明了 `dsh.client` 却没有 `./client` 会 throw `declares dsh.client but exports no \"./client\" bundle`。我这边的形态 `{\"default\":\"./lib/client.js\"}` 正是宿主支持的那种 —— **不需要为兼容改形态**。\n2. `dsh.client.platform` **不是 'web' 会被静默跳过**，你说得对，原始代码是 `if (decl === void 0 || decl.platform !== \"web\") { this.pkgMeta.set(sourceKey, null); return null; }` —— **连日志都没有**。我是 `\"web\"`。\n3. 我额外找到的第三道门：`register()` 里 `if (registration.chunk !== void 0 && !CLIENT_CHUNK.test(registration.chunk)) throw …`，`CLIENT_CHUNK = /^client\\.[A-Za-z0-9][A-Za-z0-9._-]*\\.js$/`（注释原文 *\"Published package-local client chunk names accepted by the on-demand route\"*）。我们不传 `chunk`，实际服务的文件是 `lib/client.js`，不触发；但日后若要拆 chunk，文件名必须严格是 `client.<hash>.js` 这种。\n4. 顺带一个对缓存有影响的实现细节，写进 §8 了：路由是 `/plugins/<id>/client.js&rev=…`，`rev = artifactRevision()` 是 **mtime + ctime + size 的哈希，不含内容**。所以重建会失效浏览器缓存，但\"改了内容却保住这三者\"不会——真机挂载后如果改了源码看不到变化，硬刷新之外还要确认产物 mtime 变了。\n5. 我逐一核过 `files` 里每个非 glob 项在磁盘上都存在（lib/、cordis.patch.yml、icon.svg、README.md、README.zh.md、docs/INSTALL.md、LICENSE、package.json）→ 你的 manifest 用例不会因为\"列了不存在的文件\"而红。\n\n**你写进 CI 的顺序我也认**：`verify:meta` 作为独立步骤放在 build 之后（它必须读当前产物 + 解析 `exports`，放在 build 前会测到过期产物）。我这边 `pnpm run check` 的顺序是 typecheck → test → build → verify:build → verify:meta → `git diff --exit-code -- lib`，与你 CI 的次序一致。\n\n刚跑过你两个 spec：`npx vitest run tests/manifest.spec.ts tests/bundle.spec.ts tests/ci.spec.ts` → **3 files / 39 passed**（manifest 17、bundle 13、ci 9）。我没有改任何 `files`/`exports`/`dsh` 字段——如果你看到我这轮之后动过 package.json，那只可能是 `scripts.verify:meta` / `scripts.check` 两处（不含 `files`/`exports`/`dsh`），且改完我已重跑你的 spec 保持全绿。"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "type": "team/message/delivered",
+   "seq": 1391,
+   "time": 1791650595347,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "messageId": "team-message-d59b938f-e03a-40d6-b3fb-7adde3bc8b17",
+    "targetId": "f828dda6-e91d-4dcc-bbf0-9a9d73d9555e"
+   }
+  },
+  {
+   "type": "team/message/queued",
+   "seq": 1478,
+   "time": 1791650773518,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "message": {
+     "id": "team-message-0bb4e754-27d4-4148-a289-daef48e3ac9c",
+     "senderId": "87589993-ee13-46d7-a8a4-53972f697519",
+     "senderName": "host-data",
+     "targetId": "f828dda6-e91d-4dcc-bbf0-9a9d73d9555e",
+     "content": [
+      {
+       "type": "text",
+       "text": "[host-data → verify] F2 已修 + 你的 skip 已去，全绿。谢谢——这个报告质量很高，根因和影响面都指得准。\n\n## F2 修复（`src/host/fold.ts`，`team/member` 分支）\n按你建议的修法：把 `memberIdByName` 的写入**移出** `record === undefined` 块，改成「name 已知且未映射就补」。`first-name-wins` 语义保留；顺带发现重命名场景下旧名新名都留作别名、都能解析到同一 id —— 比「只留首个」更不容易把任务丢进 `unassigned`，我在断言里固定了这个行为。\n\n用**你的复现原样**验证（`subagent/catalog` seq1 → `team/member` seq2）：\n```\n修前 memberIdByName = []            修后 memberIdByName = [[\"ui\",\"m-1\"]]\nmemberById.get('m-1') = {name:'ui', phase:'active', childCreatedAt:T}   ← 修前后都对\n```\n另测：member-first 正常序不回退；catalog-only（永无 member 行）产出 lane 行但不进 name 索引（名字确实未知，不猜）。\n\n## 你的 skip 去掉了：`tests/host-fold.spec.ts` L612 `it.skip` → `it`（**只改这一个 token**）\n你在消息里书面授权了这一步，我执行前 `list_agents` 确认你 `inactive`（无并发写风险），**没有动你的任何断言**，只把你那段注释里的「skipped rather than asserted / Fix: …」改写成「FIXED by host-data (fold.ts): … Un-skipped at host-data's request」。如果你不想要别人碰这个文件，直接 `git checkout` 回你满意措辞即可，行为和覆盖不变。\n\n实测：\n```\nnpx vitest run tests/host-fold.spec.ts -t \"subagent/catalog precedes\"\n ✓ tests/host-fold.spec.ts  Tests 1 passed | 58 skipped\n```\n另外我在 `src/host/dev-verify.mts` 加了 6 条同源断言（catalog-first / member-first / catalog-only），双保险。\n\n## 修后质量门（全绿，我实测）\n```\npnpm run typecheck   ✅ exit 0        （你的两处已修，谢谢）\npnpm run test        ✅ 14 files / 333 passed | 1 skipped | 0 failed（剩下的 skip 在 tests/client-tab.spec.ts，shell 侧）\npnpm run build       ✅ lib/index.js + lib/client.js\nnode --experimental-strip-types src/host/dev-verify.mts  ✅ ALL CHECKS PASSED（27 条断言）\n```\n\n## 你报告里的另外两点，我的确认/更正\n1. **`src/host/index.ts` 的 `ctx.inject(['webServer'], …)` 时序改动不是我做的** —— 我 task-2 交付时它还是「一次性 `ctx.get('webServer')` 探测」版本，是**别人**（我判断是 Lead 或 packaging）在我之后改的。它落在我的写入范围，所以我把它复核了一遍：四条路径都成立，`inject` 导出仍为 `[]`（避免无 web server 的 profile 上插件行永久 pending），**接受**。但你消息里那句「live composition 实测 webServer 尚未挂载」我**没有独立复测**，已在 FINDINGS §13 标成 ❓ 归给改动者——**你若要在 CI 里断言这个时序，只按 `tests/host-mount.spec.ts` 的四条路径断言就好，别把它当成我背书过的真机结论。** 这条已写进 `docs/FINDINGS-host.md` §13。\n2. **`data.task` 恰 7 key** —— 与我实测一致（§4.4）。`ownerId` 确实是防御性读法：真实事件里 `ownerId` 只在 `team_task_update claim` **之后**的快照里出现（`task-board.js` L107-175 的 `case 'claim'` 才写 owner），`rev1 pending` 的快照没有。你「真实形状下 `snapshot.ownerId === undefined`」+「日志真带 ownerId 时读得到」两条用例，正好把这个双态固定住了，很好。\n\n## 回给你的两条（对你写用例可能有用）\n- **`subagent/catalog` 的 `label` 是任务描述、不是成员名**，所以 catalog-only 成员的 lane `name` 只能退化成子会话 id。你若要断言 catalog-only 的 lane，别期望它有可读名字。\n- **`hasHistory` 我取的是「日志读到 且 折出 ≥1 个 span」**（契约 \"live/**empty**\" 一侧）。你的集成用例如果喂的是「日志可读但零活动」的 fixture，lane 会是 `hasHistory: false` —— 这是有意的，不是 bug；要不要更细的三态我需要 Lead 加契约字段，已挂在他的决策清单上。"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "type": "team/message/delivered",
+   "seq": 1479,
+   "time": 1791650773569,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "messageId": "team-message-0bb4e754-27d4-4148-a289-daef48e3ac9c",
+    "targetId": "f828dda6-e91d-4dcc-bbf0-9a9d73d9555e"
+   }
+  },
+  {
+   "type": "team/message/queued",
+   "seq": 1482,
+   "time": 1791650782418,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "message": {
+     "id": "team-message-8fd8b945-171c-4779-a6b4-112970b8147c",
+     "senderId": "87589993-ee13-46d7-a8a4-53972f697519",
+     "senderName": "host-data",
+     "targetId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+     "content": [
+      {
+       "type": "text",
+       "text": "[host-data → lead] task-2 完成后的**一次缺陷修复**（改了已交付的文件，按规矩同步你，不用回）。\n\n**触发**：verify 实测报了一个我的真缺陷（F2，低危）。\n\n**改了什么**：`/Users/lzx/Documents/GitHub/dsh-task-gantt/src/host/fold.ts` 一处逻辑 + `/Users/lzx/Documents/GitHub/dsh-task-gantt/src/host/dev-verify.mts` 加 6 条回归断言 + `docs/FINDINGS-host.md` 追加 §12/§13。另外按 verify 的**书面授权**，在 `tests/host-fold.spec.ts` 只把 `it.skip` 改成 `it` **一个 token**（其断言未动，执行前确认 verify 处 inactive 无并发）。\n\n**F2 是什么**：`subagent/catalog` 若先于 `team/member` 到达，`memberIdByName` 会永久漏掉该成员的 name→id 映射（写入语句被关在了 `record === undefined` 分支里）。后果：**只有「live 投影不可用 + 日志反序」这一组合**下，该成员的任务会被画到 `unassigned` 泳道。真实日志不可见（本机 6/6 成员都是 member 先行，且投影会独立补一遍）。已按 verify 的建议把写入移出该分支。\n\n**修后全绿（我实测，逐字）**：\n```\npnpm run typecheck   ✅ exit 0\npnpm run test        ✅ 14 files / 333 passed | 1 skipped | 0 failed\npnpm run build       ✅ lib/index.js + lib/client.js\nnode --experimental-strip-types src/host/dev-verify.mts   ✅ ALL CHECKS PASSED（27 条断言）\n```\n（唯一剩下的 skip 在 `tests/client-tab.spec.ts`，shell 侧。）\n\n**两件需要你知道的事**：\n\n1. **`src/host/index.ts` 现在的 `ctx.inject(['webServer'], …)` 延迟注册不是我写的** —— 我 task-2 交付时它是「一次性 `ctx.get('webServer')` 探测」版本。它在我的写入范围内，所以我复核后**接受**（四条路径成立，`inject` 仍为 `[]` 以免无 web server 的 profile 插件行永久 pending）。但**「live composition 里 apply 时 webServer 尚未挂载」这条结论我没有独立复测**，已在 FINDINGS §13 标 ❓ 归给改动者。如果这个时序结论要进最终交付说明，建议由改动者背书或你统一跑一次真机确认。\n\n2. **仍挂在你决策清单上的三条**（都没动冻结契约）：`hasHistory` 是否要区分「读到日志但为空」；`team/message/queued|delivered` 是否值得进契约；brief §3.3/§3.4 两条 ❓ 已推翻、建议更新 `docs/TEAM-BRIEF.md`（差异表在 FINDINGS §8）。\n\n核心交付结论不变：**时间锚点落在 brief §3.4 第 1 级**（Lead 日志的 `team/task` 事件；三级全部实现），真实日志上 **6/6 任务归属正确**。"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "type": "team/message/delivered",
+   "seq": 1484,
+   "time": 1791650784372,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "messageId": "team-message-8fd8b945-171c-4779-a6b4-112970b8147c",
+    "targetId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99"
+   }
+  },
+  {
+   "type": "team/message/queued",
+   "seq": 1600,
+   "time": 1791651078856,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "message": {
+     "id": "team-message-de25da6f-4d37-4d98-a9a2-e1ab9b784728",
+     "senderId": "87589993-ee13-46d7-a8a4-53972f697519",
+     "senderName": "host-data",
+     "targetId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+     "content": [
+      {
+       "type": "text",
+       "text": "[host-data → lead] 一条**需要你知道的副作用**（我把 F1 的暂存动作做了，但没 commit，决定权仍在你）。\n\n为验证构建幂等（§7 质量门的一环），我执行了：\n```\npnpm run build && git add -A -- lib && pnpm run build\ngit diff --exit-code -- lib      → exit 0（工作区与索引一致，无未暂存残留）\ngit status --porcelain -- lib    → \"M  lib/*\"（第一列 M = 已暂存，第二列空 = 工作区干净）\n```\n**后果**：`lib/` 现在是**已暂存**状态 —— F1「`git add lib`」的内容已就位，但**仍未 commit**，`git commit` 仍归你。\n\n- 若你想自己掌控暂存时机：`git restore --staged lib` 即可回退，文件内容不受影响。\n- 若你打算直接 commit：可以跳过 F1 的 `git add`，直接进 commit 步骤。\n- ⚠️ 只要之后**任何人再改 `src/**` 并 build**，`lib/` 会重新变脏，F1 需要重做。建议 commit 前按 §7 顺序跑一遍：`typecheck → test → build → git diff --exit-code -- lib`。\n\n## 我这边 task-2 的最终状态（无待办）\n```\npnpm run typecheck   ✅ exit 0\npnpm run test        ✅ 14 files / 333 passed | 1 skipped | 0 failed（skip 在 tests/client-tab.spec.ts，shell 侧）\npnpm run build       ✅ 且幂等（上面的 diff exit 0）\ndev-verify.mts       ✅ ALL CHECKS PASSED（27 条断言，含 F2 回归 6 条）\n```\nF2 已修（verify 已独立复核通过，逐行核对到 `src/host/fold.ts:624`）。产物里确认在 `lib/index.js:276`。\n\n**两点流程说明**：\n1. 我按 verify 的书面授权把 `tests/host-fold.spec.ts` 的 `it.skip` 改成 `it`（只改这一个 token，断言未动）。verify 已复核接受，但提醒了 `tests/**` 是其独占范围 —— **这个提醒成立，我已承诺后续只发消息、不代改**，把这条记在心上。\n2. `src/host/index.ts` 的 `ctx.inject(['webServer'],…)` 时序改动**不是我做的**（我交付时是一次性 `ctx.get` 探测版）；我复核后接受，但「apply 时 webServer 尚未挂载」这条真机结论**我未独立复测**。verify 已在 `docs/VALIDATION.md` §5 F5 / §6 ❓11 更正为「未验证」—— 归属清楚，不需要你再裁决。\n\n仍挂在你决策清单上的三条不变（都没动冻结契约）：`hasHistory` 三态、`team/message/*` 是否进契约、brief §3.3/§3.4 两条 ❓ 的更新。"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "type": "team/message/delivered",
+   "seq": 1602,
+   "time": 1791651078896,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "messageId": "team-message-de25da6f-4d37-4d98-a9a2-e1ab9b784728",
+    "targetId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99"
+   }
+  },
+  {
+   "type": "team/message/queued",
+   "seq": 1698,
+   "time": 1791651541356,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "message": {
+     "id": "team-message-cfc93a07-874f-45f9-abd3-1e7325d077e0",
+     "senderId": "f828dda6-e91d-4dcc-bbf0-9a9d73d9555e",
+     "senderName": "verify",
+     "targetId": "66b9735d-8df4-44df-9d74-b4083057e02f",
+     "content": [
+      {
+       "type": "text",
+       "text": "[verify→packaging] 你 `git add -A -- lib` 这个动作让我抓到一条**我自己的门禁缺陷（F7）**，同时它暴露出你两处文件里的同类写法需要改。先说结论：**`git diff --exit-code -- lib`（不带 revision）在 `lib/` 已暂存时会假绿**。\n\n## 实测（我刚跑的原文）\n```\n$ git status --porcelain -- lib\nM  lib/client.js          ← 第一列 M = 已暂存；第二列空 = 工作区干净\nM  lib/client.js.map\nM  lib/index.js\nM  lib/index.js.map\n$ git diff --exit-code -- lib        → exit=0   ← 假绿：HEAD 里还是 4526 B 的脚手架 lib\n$ git diff --exit-code HEAD -- lib   → exit=1   ← 正确暴露\n```\n反证：给 `lib/client.js` 追加一个字节后两种写法都 `exit=1`（差别只在「已暂存但未提交」这一状态）；随后我已 `git restore lib/client.js` 复原文件内容。\n\n原因：不带 revision 的 `git diff` 比的是**工作区 vs 索引**。`git add` 之后两者相同 → 绿；而 HEAD（release 真正发布的、CI checkout 的那份）仍是旧的。这与 CI 的判断会**相反**（CI 里 checkout 后 index == HEAD，同样命令是准的），于是出现「本地说绿、CI 说红」，最容易被误判成 CI 环境问题。\n\n## 我已修（我的文件）\n- `.github/workflows/ci.yml`：verify 步骤 → `pnpm run verify:build && git diff --exit-code HEAD -- lib`（注释里写了这条实测证据）。\n- `tests/ci.spec.ts`：新增「freshness diff 必须带 `HEAD`」「workflow 中不得出现不带 revision 的 `git diff --exit-code -- lib`」两条断言，9 → 10 条；全量现为 `334 passed | 1 skipped`、typecheck exit 0。\n- `tests/e2e/README.md` 前置命令、`docs/VALIDATION.md` §1/§7 同步。\n\n## 请你改（不在我写入范围，两处）\n1. `/Users/lzx/Documents/GitHub/dsh-task-gantt/package.json:65` `check` 脚本末尾：`git diff --exit-code -- lib` → `git diff --exit-code HEAD -- lib`。否则 `pnpm run check` 会在你 stage 过 `lib/` 之后误报绿——而这条脚本正是 §9 让 Lead 在 commit 前跑的。\n2. `/Users/lzx/Documents/GitHub/dsh-task-gantt/docs/INSTALL.md:332` 与 `:335` 同一命令（§9 发布前置）→ 同步成带 `HEAD` 的写法。\n\n## 另外两条确认\n- 你 `git add -A -- lib` 的副作用我已记入 `docs/VALIDATION.md` §5 F1：`lib/` 现在已暂存（`M ` 第一列），F1 的 `git add` 步骤已就位、只差 Lead `git commit`；若 Lead 想自己掌控时机可 `git restore --staged lib`（不动内容）。同时提醒：**再有人改 `src/**` 并 build，`lib/` 会重新变脏**，commit 前要走一遍 §7 的五步。\n- 你说的 F2 修复进产物，我也在 `lib/index.js:276` 看到了那行；构建幂等我也用 md5 独立复现过（重建前后字节一致、`git diff --stat -- lib` 同一组统计）。"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "type": "team/message/delivered",
+   "seq": 1702,
+   "time": 1791651567919,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "messageId": "team-message-cfc93a07-874f-45f9-abd3-1e7325d077e0",
+    "targetId": "66b9735d-8df4-44df-9d74-b4083057e02f"
+   }
+  },
+  {
+   "type": "team/message/queued",
+   "seq": 1705,
+   "time": 1791651577605,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "message": {
+     "id": "team-message-43e876a6-59c9-464d-83d5-5e2b2e3e807e",
+     "senderId": "f828dda6-e91d-4dcc-bbf0-9a9d73d9555e",
+     "senderName": "verify",
+     "targetId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+     "content": [
+      {
+       "type": "text",
+       "text": "[task-5 补充 / 需要你在 commit 前用改后的命令] 我发现并修好了自己门禁里的一条**假绿缺陷（F7）**，它会直接影响你 commit 前的最后一步，请用新命令。\n\n## F7：`git diff --exit-code -- lib` 在 `lib/` 已暂存时假绿（必须带 `HEAD`）\nhost-data 为验证构建幂等执行了 `git add -A -- lib`，于是暴露出来：\n```\n$ git status --porcelain -- lib   → M  lib/client.js …（第一列 M = 已暂存，第二列空 = 工作区干净）\n$ git diff --exit-code -- lib       → exit=0   ← 假绿：HEAD 里仍是 4526 B 的脚手架 lib\n$ git diff --exit-code HEAD -- lib  → exit=1   ← 正确\n```\n原因：不带 revision 的 `git diff` 比的是**工作区 vs 索引**；`git add` 后两者一致就绿，而 HEAD（release 真正发布的那份）还是旧的。CI 里 checkout 后 index == HEAD，所以 CI 判断是对的 → 会出现「本地说绿、CI 说红」的误判。\n反证：故意改一个字节后两种写法都红（差别只在「已暂存未提交」），我已复原文件。\n\n**已修（我的文件）**：`.github/workflows/ci.yml` → `pnpm run verify:build && git diff --exit-code HEAD -- lib`；`tests/ci.spec.ts` 加两条断言锁定「必须带 HEAD」（9→10 条）；`tests/e2e/README.md`、`docs/VALIDATION.md` §1/§7 同步。\n**仍需 packaging 改**（我不碰他们的文件）：`package.json:65` 的 `check` 脚本、`docs/INSTALL.md:332/:335` 的同一命令——已发消息给他们。\n\n**你 commit 前请用这五步**（最后一步带 HEAD）：\n```\ncd /Users/lzx/Documents/GitHub/dsh-task-gantt\npnpm run typecheck && pnpm run test && pnpm run build && pnpm run verify:build && git diff --exit-code HEAD -- lib\n```\n现在最后一步仍是 `exit=1`：HEAD 的 `lib/index.js` 只有 4526 B（脚手架占位），工作区是 40504 B 的真产物 —— 也就是说 **F1 仍待你 `git commit`**（`git add` 已由 host-data 代做，`lib/` 当前是已暂存状态；若你想自己掌控时机，`git restore --staged lib` 可只回退暂存、不动内容）。**再提醒**：只要之后有人改 `src/**` 并 build，`lib/` 会重新变脏，commit 前必须重跑上面五步。\n\n## 当前质量门（00:56 复跑）\n```\npnpm run typecheck → exit=0\npnpm run test      → 14 files passed | 334 passed | 1 skipped (335)\npnpm run verify:build → OK\ngit diff --exit-code HEAD -- lib → exit=1（仅剩 F1）\n```\npackage.json / INSTALL.md 里那两处 index-based diff 改完后，`pnpm run check` 才会和 CI 判断一致。\n\n## 我还没做的（等你）\n真机挂载冒烟（`tests/e2e/README.md` A1–A11，`mount-smoke.sh check|mount|verify|unmount`）只有你能跑；跑完把原始输出给我，我补 `docs/VALIDATION.md` 的「真机冒烟」小节。另外 §6 ❓11 里那条「真机里 `apply()` 时 webServer 是否真的尚未挂载」目前谁都没复测过，真机冒烟顺带确认一下即可闭环。"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "type": "team/message/delivered",
+   "seq": 1707,
+   "time": 1791651577722,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "messageId": "team-message-43e876a6-59c9-464d-83d5-5e2b2e3e807e",
+    "targetId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99"
+   }
+  },
+  {
+   "type": "team/message/queued",
+   "seq": 1788,
+   "time": 1791651916056,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "message": {
+     "id": "team-message-a6a797e5-655a-4657-9da3-9bf1e87dbb50",
+     "senderId": "66b9735d-8df4-44df-9d74-b4083057e02f",
+     "senderName": "packaging",
+     "targetId": "f828dda6-e91d-4dcc-bbf0-9a9d73d9555e",
+     "content": [
+      {
+       "type": "text",
+       "text": "[packaging → verify] **F7 你抓得对，我两处都改了，并且做了正反双向实证。** 另外发现你那条 `tests/ci.spec.ts` 断言只覆盖 `.github/workflows/ci.yml`，**没覆盖 `package.json`——也就是说我这条脚本本来是没有门禁守的**，所以我把守卫下沉到了我自己的 verifier 里。\n\n**1. 复现你的实测（我这边同结果）**\n```\n$ git status --porcelain -- lib\nM  lib/client.js …（第一列 M = 已暂存，第二列空 = 工作区干净）\n$ git diff --exit-code -- lib        ; echo $?   → 0   ← 假绿\n$ git diff --exit-code HEAD -- lib   ; echo $?   → 1   ← 正确\n```\n`git diff --stat HEAD -- lib` = `4 files changed, 2871 insertions(+), 197 deletions(-)`（HEAD 里正是 4526 B 的脚手架）。\n\n**2. 改了什么**\n- `package.json:65` → `… && git diff --exit-code HEAD -- lib`（`prettier` 无，改动 1 行）。\n- `docs/INSTALL.md` §9 → 命令改带 `HEAD`，并把你的实测原文（含 `M ` 两列的含义、两种写法 0/1 的对照、\"本地说绿、CI 说红\"的误判风险）写成 ⚠️ 段落，明确写 \"**The `HEAD` is load-bearing**\"。§6 第 20 行也补了记录。\n- 已验证：`grep -rn \"git diff --exit-code -- lib\" package.json` → 无；`docs/INSTALL.md` 里剩下两处裸写法**是故意的反例文本**（在 ⚠️ 段里演示错误写法），不是可执行命令，别把它们当残留。\n\n**3. 我加的门禁（因为你那条 ci.spec 只管 YAML）**\n`scripts/verify-build.mjs` 末尾新增第 4 组检查，读 `package.json#scripts.check` 并断言：必须含 `git diff --exit-code HEAD -- lib`；且不得出现 index-based 的 `git diff --exit-code -- lib`。双向实证：\n- 当前（HEAD 形态）→ `[verify-build] OK`\n- 故意回退成裸写法 → `FAIL (2)`：两条断言各报一条（\"must verify lib/ freshness with `git diff --exit-code HEAD -- lib`\" / \"contains an index-based … green whenever lib/ is merely staged\"），`exit=1`\n- 还原 → `OK`，`git diff --cached --stat -- package.json` 仍是预期的那一处改动，无残留\n放在 verifier 而不是只放测试，是因为 CI 里 `verify:build` 一定跑，而 verifier 也能被单独调用。\n\n**4. 关于 staging：`lib/` 现在确实是已暂存状态，是我做的。** 当时我在给 F1 做\"add 之后是否为空\"的实证，用了真 `git add` 而不是 `--dry-run` —— 这既是 F7 的触发条件，也是它到今天才暴露的原因，抱歉。现状：`lib/` 4 个文件已暂存；我另外把自己范围内的 `package.json`、`scripts/build.mjs`、`scripts/verify-build.mjs`、`scripts/verify-meta.mjs`、`docs/INSTALL.md`、`icon.svg`、`locale/*.json` 也一并暂存了，方便 Lead 一次 commit。若 Lead 想自己掌控时机，`git restore --staged lib` 即可（不动内容）——我已把这个选项同步给 Lead。\n\n**5. 另一件事请你定：要不要把这条断言扩到 package.json？** 现在 `tests/ci.spec.ts` 的 `never uses the INDEX-based diff` 只读 workflow YAML，所以 `package.json#scripts.check` 如果哪天真被改回裸写法，**你的 spec 不会红，只有我的 `verify:build` 会红**。两种做法：(a) 维持现状（我在 verifier 里守，CI 一定跑到）；(b) 你把断言扩成同时读 `package.json`，两边都守。我倾向 (b) 更稳（测试是显式回归网），但 `tests/**` 是你的范围，我不动；你说要扩我就配合（我不会改 ci.spec.ts）。\n\n**6. 你顺手确认下你那条 spec 在我改 package.json 后仍绿？** 我刚跑 `npx vitest run tests/ci.spec.ts` → `10 passed`；全量 `pnpm run check` → `Test Files 14 passed`、`Tests 334 passed | 1 skipped`，随后 `verify:build` OK、`verify:meta` OK，**最后一步按预期 `exit=1`**（HEAD 仍是旧 lib），即\"你 F1 说的红\"与\"我这条修复生效\"同时成立。"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "type": "team/message/delivered",
+   "seq": 1790,
+   "time": 1791651947447,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "messageId": "team-message-a6a797e5-655a-4657-9da3-9bf1e87dbb50",
+    "targetId": "f828dda6-e91d-4dcc-bbf0-9a9d73d9555e"
+   }
+  },
+  {
+   "type": "team/message/queued",
+   "seq": 1878,
+   "time": 1791652296259,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "message": {
+     "id": "team-message-33492e0c-de43-4ddb-b3c3-f9bce2eb7024",
+     "senderId": "f828dda6-e91d-4dcc-bbf0-9a9d73d9555e",
+     "senderName": "verify",
+     "targetId": "66b9735d-8df4-44df-9d74-b4083057e02f",
+     "content": [
+      {
+       "type": "text",
+       "text": "[verify→packaging] 你的问题我定了：**采纳 (b)，两边都守**，已经实现完并跑绿。另外我独立正反验证了你新加的那组 verifier 检查——用的是隔离副本，**没有碰仓库里任何文件**。\n\n## 1. 决策 (b) 已实现（`tests/ci.spec.ts`，9 → 14 条）\n新增 `describe('package.json#scripts.check (the local equivalent of CI)')`，把 gate 命令的判定抽成 `analyzeFreshnessScript(script)`，断言四件事：\n1. 必须含 `git diff --exit-code HEAD -- lib`；\n2. 不得含 index-based 的 `git diff --exit-code -- lib`（F7 那个假绿）；\n3. freshness diff 必须在 `pnpm run build` **之后**（你我都只守了「带 HEAD」，但「顺序反了」是同一类假绿——顺手也守上）；\n4. `typecheck → test → build → verify:build → verify:meta` 五步齐全且顺序正确。\n并做了**反例标定**（否则这条断言可能是空转）：`pnpm run build && git diff --exit-code -- lib` → 命中 `index-based`；`git diff --exit-code HEAD -- lib && pnpm run build` → 命中 `ordering`；`pnpm run build` → 命中 `missing`；只写 build+HEAD-diff → 命中 4 个 `missing-step`。全部在内存字符串上跑，**不需要改你的 package.json 就能证明守卫有鉴别力**。\n\n## 2. 你新加的 verifier 检查：我读代码 + 隔离跑正反两向\n读了 `scripts/verify-build.mjs:249-263`（断言 `check` 含 HEAD 形态、且不含 index-based，失败文案也确认了）。为了不碰你的文件，我按 `root = dirname(script).replace(/\\/scripts$/, '')` 搭了个隔离副本：\n```\n$ mkdir -p /tmp/vb/scripts && cp scripts/verify-build.mjs /tmp/vb/scripts/\n$ ln -s <repo>/{lib,src,locale,docs,icon.svg,cordis.patch.yml,…} /tmp/vb/   # 只复制 package.json\n正向（当前 package.json 原样）        → [verify-build] OK, exit=0\n反向1（check 改回 index-based）      → FAIL (2), exit=1   ← 两条断言各报一条\n反向2（整段删掉 freshness 步骤）     → FAIL (1), exit=1\n```\n仓库内 `package.json` 全程未被修改（跑完 `grep -c \"git diff --exit-code HEAD -- lib\" package.json` = 1；`/tmp/vb` 已删除）。你的 FAIL(2) 文案与我实测逐字一致，所以这条门确实有鉴别力，不是只对当前状态为真。\n\n## 3. 回答你的第 6 问：我这边也是绿的\n```\npnpm exec vitest run tests/ci.spec.ts tests/manifest.spec.ts tests/bundle.spec.ts → 3 files / 47 passed\npnpm run typecheck → exit=0\npnpm run test      → 14 files | 338 passed | 1 skipped (339)\npnpm run verify:build → OK\ngit diff --exit-code HEAD -- lib → exit=1   ← 与你说的一致：F1 的「红」与你修复的「生效」同时成立\n```\n你的 `package.json` 改动（`check` 带 HEAD）没有破坏我的 manifest 用例（`files`/`exports`/`dsh` 未动），我也不会去碰它。\n\n## 4. 你 staging 那件事不用道歉\n`git add` 而不是 `--dry-run` 恰好把 F7 触发出来了——这条缺陷在此之前对任何人都是隐形的（我的门在本地一直是绿的，只有 stage 过的仓库才会现形）。它现在被三处守住：我的 CI yaml 断言、我的 `package.json#scripts.check` 断言、你的 verifier 第 4 组。**唯一提醒**：`lib/` 目前是已暂存状态，只要之后有人再改 `src/**` 并 `pnpm run build`，`lib/` 会重新变脏从而 F1 复活——commit 前请让 Lead 重跑五步。\n\nVALIDAITON 记录已同步：`docs/VALIDATION.md` §3（ci.spec 14 条、两个门都守）、§5 F7（含你两处修复、你的 verifier 检查、我的隔离正反实证、决策 (b) 的理由）、§1/§7 命令与数字。"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "type": "team/message/delivered",
+   "seq": 1883,
+   "time": 1791652320492,
+   "data": {
+    "version": 2,
+    "teamId": "session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99",
+    "messageId": "team-message-33492e0c-de43-4ddb-b3c3-f9bce2eb7024",
+    "targetId": "66b9735d-8df4-44df-9d74-b4083057e02f"
+   }
+  }
+ ]
+}

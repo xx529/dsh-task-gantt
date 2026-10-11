@@ -11,8 +11,13 @@ import { dirname, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
 import { dictionaries, locale as detectedLocale, messages, t } from '../src/client/i18n.ts'
+import { uiLabel, uiMessages } from '../src/client/ui/labels.ts'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+
+/** The board's own dictionary lives in `src/client/ui/labels.ts`. */
+const boardMessages = uiMessages()
+const boardKeysDeclared = Object.keys(boardMessages).sort()
 
 const zhKeys = Object.keys(dictionaries.zh).sort()
 const enKeys = Object.keys(dictionaries.en).sort()
@@ -63,18 +68,24 @@ describe('dictionaries', () => {
 })
 
 describe('message keys used by the client half', () => {
-  it('every t("…") call site names a declared key', () => {
-    const used = new Set<string>()
+  it('every t("…") and uiLabel("…") call site names a declared key', () => {
+    const tabKeys = new Set<string>()
+    const boardKeys = new Set<string>()
     for (const file of clientSources()) {
       const source = readFileSync(resolve(ROOT, file), 'utf8')
-      for (const match of source.matchAll(/\bt\(\s*['"]([A-Za-z0-9_.-]+)['"]\s*\)/g)) {
-        used.add(match[1] as string)
-      }
+      for (const match of source.matchAll(/\bt\(\s*['"]([A-Za-z0-9_.-]+)['"]\s*\)/g)) tabKeys.add(match[1] as string)
+      // `src/client/ui/labels.ts` is a SECOND dictionary (the board needs more
+      // strings than the tab declares). It was invisible here until a `t('close')`
+      // call was replaced by `uiLabel('close')`: the tab guard cannot see that
+      // accessor, so this scan has to cover both.
+      for (const match of source.matchAll(/\buiLabel\(\s*['"]([A-Za-z0-9_.-]+)['"]/g)) boardKeys.add(match[1] as string)
     }
-    // Guard the scan: the client half must actually call t() somewhere.
-    expect(used.size, 'no t("…") call sites found — the scan is stale').toBeGreaterThan(0)
-    const unknown = [...used].filter((key) => !zhKeys.includes(key))
-    expect(unknown, `these keys are called but not declared: ${unknown.join(', ')}`).toEqual([])
+    expect(tabKeys.size, 'no t("…") call sites found — the scan is stale').toBeGreaterThan(0)
+    expect(boardKeys.size, 'no uiLabel("…") call sites found — the scan is stale').toBeGreaterThan(0)
+    const unknownTab = [...tabKeys].filter((key) => !zhKeys.includes(key))
+    const unknownBoard = [...boardKeys].filter((key) => !boardKeysDeclared.includes(key))
+    expect(unknownTab, `these t() keys are called but not declared in i18n.ts: ${unknownTab.join(', ')}`).toEqual([])
+    expect(unknownBoard, `these uiLabel() keys are called but not declared in labels.ts: ${unknownBoard.join(', ')}`).toEqual([])
   })
 })
 
@@ -130,6 +141,35 @@ describe('plugin display locales (locale/*.json)', () => {
     const zh = localeFile('zh') as { meta: { description: string; title: string } }
     expect(zh.meta.description).not.toBe(en.meta.description)
     expect(zh.meta.title).not.toBe(en.meta.title)
+  })
+})
+
+describe('the board\'s own dictionary (src/client/ui/labels.ts)', () => {
+  it('declares a non-trivial set of keys', () => {
+    expect(boardKeysDeclared.length).toBeGreaterThanOrEqual(20)
+  })
+
+  it('has no empty message', () => {
+    for (const [key, value] of Object.entries(boardMessages)) {
+      expect(typeof value, key).toBe('string')
+      expect(value.length, key).toBeGreaterThan(0)
+    }
+  })
+
+  it('en keeps its `Record<UiMessageKey, string>` annotation (parity is a TSC error, not a hope)', () => {
+    // The zh dictionary is `as const` and `UiMessageKey = keyof typeof zh`, while
+    // `en` is annotated `Record<UiMessageKey, string>`. That annotation is what
+    // makes "a key added to one language only" a COMPILE error. If someone relaxes
+    // it to `Record<string, string>` the parity guarantee silently disappears, so
+    // the mechanism itself is asserted here.
+    const source = readFileSync(resolve(ROOT, 'src/client/ui/labels.ts'), 'utf8')
+    expect(source).toMatch(/const en:\s*Record<UiMessageKey,\s*string>/)
+    expect(source).toMatch(/export type UiMessageKey = keyof typeof zh/)
+  })
+
+  it('uiLabel resolves through the SAME locale detection as the tab', () => {
+    expect(uiLabel('close')).toBe(boardMessages.close)
+    expect(uiLabel('close').length).toBeGreaterThan(0)
   })
 })
 

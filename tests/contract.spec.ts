@@ -77,7 +77,10 @@ describe('the build label identifies which code is live', () => {
     // normal return; a label on only one of them would be missing exactly when a
     // user is looking at a broken board.
     const source = readFileSync(resolve(ROOT, 'src/client/ui/BoardView.tsx'), 'utf8')
-    expect(source).toContain("import { BUILD_LABEL } from '../../shared/contract.ts'")
+    // Assert the IMPORT SHAPE structurally, not verbatim: the import list grows
+    // (`MESSAGE_PREVIEW_MAX`, `MessageSpan`, …) and an exact-substring check made
+    // this guard red on a perfectly good refactor.
+    expect(source).toMatch(/import\s*\{[^}]*\bBUILD_LABEL\b[^}]*\}\s*from\s*'\.\.\/\.\.\/shared\/contract\.ts'/)
     const rendered = [...source.matchAll(/data-build=\{BUILD_LABEL\}/g)].length
     expect(rendered, 'data-build must appear on both return branches and the footer').toBeGreaterThanOrEqual(3)
   })

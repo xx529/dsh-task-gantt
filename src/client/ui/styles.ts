@@ -348,6 +348,54 @@ export const BOARD_CSS = `
 .dtg-head-name { color: var(--dsw-alias-label-primary); }
 .dtg-head-row { border-left: 2px solid transparent; }
 
+/* The marker is a BUTTON now (its body opens in the detail view), so it has to
+   stay visually a dot: strip every button affordance the platform would add. */
+.dtg-msg[type='button'] {
+  padding: 0;
+  border: 0;
+  font: inherit;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+/* Selected state gets a non-colour cue: a second ring, so it reads on any lane
+   colour and under any theme. */
+.dtg-msg-active {
+  box-shadow:
+    0 0 0 1px var(--dsw-alias-bg-layer-1),
+    0 0 0 3px var(--dsw-alias-label-secondary);
+}
+.dtg-msg[type='button']:focus-visible {
+  outline: 2px solid var(--dsw-alias-border-l4);
+  outline-offset: 1px;
+}
+
+/* --- message detail view ------------------------------------------------ */
+
+.dtg-message-details { max-height: 60%; }
+.dtg-message-route {
+  font: var(--dsw-font-xxs-strong-12);
+  word-break: break-all;
+}
+.dtg-details-kind {
+  color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxxs-11);
+}
+/* The FULL body lives here (never in a tooltip): wraps, and scrolls once it
+   outgrows the panel. Real bodies run to several thousand characters. */
+.dtg-message-body {
+  margin: 4px 8px 6px;
+  max-height: 40vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: var(--dsw-font-xxxs-11);
+  color: var(--dsw-alias-label-secondary);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 4px;
+  padding: 6px 8px;
+}
+.dtg-muted { color: var(--dsw-alias-label-tertiary); }
+
 /* --- message markers --------------------------------------------------- */
 
 /* The lane's true message extent: a hairline rhythm strip, never a timeline. */

@@ -39,6 +39,29 @@ return module.exports; } });
 {"main":"./lib/index.js","client":{"default":"./lib/client.js"},"platform":"web","inject":[]}
 ```
 
+## 1.4 先确认"真机跑的是最新代码"（血泪教训，四层都要看）
+
+**源码 → 仓库产物 → 安装副本 → 进程内存**，任何一层旧都会表现为同一个症状。只看源码或只看仓库 `lib/` 都会得出错误结论。按顺序走：
+
+```bash
+# ② 仓库产物 vs ③ 安装副本（关键一层：profile 的 node_modules 是安装时刻的独立拷贝）
+grep -o "PREVIEW_MAX = [0-9]*" \
+  /Users/lzx/Documents/GitHub/dsh-task-gantt/lib/index.js \
+  ~/.dsh/profiles/web/node_modules/dsh-task-gantt/lib/index.js
+# 两边不一致 ⇒ 问题在「安装副本」：重启无用，必须重新安装（当前插件包路径问 host-data-2）
+# 两边一致 ⇒ 继续查 ④
+
+# ④ 安装副本 mtime vs dsh 进程启动时间
+ls -la ~/.dsh/profiles/web/node_modules/dsh-task-gantt/lib/index.js
+ps -eo pid,lstart,command | grep "[d]sh" | head -3
+# 进程早于安装副本 ⇒ 内存陈旧，重启即可
+```
+**本轮真实案例（两层都命中了）**：ui-2 采样到 `preview max=140` →
+① 我先验到仓库 `lib/index.js` 已是 `16384`（01:58）⇒ 结论"重启即可"；
+② host-data-2 再查一层：安装副本 `~/.dsh/profiles/web/.../lib/index.js` 仍是 `140`（01:11）且**19501 加载的正是它** ⇒ **重启会从旧安装副本重新加载，仍是 140**，必须重装。
+**教训**：`lib/` 被提交进版本库，构建后"看起来立刻就绪"，这是误判来源；真正的生效点是**安装副本**。
+
+
 ## 2. 挂载（写 `~/.dsh`，只有 Lead 做）
 
 ```bash

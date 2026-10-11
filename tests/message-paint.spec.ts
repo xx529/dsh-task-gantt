@@ -34,8 +34,8 @@ import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import type { LaneColorTokens, MessageSpan, SpanSpeaker } from '../src/shared/contract.ts'
-import { messageMarkerPaint, resolveMessageDirection } from '../src/client/ui/timeline-layout.ts'
+import { MESSAGE_PREVIEW_MAX, type LaneColorTokens, type MessageSpan, type SpanSpeaker, type TimelineLane, type TimelineResponse } from '../src/shared/contract.ts'
+import { layoutTimeline, messageDetail, messageMarkerPaint, resolveMessageDirection, speakerLaneMapper, type MessageMarkerRect } from '../src/client/ui/timeline-layout.ts'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const TOKEN = /^--(?:dsw|ds)-[a-z0-9-]+$/
@@ -312,6 +312,87 @@ describe('§18.7 (host-data-2): a human prompt is RECEIVED, with a fixed colour'
   })
 })
 
+describe('speakerLaneMapper is the single mapping implementation', () => {
+  // The laneId/sessionId bug of the previous rounds was BORN from two places
+  // mapping ids independently. ui-2 has since extracted one shared mapper used by
+  // the decimator, the marker paint and the detail panel; these assertions pin the
+  // mapping itself so a third implementation cannot quietly diverge — and they
+  // close the gap my own fixture had (I hand-built `laneIdOf`, so the real
+  // derivation step was never exercised).
+  const lane = (id: string, navigation?: TimelineLane['navigation']): TimelineLane =>
+    ({ id, name: id, role: 'teammate', hasHistory: false, spans: [], messages: [], color: { bar: '--dsw-alias-state-idle-primary', on: '--dsw-alias-label-primary-inverted' }, ...(navigation === undefined ? {} : { navigation }), tasks: [] })
+
+  const lanes: TimelineLane[] = [
+    lane('lead', { type: 'session', value: 'session-LEAD' }),
+    lane('member-1', { type: 'session', value: 'session-1' }),
+    lane('member-2', { type: 'address', value: { sessionId: 'session-2' } }),
+    lane('unassigned'),
+  ]
+
+  it('resolves a lane id to itself (hop 1)', () => {
+    const mapper = speakerLaneMapper(lanes)
+    for (const id of ['lead', 'member-1', 'member-2', 'unassigned']) expect(mapper(id), id).toBe(id)
+  })
+
+  it('resolves a session id through the lane navigation (hop 2)', () => {
+    const mapper = speakerLaneMapper(lanes)
+    expect(mapper('session-LEAD')).toBe('lead')
+    expect(mapper('session-1')).toBe('member-1')
+    // The `address` arm carries its session id one level deeper.
+    expect(mapper('session-2')).toBe('member-2')
+  })
+
+  it('returns null for an unknown speaker instead of guessing', () => {
+    const mapper = speakerLaneMapper(lanes)
+    expect(mapper('session-ghost')).toBeNull()
+    expect(mapper('')).toBeNull()
+  })
+
+  it('is the mapping the LAYOUT actually uses (session id → lane id, end to end)', () => {
+    // The layout resolves directions through this mapper; a speaker id that is a
+    // SESSION id must therefore come out as `outgoing` on its own lane. This is
+    // the integration step my earlier fixture skipped by hand-building laneIdOf.
+    const response: TimelineResponse = {
+      apiVersion: 1,
+      sessionId: 'session-a',
+      rootSessionId: 'session-a',
+      generatedAt: 2_000,
+      range: { start: 1_000, end: null },
+      live: true,
+      source: 'log',
+      notes: [],
+      tasks: [],
+      lanes: [
+        {
+          id: 'lead',
+          name: 'Lead',
+          role: 'lead',
+          hasHistory: true,
+          spans: [],
+          color: { bar: '--dsw-alias-state-business-primary', on: '--dsw-alias-label-primary-inverted' },
+          navigation: { type: 'session', value: 'session-a' },
+          tasks: [],
+          messages: [
+            {
+              kind: 'message',
+              time: 1_100,
+              end: null,
+              from: { kind: 'lead', id: 'session-a', name: 'lead' },
+              to: { kind: 'teammate', id: 'session-b', name: 'packaging' },
+              messageId: 'm-1',
+              sessionId: 'session-a',
+            },
+          ],
+        },
+      ],
+    }
+    const layout = layoutTimeline(response, { width: 600, laneHeight: 84, headerHeight: 28 }, { now: 2_000, msPerPx: 10 })
+    // Only reachable if `session-a` was mapped to the lane `lead`: a raw id
+    // comparison would answer `incoming`, which is the live bug of round N-1.
+    expect(layout.messages[0]?.direction).toBe('outgoing')
+  })
+})
+
 describe('the direction cue does not depend on colour', () => {
   it('outgoing and incoming map to different class names and glyphs in the chart', () => {
     const source = readFileSync(resolve(ROOT, 'src/client/ui/GanttChart.tsx'), 'utf8')
@@ -320,5 +401,108 @@ describe('the direction cue does not depend on colour', () => {
     expect(source).toMatch(/aria-label=\{label\}/)
     expect(source).toContain('messageSentTo')
     expect(source).toContain('messageReceivedFrom')
+  })
+})
+describe('the detail view shows the whole body of the marker', () => {
+  const LONG = 'z'.repeat(2_000)
+  const texts = { noBody: '(no body)', truncated: '(tail dropped)', you: 'you', peerFallback: '(unknown recipient)' }
+  const formatTime = (time: number): string => `t${time}`
+
+  /** Two markers on one lane: a 2000-char body and one with no body at all. */
+  function markers(): { long: MessageMarkerRect; empty: MessageMarkerRect } {
+    const response: TimelineResponse = {
+      apiVersion: 1,
+      sessionId: 'session-a',
+      rootSessionId: 'session-a',
+      generatedAt: 2_000,
+      range: { start: 1_000, end: null },
+      live: true,
+      source: 'log',
+      notes: [],
+      tasks: [],
+      lanes: [
+        {
+          id: 'lead',
+          name: 'Lead',
+          role: 'lead',
+          hasHistory: true,
+          spans: [],
+          color: { bar: '--dsw-alias-state-business-primary', on: '--dsw-alias-label-primary-inverted' },
+          navigation: { type: 'session', value: 'session-a' },
+          tasks: [],
+          messages: [
+            {
+              kind: 'message',
+              time: 1_100,
+              end: null,
+              from: { kind: 'lead', id: 'session-a', name: 'lead' },
+              to: { kind: 'teammate', id: 'session-b', name: 'packaging' },
+              preview: LONG,
+              messageId: 'm-long',
+              sessionId: 'session-a',
+            },
+            {
+              kind: 'message',
+              time: 1_200,
+              end: null,
+              from: { kind: 'teammate', id: 'session-b', name: 'packaging' },
+              to: { kind: 'lead', id: 'session-a', name: 'lead' },
+              messageId: 'm-nobody',
+              sessionId: 'session-b',
+            },
+          ],
+        },
+      ],
+    }
+    const layout = layoutTimeline(response, { width: 600, laneHeight: 84, headerHeight: 28 }, { now: 2_000, msPerPx: 10 })
+    const long = layout.messages.find((marker) => marker.preview === LONG)
+    const empty = layout.messages.find((marker) => marker.preview === undefined)
+    expect(long, 'the long-body marker must be drawn').toBeDefined()
+    expect(empty, 'the body-less marker must be drawn').toBeDefined()
+    return { long: long as MessageMarkerRect, empty: empty as MessageMarkerRect }
+  }
+
+  it('copies the marker preview VERBATIM — no re-truncation, no second pass', () => {
+    // The core lock of "click to see what was said": whatever the host delivered
+    // is what the detail shows. A 2000-character body was impossible under the
+    // old 140 cap, so this is red on the old contract.
+    const { long } = markers()
+    const detail = messageDetail(long, texts, formatTime, MESSAGE_PREVIEW_MAX)
+    expect(detail.body).toBe(long.preview)
+    expect(detail.body).toBe(LONG)
+    expect(detail.body.length).toBe(2_000)
+    expect(detail.hasBody).toBe(true)
+    expect(detail.when).toBe(formatTime(long.time))
+    expect(detail.direction).toBe(long.direction)
+  })
+
+  it('says "no body" explicitly instead of rendering an empty block', () => {
+    const { empty } = markers()
+    const detail = messageDetail(empty, texts, formatTime, MESSAGE_PREVIEW_MAX)
+    expect(detail.body).toBe('')
+    expect(detail.hasBody).toBe(false)
+  })
+
+  it('names BOTH parties in the route (never only the counterparty)', () => {
+    const { long } = markers()
+    const detail = messageDetail(long, texts, formatTime, MESSAGE_PREVIEW_MAX)
+    expect(detail.fromName).toBe('lead')
+    expect(detail.toName).toBe('packaging')
+    expect(detail.route).toContain('lead')
+    expect(detail.route).toContain('packaging')
+    // RESOLVED (ui-2, 2026-10-12): the pure function deliberately returns the
+    // canonical `from → to` and carries `direction` separately; the RENDER layer
+    // owns the `←` flip for incoming markers. So the route string must NOT be
+    // asserted to differ by direction — both names being present is the contract.
+    expect(detail.route).toBe(`${detail.fromName} → ${detail.toName}`)
+  })
+
+  it('flags a possibly-clipped body instead of implying it is complete', () => {
+    const { long } = markers()
+    // A body exactly at the ceiling is indistinguishable from a clipped one, so
+    // the flag must be on; the host's `truncated` trail is the authoritative bit.
+    const atLimit = messageDetail({ ...long, preview: 'w'.repeat(MESSAGE_PREVIEW_MAX) }, texts, formatTime, MESSAGE_PREVIEW_MAX)
+    expect(atLimit.maybeTruncated).toBe(true)
+    expect(messageDetail(long, texts, formatTime, MESSAGE_PREVIEW_MAX).maybeTruncated).toBe(false)
   })
 })
