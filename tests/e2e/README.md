@@ -69,6 +69,8 @@ cd ~/.dsh && dsh plugin --profile web add "link:/Users/lzx/Documents/GitHub/dsh-
 | A9 | 降级态不崩 | 在一个**没有** agent team 的会话里打开面板 | 显示空态文案（zh: 当前会话没有 agent team），不是报错、不是白屏 |
 | A10 | 硬刷新后仍正常 | Cmd+Shift+R | 以上 A3/A7/A8 仍成立（没有 HMR 残留导致的重复注册错误） |
 | A11 | 卸载后 tab 消失 | `dsh plugin --profile web remove dsh-task-gantt` 后重启 | `+` 菜单里不再有该 tab，且 stderr 无残留下载错误 |
+| A12 | **冷启动后第一次打开面板的耗时**（对应 `docs/VALIDATION.md` ❓17） | 重启 `dsh web` → 立刻打开面板 → 记 DevTools Network 里 `/api/timeline` 的耗时（重复 3 次取中位） | **若 ~20 ms**：服务路径确实是内存事件，删掉 1.5s 缓存安全；**若 ~1 s**：请求落到了磁盘回读通道（我的冷读实测 median 1010 ms / `zstd -d -c` 变体 986 ms，9 个日志 19 004 事件），需要把缓存或投影加回来 |
+| A13 | roster 顺序变化时 teammate 是否变色（对应 ❓16） | 重启后让 roster 顺序变化（如新起一个 teammate 使其排在某成员之前），对比前后同一 member 的 `lane.color` | 按现行设计**允许变色**（`lead` 恒定 `PALETTE[0]`、teammate 按位置取色）；记录一次实际观察即可，不需要"通过/失败" |
 
 ## 3. 失败时的定位顺序
 

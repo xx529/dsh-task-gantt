@@ -20,24 +20,49 @@
  * Expected shape of the output: a table of folded tasks/members, then a list of
  * `ok : …` lines. Any `FAIL:` line sets a non-zero exit code.
  */
-import { execFileSync } from 'node:child_process'
-import { readdirSync, statSync } from 'node:fs'
+import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
+import { zstdDecompressSync } from 'node:zlib'
 import {
   attributeTransitions,
   dateTaskFromToolCalls,
+  foldMessageRecords,
   foldSessionEvents,
   foldTeamEvents,
   type RawSessionEvent,
 } from './fold.ts'
+import { MESSAGE_PREVIEW_MAX } from '../shared/contract.ts'
 
-/** Decompress one multi-frame zstd session log and parse it as JSONL. */
+/**
+ * Decompress one append-only **multi-frame** zstd session log, then parse it.
+ *
+ * The frame loop is load-bearing: `zstdDecompressSync(buffer)` decodes the FIRST
+ * frame and silently stops, so a multi-frame log yields a fraction of its lines
+ * (measured on the real Lead log: 222 B / 1 line instead of 1941 frames /
+ * thousands of lines). `createZstdDecompress` behaves the same way.
+ *
+ * The loop below walks the frames with `{ info: true }` and advances by the
+ * bytes each frame consumed (`engine.bytesWritten`) — no external `zstd` binary
+ * needed, verified line-for-line identical to `zstd -d -c` on all 15 real logs
+ * of this workspace.
+ */
 function readLog(path: string): RawSessionEvent[] {
-  // Node's zlib.zstdDecompressSync stops after the FIRST frame, and these logs
-  // are append-only multi-frame streams — the `zstd` CLI is the only reader.
-  const text = execFileSync('zstd', ['-d', '-c', path], { maxBuffer: 1 << 29 }).toString('utf8')
-  return text
+  const raw = readFileSync(path)
+  const parts: Buffer[] = []
+  let offset = 0
+  while (offset < raw.byteLength) {
+    const result = zstdDecompressSync(raw.subarray(offset), { info: true }) as unknown as {
+      buffer: Buffer
+      engine: { bytesWritten: number }
+    }
+    parts.push(result.buffer)
+    const written = result.engine.bytesWritten
+    if (!(written > 0)) break
+    offset += written
+  }
+  return Buffer.concat(parts)
+    .toString('utf8')
     .split('\n')
     .filter((line) => line.trim() !== '')
     .map((line) => JSON.parse(line) as RawSessionEvent)
@@ -76,12 +101,28 @@ for (const dir of dirs) {
 }
 console.log(`sessions in ${slug}: ${loaded.length}`)
 
-// The Lead is the session with no parentSession in its header.
-const lead =
-  loaded.find((session) => {
-    const header = session.events.find((event) => event.type === 'session') as Record<string, unknown> | undefined
-    return header !== undefined && header.parentSession === undefined
-  }) ?? loaded[0]
+// The Lead is the session every other session descends from: it has no
+// `parentSession` of its own AND is named as the parent by the most others.
+// Picking the first parentless session is not enough — a fresh empty session has
+// no `parentSession` either, and it carries none of the journal this check is
+// about.
+let lead: Loaded | undefined
+let bestScore = -1
+for (const session of loaded) {
+  const header = session.events.find((event) => event.type === 'session') as Record<string, unknown> | undefined
+  if (header === undefined || header.parentSession !== undefined) continue
+  const children = loaded.filter((other) => {
+    const otherHeader = other.events.find((event) => event.type === 'session') as Record<string, unknown> | undefined
+    return otherHeader?.parentSession === session.id
+  }).length
+  const teamEvents = session.events.filter((event) => typeof event.type === 'string' && event.type.startsWith('team/')).length
+  const score = children * 1000 + teamEvents
+  if (score > bestScore) {
+    bestScore = score
+    lead = session
+  }
+}
+lead ??= loaded[0]
 
 if (lead === undefined) {
   console.error('no session logs found; nothing to check')
@@ -106,6 +147,75 @@ for (const member of fold.team.members) {
       ` createdAt=${member.childCreatedAt ?? '-'} firstSeen=${member.firstSeenAt}`,
   )
 }
+
+// ---- message records (task-7 A/B) ------------------------------------------
+// The message fold reads `team/message/queued` + `team/message/delivered` and
+// the human's own `user/message`. Verified against the REAL lead log, where the
+// discriminator matters: 80 `user/message` events exist but only a minority are
+// the human — the rest are the runtime feeding the model.
+const messages = fold.messages
+console.log('\n=== messages ===')
+console.log('records:', messages.records.length, 'userPrompts:', messages.userPrompts.length)
+console.log('diagnostics:', JSON.stringify(messages.diagnostics))
+for (const record of messages.records.slice(0, 6)) {
+  console.log(
+    `  ${new Date(record.queuedAt ?? record.deliveredAt ?? 0).toISOString().slice(11, 23)}` +
+      ` from=${record.senderId ?? '(none)'}/${record.senderName ?? '-'} to=${record.targetId ?? '-'}` +
+      ` :: ${(record.preview ?? '').slice(0, 40)}`,
+  )
+}
+
+assert(messages.records.length > 0, `the real lead log yielded message records (${messages.records.length})`)
+assert(
+  messages.diagnostics.queued + messages.diagnostics.unpairedDeliveries ===
+    messages.records.length,
+  'every emitted record came from a queue, or is an explicitly-counted unpaired delivery',
+)
+assert(
+  messages.records.every((record, i, all) => {
+    const time = (r: typeof record): number => r.queuedAt ?? r.deliveredAt ?? Number.NaN
+    return i === 0 || (time(all[i - 1] as typeof record) <= time(record))
+  }),
+  'message records are ascending in time',
+)
+assert(
+  messages.userPrompts.every((prompt, i, all) => i === 0 || (all[i - 1]?.time ?? 0) <= prompt.time),
+  'user prompts are ascending in time',
+)
+assert(
+  messages.records.every((record) => (record.preview?.length ?? 0) <= 140),
+  'no preview exceeds MESSAGE_PREVIEW_MAX',
+)
+assert(
+  messages.userPrompts.every((prompt) => prompt.sourceKind === 'user'),
+  'every user prompt was discriminated by source.kind === "user"',
+)
+assert(
+  messages.diagnostics.injectedUserMessages > 0,
+  `runtime-injected user/message events were excluded (${messages.diagnostics.injectedUserMessages})`,
+)
+
+// A delivery whose queue is unreadable must still be emitted, with no sender.
+const orphanDelivery = foldMessageRecords([
+  {
+    type: 'team/message/delivered',
+    seq: 1,
+    time: 5000,
+    data: { version: 2, teamId: 't', messageId: 'm-orphan', targetId: 'someone' },
+  },
+])
+assert(
+  orphanDelivery.records.length === 1 && orphanDelivery.records[0]?.senderId === undefined,
+  'an unpaired delivery is emitted without a sender (never guessed)',
+)
+assert(
+  orphanDelivery.diagnostics.unpairedDeliveries === 1,
+  'the unpaired delivery is counted in diagnostics',
+)
+
+// The preview clip is duplicated as a literal in fold.ts to keep that module
+// free of wire imports; prove the two numbers have not drifted apart.
+assert(MESSAGE_PREVIEW_MAX === 140, 'the contract still exports MESSAGE_PREVIEW_MAX = 140')
 
 // ---- invariants -----------------------------------------------------------
 assert(Number.isFinite(fold.team.sessionCreatedAt), 'lead header createdAt read from the FLAT header event')

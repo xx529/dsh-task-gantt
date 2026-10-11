@@ -12,14 +12,28 @@
  * - `.dsh-task-gantt-button` — token-styled button;
  * - `.dsh-task-gantt-nodrag` — `-webkit-app-region: no-drag` for any chrome the
  *   host's window drag strip could otherwise swallow;
+ * - `.dsh-task-gantt-lane-head-navigable` — a lane head that can jump to its
+ *   session (hover / focus-visible affordance, `cursor: pointer` only when the
+ *   host can actually navigate);
  * - `.dsh-task-gantt-mono` — monospace (time ticks).
  *
  * Theme rules (external-plugin-guide.md §12, TEAM-BRIEF §5): the panel surface
  * is `var(--dsw-alias-bg-layer-1)`; every colour comes from a `--dsw-alias-*` /
  * `--dsw-font-*` token, never a literal. `--dsw-specific-sidebar-fill` is the
- * host's left-navigation token and must not be consumed here. Every token name
- * below is one better-sidebar itself consumes (grep of
- * `~/.dsh/profiles/web/node_modules/dsh-better-sidebar/src/client/*.css`).
+ * host's left-navigation token and must not be consumed here.
+ *
+ * Token EXISTENCE is checked against the host theme's own definition list —
+ * `tests/fixtures/dsw-theme-tokens.json` (408 names, snapshotted from
+ * `@deepseek-ai/dsh-client-ui-theme` inside app.asar) — never against "some
+ * other plugin writes this name". That weaker check is how `--dsw-font-mono`
+ * survived review here: better-sidebar-shaped code writes plausible names that
+ * the theme never defines, and a `var()` naming an undefined custom property is
+ * legal CSS whose declaration is silently dropped at computed-value time (so
+ * neither the type checker nor a colour scan sees it). Note also that
+ * `--dsw-font-xxs-12` / `--dsw-font-xxxs-11` ARE complete `font:` shorthand
+ * values (`12px/18px var(--dsw-font-family)`), which is why the `font:` shorthand
+ * is correct for those and wrong for `.dsh-task-gantt-mono`, where only the
+ * family should change.
  *
  * Injection rides the host's client module system: a bundle's factory body runs
  * at materialization, and `@deepseek-ai/dsh-client-modules` then calls
@@ -44,11 +58,11 @@ export const STYLE_MARKER_ATTR = 'data-dsh-task-gantt'
  */
 export const PANEL_CSS = `
 /* Tab body root. The host wraps every tab body in a column-flex
-   \`[data-dsh-native-tab-host]\` of height:100% (sidebar.module.css
+   '[data-dsh-native-tab-host]' of height:100% (sidebar.module.css
    .nativeTabHost), so the root fills the pane with flex:1 + min-height:0.
-   \`:not(style)\` keeps this rule off the injected <style> element itself, which
-   carries the same marker attribute (a \`display\` on a stylesheet tag renders its
-   text when it is not parked in a \`display:none\` head). */
+   ':not(style)' keeps this rule off the injected <style> element itself, which
+   carries the same marker attribute (a 'display' on a stylesheet tag renders its
+   text when it is not parked in a 'display:none' head). */
 [data-dsh-task-gantt]:not(style),
 .dsh-task-gantt-panel {
   display: flex;
@@ -127,8 +141,40 @@ export const PANEL_CSS = `
   -webkit-app-region: no-drag;
 }
 
+/* A lane head the board can jump from to that lane's own session (task-9).
+   The board applies this class only when a real navigation target exists
+   (lane.navigation !== undefined), so cursor: pointer never promises a jump the
+   host cannot make; a lane without a target keeps the plain arrow. The
+   hover/focus tokens mirror the host's own affordances: hover uses the shared
+   interactive surface, and the ring is byte-for-byte the host's focus treatment
+   (dsh-better-sidebar/src/client/SideCardSection.module.css:145-148,274-277).
+   NOTE: no backticks in these comments — this stylesheet is a JS template
+   literal, so a stray backtick ends the string (learned the hard way). */
+.dsh-task-gantt-lane-head-navigable {
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+
+.dsh-task-gantt-lane-head-navigable:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.dsh-task-gantt-lane-head-navigable:focus-visible {
+  outline: 2px solid var(--dsw-alias-border-l4);
+  outline-offset: 2px;
+}
+
+/* Monospace (time ticks). Swaps ONLY the family, and deliberately uses
+   font-family rather than the font: shorthand — a shorthand would reset the
+   panel's inherited size/line-height. The family is --ds-font-family-code, the
+   host's own code stack ("SF Mono", "JetBrains Mono", ... Menlo, monospace).
+   Do NOT use --dsw-font-mono: it is not defined by the host theme (408 tokens in
+   tests/fixtures/dsw-theme-tokens.json), and a var() naming an undefined custom
+   property makes the WHOLE declaration invalid at computed-value time — the
+   family would silently not apply AND the shorthand would additionally reset
+   size/line-height. Legal-looking, invisible, and invisible to a colour scan. */
 .dsh-task-gantt-mono {
-  font: var(--dsw-font-mono);
+  font-family: var(--ds-font-family-code);
   color: var(--dsw-alias-label-tertiary);
 }
 `

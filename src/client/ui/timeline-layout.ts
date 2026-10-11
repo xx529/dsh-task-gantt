@@ -152,6 +152,8 @@
  */
 import type {
   ActivitySpan,
+  MessageSpan,
+  SpanSpeaker,
   TimelineLane,
   TimelineResponse,
   TimelineTask,
@@ -203,6 +205,33 @@ export const DEFAULT_MS_PER_PX = 1_000
 /** Hard cap on generated ticks, so a pathological zoom can never hang a render. */
 export const MAX_TICKS = 400
 
+/* ------------------------------------------------------- message markers */
+
+/**
+ * Minimum horizontal gap between two rendered message markers (content px).
+ *
+ * The panel's timeline area is only ~190-350px wide and one session can carry
+ * 50+ messages, so markers must not be allowed to pile into an unreadable
+ * smear. {@link decimateMarkers} walks the markers in time order and drops any
+ * that would land closer than this to the previously kept one.
+ */
+export const MESSAGE_MARKER_MIN_GAP_PX = 9
+/** Rendered width of one message marker (px) — a dot that fits its glyph. */
+export const MESSAGE_MARKER_WIDTH = 11
+/** Rendered height of one message marker (px). */
+export const MESSAGE_MARKER_HEIGHT = 11
+/** Top of the marker row inside a lane, below the step bar. */
+export const MESSAGE_MARKER_TOP = LANE_PAD_Y + STEP_BAR_HEIGHT + 1
+/**
+ * Soft ceiling on rendered markers per lane. Decimation keeps the earliest
+ * message of every pixel bucket, so a lane also stops at this count.
+ */
+export const MESSAGE_MARKER_MAX = 40
+/** A lane's message-density band is never thinner than this (px). */
+export const MESSAGE_BAND_MIN_PX = 2
+/** Height of that band (px); it sits on the lane's own bottom edge. */
+export const MESSAGE_BAND_HEIGHT = 2
+
 /** The tick ladder, ascending. Chosen so every step <= 1h is epoch-aligned. */
 export const TICK_STEPS: readonly number[] = [
   SECOND_MS,
@@ -242,7 +271,14 @@ export interface TimelineViewport {
 }
 
 export interface LayoutOptions {
-  /** Current epoch ms — the right edge of a live window and the end of open spans. */
+  /**
+   * Current epoch ms.
+   *
+   * LIVE windows (`data.live === true`) use it as the right edge and as the end
+   * of open spans. FROZEN windows (`data.live === false`) IGNORE it for geometry
+   * — only time-zone detection and label formatting read it — so an idle team's
+   * chart stops moving instead of creeping forward on every render.
+   */
   now: number
   /** Milliseconds per CSS px; larger = zoomed out. Clamped, default 1000. */
   msPerPx?: number
@@ -256,6 +292,20 @@ export interface LayoutOptions {
   cull?: boolean
   /** Local UTC offset in minutes (east positive); default from `now`. */
   tzOffsetMinutes?: number
+  /**
+   * How `lane.messages` are rendered relative to `lane.spans`:
+   * - `'both'`    – keep the activity bars AND draw the message markers;
+   * - `'markers'` – draw only the message markers (an explicit legend switch).
+   * Default `'both'`.
+   */
+  messageMode?: MessageMode
+  /**
+   * Minimum content-px gap between rendered markers, default
+   * {@link MESSAGE_MARKER_MIN_GAP_PX}. Lower it to trade overlap for detail.
+   */
+  messageMinGapPx?: number
+  /** Ceiling on rendered markers per lane, default {@link MESSAGE_MARKER_MAX}. */
+  messageMaxPerLane?: number
 }
 
 export interface TimelineWindow {
@@ -264,9 +314,20 @@ export interface TimelineWindow {
   /** Epoch ms at content x = dataWidth. */
   end: number
   durationMs: number
-  /** `data.range.end === null`: the right edge tracks `now`. */
+  /** `data.live`: the right edge tracks `now`. `false` = frozen at {@link end}. */
   live: boolean
 }
+
+/** Whether a lane's messages also carry the activity bars, or are markers only. */
+export type MessageMode = 'markers' | 'both'
+
+/**
+ * Where a window's right edge came from, so the UI can label it honestly:
+ * - `'now'`   – a live window pinned to `now`;
+ * - `'range'` – the server's frozen `range.end`;
+ * - `'datum'` – the last datum (a frozen payload with no usable `range.end`).
+ */
+export type WindowEndSource = 'now' | 'range' | 'datum'
 
 export interface LaneBox {
   laneId: string
@@ -359,17 +420,100 @@ export interface TimelineLayout {
   lanes: LaneBox[]
   spans: SpanRect[]
   tasks: TaskCardRect[]
+  /** Rendered message markers, every one datable to its exact `time`. */
+  messages: MessageMarkerRect[]
+  /** Per-lane message-density bands: the true first→last message extent. */
+  messageBands: MessageBandRect[]
+  /** Message candidates the markers were decimated from (after turn de-duping). */
+  messageCount: number
+  /** How many candidates decimation dropped (never re-dated, only omitted). */
+  droppedMessageCount: number
   ticks: Tick[]
-  /** Epoch ms of the NOW marker. */
+  /**
+   * The right-edge marker: NOW while the window is live, the frozen end time
+   * when it is not, `null` when the window carries no meaningful end (an empty
+   * payload).
+   */
+  endMarker: EndMarker | null
+  /** Epoch ms of the NOW marker (frozen: the window's end time). */
   now: number
   nowX: number
   nowViewX: number
   nowVisible: boolean
   tzOffsetMinutes: number
+  /** Where the right edge came from (`'now'` | `'range'` | `'datum'`). */
+  endSource: WindowEndSource
   /** True when {@link MAX_TICKS} stopped the tick loop before `window.end`. */
   truncatedTicks: boolean
   /** Ids of `data.tasks` that no lane claims (never drawn). */
   unplacedTaskIds: string[]
+}
+
+/**
+ * One rendered message marker.
+ *
+ * `time` is the span's own timestamp, never an aggregate: decimation DROPS
+ * markers (reported in {@link MessageMarkerRect.droppedBefore}) but never moves
+ * one, so a marker's position is always the true moment of that message.
+ */
+export interface MessageMarkerRect {
+  laneId: string
+  laneIndex: number
+  kind: MessageSpan['kind']
+  /** Exact epoch ms of the rendered message. */
+  time: number
+  /** The message's close time when it has one (turns). */
+  end: number | null
+  from: SpanSpeaker
+  to?: SpanSpeaker
+  preview?: string
+  /** Stable key: the journal id when present, else `lane:kind:time:index`. */
+  key: string
+  /** 0-based index of this marker among its lane's messages (time order). */
+  messageIndex: number
+  /** Markers of the same lane dropped just before this one by decimation. */
+  droppedBefore: number
+  x: number
+  y: number
+  w: number
+  h: number
+  viewX: number
+  visible: boolean
+}
+
+/**
+ * A lane's message-density band: the honest first→last extent of its messages.
+ *
+ * This exists so that decimation can thin the MARKERS without hiding the fact
+ * that a lane was chatty for three minutes: the band spans the true range of
+ * every message, so it can never misreport when messages arrived.
+ */
+export interface MessageBandRect {
+  laneId: string
+  laneIndex: number
+  /** Earliest message time on the lane. */
+  firstTime: number
+  /** Latest message time on the lane. */
+  lastTime: number
+  /** How many messages the band covers. */
+  count: number
+  x: number
+  y: number
+  w: number
+  h: number
+  viewX: number
+  visible: boolean
+}
+
+/** The chart's right-edge marker. */
+export interface EndMarker {
+  /** Epoch ms the marker marks. */
+  time: number
+  /** `'now'` while live; `'ended'` for a frozen window. */
+  kind: 'now' | 'ended'
+  x: number
+  viewX: number
+  visible: boolean
 }
 
 /* ---------------------------------------------------------------- helpers */
@@ -435,11 +579,26 @@ export function formatTickLabel(time: number, kind: TickKind, tzOffsetMinutes = 
   return `${pad2(shifted.getUTCMonth() + 1)}-${pad2(shifted.getUTCDate())}`
 }
 
+/**
+ * Is this board still moving?
+ *
+ * The server's `live` is AUTHORITATIVE (requirement: an idle team must freeze
+ * the axis, and the client may not decide that on its own). A payload that
+ * predates the field (the contract gained `live` later) is treated as live, so
+ * the historical behaviour of pinning the right edge to `now` is preserved
+ * rather than silently collapsing the axis onto the last datum.
+ */
+export function isLiveBoard(data: TimelineResponse): boolean {
+  return data?.live !== false
+}
+
 /** See the WINDOW RESOLUTION table in the module doc. */
 export function computeWindow(data: TimelineResponse, now: number): TimelineWindow {
   const fallback = num(now, 0)
   const rangeStart = num(data?.range?.start, fallback)
-  const rangeEnd = typeof data?.range?.end === 'number' ? num(data.range.end, fallback) : null
+  const hasRangeEnd = typeof data?.range?.end === 'number' && Number.isFinite(data.range.end)
+  const rangeEnd = hasRangeEnd ? num(data?.range?.end, fallback) : null
+  const live = isLiveBoard(data)
 
   let rawStart = rangeStart
   let rawEnd = rangeStart
@@ -453,6 +612,13 @@ export function computeWindow(data: TimelineResponse, now: number): TimelineWind
       consider(span.start)
       consider(span.end)
     }
+    for (const message of lane.messages ?? []) {
+      // Hostile/partial payloads reach this function by contract: a null entry
+      // or a non-finite time must be ignored, never thrown on.
+      if (message === null || typeof message !== 'object') continue
+      consider(message.time)
+      consider(message.end)
+    }
     for (const task of lane.tasks ?? []) {
       for (const event of task.history ?? []) consider(event.time)
     }
@@ -462,14 +628,103 @@ export function computeWindow(data: TimelineResponse, now: number): TimelineWind
   }
 
   const start = rawStart
-  const proposed = rangeEnd !== null ? Math.max(rangeEnd, rawEnd) : Math.max(fallback, rawEnd)
-  const end = Math.max(proposed, start + 1)
-  return { start, end, durationMs: end - start, live: data?.range?.end === null }
+  // A live window is pinned to `now` (but never hides data newer than `now`).
+  // A FROZEN window ignores `now` entirely: its right edge is the server's
+  // `range.end` when there is one, and otherwise the last datum — never a
+  // moving clock, so the axis cannot creep while every member is stopped.
+  const endSource: WindowEndSource = live ? 'now' : rangeEnd !== null ? 'range' : 'datum'
+  const right =
+    endSource === 'now' ? Math.max(fallback, rawEnd) : endSource === 'range' ? Math.max(rangeEnd ?? rawEnd, rawEnd) : rawEnd
+  const end = Math.max(right, start + 1)
+  // NOTE: the window keeps exactly its four original fields. `endSource` is a
+  // layout-level field, so the (verified) window shape stays untouched.
+  return { start, end, durationMs: end - start, live }
+}
+
+/**
+ * Thin a lane's message markers down to a readable set — WITHOUT moving any.
+ *
+ * Policy (pure, deterministic, and the reason the chart never lies about time):
+ *
+ *  1. Only `kind: 'turn'` spans are dropped outright when they were already
+ *     drawn as activity bars (`mode: 'both'`): the bar IS the turn, so drawing
+ *     a marker for it too would double-render the same instant. `'message'`
+ *     and `'user-prompt'` are always candidates.
+ *  2. The messages that are still candidates keep their exact `time`. Nothing
+ *     is averaged, snapped or merged: decimation only ever REMOVES a marker.
+ *  3. The lane's pixel span (its `dataWidth`) is cut into
+ *     `ceil(span / gapPx)` buckets, and the EARLIEST surviving message in each
+ *     bucket is kept. Bucketing — rather than a global greedy pass — is what
+ *     stops one dense burst at the start from consuming the whole budget and
+ *     erasing the quiet tail.
+ *  4. A kept marker must additionally sit at least `gapPx` from the previously
+ *     kept one, which is what actually prevents overlap when many messages land
+ *     in the same bucket.
+ *  5. At most `maxPerLane` markers survive.
+ *
+ * Every dropped marker is counted in the next kept marker's
+ * {@link MessageMarkerRect.droppedBefore}, and the lane's true first→last
+ * extent is reported separately as a {@link MessageBandRect} — so "here are 5
+ * of 51 messages" stays visible instead of the chart implying there were five.
+ *
+ * @param list - the lane's messages, in any order (sorted internally by time,
+ *   then by index, so equal timestamps stay stable).
+ * @param input - pixel scale plus the drop rules.
+ * @returns the kept indices, ascending, plus the index of the first candidate.
+ */
+export function decimateMarkers(
+  list: readonly MessageSpan[],
+  input: {
+    /** Epoch ms at content x = 0. */
+    windowStart: number
+    msPerPx: number
+    widthPx: number
+    mode: MessageMode
+    gapPx: number
+    maxPerLane: number
+  },
+): { indices: number[]; droppedTotal: number; candidates: number } {
+  const gapPx = input.gapPx > 0 ? input.gapPx : MESSAGE_MARKER_MIN_GAP_PX
+  const maxPerLane = input.maxPerLane > 0 ? Math.floor(input.maxPerLane) : MESSAGE_MARKER_MAX
+  const msPerPx = input.msPerPx > 0 ? input.msPerPx : DEFAULT_MS_PER_PX
+
+  const candidates: number[] = []
+  for (let index = 0; index < list.length; index += 1) {
+    const span = list[index]
+    if (span === undefined) continue
+    if (input.mode === 'both' && span.kind === 'turn') continue
+    candidates.push(index)
+  }
+  const ordered = [...candidates].sort((a, b) => {
+    const ta = num(list[a]?.time, 0)
+    const tb = num(list[b]?.time, 0)
+    return ta === tb ? a - b : ta - tb
+  })
+
+  const spanPx = Math.max(0, (input.widthPx > 0 ? input.widthPx : 0) || 0)
+  const bucketSizePx = Math.max(gapPx, spanPx > 0 ? spanPx / Math.max(1, Math.ceil(spanPx / gapPx)) : gapPx)
+  const bucketCount = spanPx > 0 ? Math.max(1, Math.ceil(spanPx / bucketSizePx)) : 1
+
+  const kept: number[] = []
+  const usedBuckets = new Set<number>()
+  let lastX = Number.NEGATIVE_INFINITY
+  for (const index of ordered) {
+    if (kept.length >= maxPerLane) break
+    const span = list[index]
+    if (span === undefined) continue
+    const x = (num(span.time, input.windowStart) - input.windowStart) / msPerPx
+    const bucket = spanPx > 0 ? clamp(Math.floor(x / bucketSizePx), 0, bucketCount - 1) : 0
+    if (usedBuckets.has(bucket)) continue
+    if (kept.length > 0 && x - lastX < gapPx) continue
+    usedBuckets.add(bucket)
+    kept.push(index)
+    lastX = x
+  }
+  return { indices: kept, droppedTotal: candidates.length - kept.length, candidates: candidates.length }
 }
 
 /** See the TICKS table in the module doc. */
-export function buildTicks(input: {
-  window: TimelineWindow
+export function buildTicks(input: {  window: TimelineWindow
   msPerPx: number
   viewportWidth: number
   scrollLeft: number
@@ -615,8 +870,116 @@ export function layoutTimeline(
     tzOffsetMinutes,
   })
 
-  const nowX = clamp((now - win.start) / msPerPx, 0, dataWidth)
-  const nowViewX = nowX - scrollLeft
+  /* --------------------------------------------------- message markers */
+
+  const messageMode: MessageMode = options.messageMode === 'markers' ? 'markers' : 'both'
+  const gapPx = num(options.messageMinGapPx, MESSAGE_MARKER_MIN_GAP_PX)
+  const maxPerLane = num(options.messageMaxPerLane, MESSAGE_MARKER_MAX)
+  const messages: MessageMarkerRect[] = []
+  const messageBands: MessageBandRect[] = []
+  let messageCount = 0
+  let droppedTotal = 0
+  for (let index = 0; index < lanesInput.length; index += 1) {
+    const lane = lanesInput[index]
+    if (lane === undefined) continue
+    const list = (lane.messages ?? []).filter(
+      (entry): entry is MessageSpan => entry !== null && typeof entry === 'object',
+    )
+    if (list.length === 0) continue
+    const laneY = headerHeight + index * laneHeight
+    // The band is the lane's TRUE extent: it is built from every message, so
+    // decimation of the markers below can never shrink the reported span.
+    let firstTime = Number.POSITIVE_INFINITY
+    let lastTime = Number.NEGATIVE_INFINITY
+    for (const message of list) {
+      const time = num(message?.time, Number.NaN)
+      if (!Number.isFinite(time)) continue
+      if (time < firstTime) firstTime = time
+      if (time > lastTime) lastTime = time
+    }
+    if (Number.isFinite(firstTime) && Number.isFinite(lastTime)) {
+      const x0 = clamp(firstTime, win.start, win.end)
+      const x1 = clamp(lastTime, win.start, win.end)
+      const x = (x0 - win.start) / msPerPx
+      const w = Math.max(MESSAGE_BAND_MIN_PX, (x1 - x0) / msPerPx)
+      const viewX = x - scrollLeft
+      const band: MessageBandRect = {
+        laneId: lane.id,
+        laneIndex: index,
+        firstTime,
+        lastTime,
+        count: list.length,
+        x,
+        y: laneY + laneHeight - MESSAGE_BAND_HEIGHT - 1,
+        w,
+        h: MESSAGE_BAND_HEIGHT,
+        viewX,
+        visible: x + w >= 0 && x <= width,
+      }
+      if (!cull || band.visible) messageBands.push(band)
+    }
+
+    const kept = decimateMarkers(list, {
+      windowStart: win.start,
+      msPerPx,
+      widthPx: dataWidth,
+      mode: messageMode,
+      gapPx,
+      maxPerLane,
+    })
+    // `kept.indices` is ascending already, and every candidate between two kept
+    // indices was dropped — counted onto the marker that follows it, so the UI
+    // can say "3 more here" instead of silently losing them.
+    let previousCandidate = -1
+    for (const keptIndex of kept.indices) {
+      const message = list[keptIndex]
+      if (message === undefined) continue
+      const droppedBefore = countCandidatesBetween(list, previousCandidate, keptIndex, messageMode)
+      previousCandidate = keptIndex
+      const time = num(message.time, win.start)
+      const x = (clamp(time, win.start, win.end) - win.start) / msPerPx
+      const viewX = x - scrollLeft
+      const rect: MessageMarkerRect = {
+        laneId: lane.id,
+        laneIndex: index,
+        kind: message.kind,
+        time,
+        end: typeof message.end === 'number' && Number.isFinite(message.end) ? message.end : null,
+        from: message.from,
+        to: message.to,
+        preview: message.preview,
+        key: message.messageId ?? `${lane.id}:${message.kind}:${time}:${keptIndex}`,
+        messageIndex: keptIndex,
+        droppedBefore,
+        x,
+        y: laneY + MESSAGE_MARKER_TOP,
+        w: MESSAGE_MARKER_WIDTH,
+        h: MESSAGE_MARKER_HEIGHT,
+        viewX,
+        visible: x + MESSAGE_MARKER_WIDTH >= 0 && x <= width,
+      }
+      if (!cull || rect.visible) messages.push(rect)
+    }
+    messageCount += kept.candidates
+    droppedTotal += kept.droppedTotal
+  }
+
+  const endSource: WindowEndSource = win.live
+    ? 'now'
+    : typeof data?.range?.end === 'number' && Number.isFinite(data.range.end)
+      ? 'range'
+      : 'datum'
+  const endTime = win.live ? now : win.end
+  const endMarkerTime = clamp(endTime, win.start, win.end)
+  const endMarkerX = (endMarkerTime - win.start) / msPerPx
+  const endMarkerViewX = endMarkerX - scrollLeft
+  const endMarker: EndMarker = {
+    time: endMarkerTime,
+    kind: win.live ? 'now' : 'ended',
+    x: endMarkerX,
+    viewX: endMarkerViewX,
+    visible: endMarkerViewX >= 0 && endMarkerViewX <= width,
+  }
 
   return {
     window: win,
@@ -631,15 +994,38 @@ export function layoutTimeline(
     lanes,
     spans,
     tasks,
+    messages,
+    messageBands,
     ticks,
+    endSource,
+    endMarker,
+    messageCount,
+    droppedMessageCount: droppedTotal,
     now,
-    nowX,
-    nowViewX,
-    nowVisible: nowViewX >= 0 && nowViewX <= width,
+    nowX: endMarkerX,
+    nowViewX: endMarkerViewX,
+    nowVisible: endMarker.visible,
     tzOffsetMinutes,
     truncatedTicks: truncated,
     unplacedTaskIds,
   }
+}
+
+/** Candidates strictly between two lane indices (used for the dropped count). */
+function countCandidatesBetween(
+  list: readonly MessageSpan[],
+  fromExclusive: number,
+  toExclusive: number,
+  mode: MessageMode,
+): number {
+  let count = 0
+  for (let index = fromExclusive + 1; index < toExclusive; index += 1) {
+    const span = list[index]
+    if (span === undefined) continue
+    if (mode === 'both' && span.kind === 'turn') continue
+    count += 1
+  }
+  return count
 }
 
 function spanRect(

@@ -15,10 +15,11 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
+import { LANE_COLOR_TOKENS, UNASSIGNED_COLOR_TOKENS, laneColorTokens } from '../src/host/lane-color.ts'
 import { buildTimeline } from '../src/host/timeline.ts'
 import { clearSessionLogCache } from '../src/host/session-log.ts'
 import { fakeContext } from './helpers/fake-http.ts'
-import { assertTimeline } from './helpers/timeline-assert.ts'
+import { assertTimeline, validTimeline } from './helpers/timeline-assert.ts'
 import { teammateSpans, toolCallEvent } from './helpers/session-fixtures.ts'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -37,6 +38,21 @@ const journal = JSON.parse(readFileSync(resolve(ROOT, 'tests/fixtures/lead-team-
 }
 
 const ROOT_SESSION = (journal.events.find((event) => event.type === 'session') as { id?: string } | undefined)?.id ?? ''
+
+/** A fixed clock for the isolated-roster tests (no journal timestamps involved). */
+const T0 = 1_791_648_800_000
+
+/**
+ * Every CSS custom property the host theme package defines.
+ *
+ * Snapshot fixture (`tests/fixtures/dsw-theme-tokens.json`, provenance in its
+ * `_source`). Reading the app bundle at test time is not an option: CI has no
+ * `/Applications/DeepSeek Harness.app`.
+ */
+function knownThemeTokens(): string[] {
+  const snapshot = JSON.parse(readFileSync(resolve(ROOT, 'tests/fixtures/dsw-theme-tokens.json'), 'utf8')) as { tokens: string[] }
+  return snapshot.tokens
+}
 
 /** Roster rows, in first-appearance order (a member id IS its session id). */
 function roster(): { id: string; name: string }[] {
@@ -111,17 +127,32 @@ interface HostOptions {
   parents?: Record<string, string>
   /** Board rows to add on top of the journal tasks. */
   extraTasks?: Record<string, unknown>[]
+  /** Replace the roster derived from the journal (for colour-palette tests). */
+  members?: { id: string; name: string }[]
+  /** Replace the root session log (for isolated roster tests). */
+  rootEvents?: unknown[]
+  /**
+   * Session ids whose LIVE read returns an empty array while the durable log
+   * still holds events. This is the channel disagreement that the
+   * empty-live-read regression lived in: with the same array on both sides the
+   * bug is unreachable, which is why 403 tests missed it.
+   */
+  liveEmpty?: string[]
+}
+
+/** The roster a host run should present. */
+function rosterOf(options: HostOptions): { id: string; name: string }[] {
+  return options.members ?? MEMBERS
 }
 
 /** Per-session live logs. */
 function sessionEvents(options: HostOptions): Map<string, unknown[]> {
   const events = new Map<string, unknown[]>()
-  events.set(ROOT_SESSION, journal.events)
-  MEMBERS.forEach((member, index) => {
+  events.set(ROOT_SESSION, options.rootEvents ?? journal.events)
+  rosterOf(options).forEach((member, index) => {
     const extra = index === 0 ? claimCalls() : index === 1 ? level2Calls() : []
     events.set(member.id, [...teammateSpans(), ...extra])
   })
-  void options
   return events
 }
 
@@ -149,13 +180,16 @@ function host(options: HostOptions = {}): Context {
               }
             }
             if (!events.has(id)) return undefined
+            const liveIsEmpty = (options.liveEmpty ?? []).includes(id)
             return {
               id,
               status: id === ROOT_SESSION ? 'running' : 'idle',
               options: { model: 'deepseek-flash' },
               session: {
                 header: { id, ...(parents[id] === undefined ? {} : { parentSession: parents[id] }) },
-                snapshotEvents: () => events.get(id) ?? [],
+                // An empty live array means "registered, history not replayed
+                // yet" — NOT "this session has no activity".
+                snapshotEvents: () => (liveIsEmpty ? [] : events.get(id) ?? []),
               },
             }
           },
@@ -182,7 +216,7 @@ function host(options: HostOptions = {}): Context {
           },
           listMembers: () => [
             { id: ROOT_SESSION, name: 'lead', role: 'lead', status: 'running', model: 'deepseek-flash' },
-            ...MEMBERS.map((member, index) => ({
+            ...rosterOf(options).map((member, index) => ({
               id: member.id,
               name: member.name,
               role: 'teammate',
@@ -191,13 +225,14 @@ function host(options: HostOptions = {}): Context {
             })),
           ],
           listTasks: () => {
+            const roster = rosterOf(options)
             const rows: Record<string, unknown>[] = TASKS.map((task, index) => ({
               id: task.id,
               revision: task.revision,
               subject: task.subject,
               description: `description of ${task.id}`,
               status: task.status,
-              ownerName: MEMBERS[index % Math.max(1, MEMBERS.length)]?.name,
+              ownerName: roster[index % Math.max(1, roster.length)]?.name,
               blockedBy: [],
               writeScopes: [],
               ready: task.status === 'pending',
@@ -210,7 +245,7 @@ function host(options: HostOptions = {}): Context {
                 subject: LEVEL2_SUBJECT,
                 description: 'board-only',
                 status: 'in_progress',
-                ownerName: MEMBERS[1]?.name,
+                ownerName: rosterOf(options)[1]?.name,
                 blockedBy: [],
                 writeScopes: [],
                 ready: false,
@@ -222,7 +257,7 @@ function host(options: HostOptions = {}): Context {
                 subject: 'deleted task',
                 description: '',
                 status: 'deleted',
-                ownerName: MEMBERS[0]?.name,
+                ownerName: rosterOf(options)[0]?.name,
                 blockedBy: [],
                 writeScopes: [],
                 ready: false,
@@ -257,7 +292,9 @@ function host(options: HostOptions = {}): Context {
 }
 
 beforeEach(() => {
-  // `session-log.ts` caches reads for 1500ms; each test needs a fresh read.
+  // `session-log.ts` no longer caches across calls (host-data-2 removed the
+  // 1.5s memo because it served stale logs); the call is kept as a documented
+  // no-op so a future cache cannot silently leak between tests.
   clearSessionLogCache()
 })
 
@@ -268,6 +305,9 @@ describe('buildTimeline over the real Lead journal', () => {
     expect(value.source).toBe('log')
     expect(value.sessionId).toBe(ROOT_SESSION)
     expect(value.rootSessionId).toBe(ROOT_SESSION)
+    // The fake root agent is 'running', so the team is alive: the frozen pair
+    // is (live: true, end: null), i.e. the client keeps the right edge on now.
+    expect(value.live).toBe(true)
     expect(value.range.end).toBeNull()
     expect(value.lanes[0]?.id).toBe('lead')
     expect(value.lanes[0]?.role).toBe('lead')
@@ -339,11 +379,214 @@ describe('buildTimeline over the real Lead journal', () => {
     for (const task of value.tasks) expect(task.status).not.toBe('deleted')
   })
 
+  it('does not let an empty LIVE read shadow the durable log', async () => {
+    // REGRESSION (found by host-data-2 while reconciling the two read channels,
+    // 2026-10-12): `readLive` used to treat an empty array as success, so a
+    // session that was registered but whose history had not been replayed into
+    // memory never fell back to `sessionPersistence`: the panel drew nothing
+    // and still claimed `source: 'log'` — silent data loss plus a false
+    // provenance claim. Every other test in this file (and every probe before
+    // it) hands BOTH channels the same array, so the branch was unreachable and
+    // 403 green tests could not see it. This one disagrees on purpose.
+    const value = await buildTimeline(host({ liveEmpty: [ROOT_SESSION] }), ROOT_SESSION)
+    assertTimeline(value)
+    expect(value.source).toBe('log')
+    const lead = value.lanes.find((lane) => lane.id === 'lead')
+    expect(lead?.spans.length, 'the durable log must still be read').toBeGreaterThan(0)
+    expect(lead?.messages.length, 'messages come from the same log').toBeGreaterThan(0)
+    expect(value.range.end === null || typeof value.range.end === 'number').toBe(true)
+  })
+
+  it('treats a brand-new session (both channels readable but empty) as a successful empty read', async () => {
+    // Deliberate ruling from the same fix: "no events yet" is not a failure, so
+    // a fresh session must NOT be reported as `partial`/degraded. `hasHistory:
+    // false` is what tells the panel "nothing happened yet" (contract:
+    // "false = live/empty").
+    const value = await buildTimeline(host({ rootEvents: [] }), 'session-brand-new')
+    assertTimeline(value)
+    expect(value.source).toBe('log')
+    expect(value.lanes.every((lane) => lane.spans.length === 0)).toBe(true)
+  })
+
   it('is deterministic apart from the build timestamp', async () => {
     const first = await buildTimeline(host(), ROOT_SESSION)
     clearSessionLogCache()
     const second = await buildTimeline(host(), ROOT_SESSION)
     expect({ ...second, generatedAt: 0 }).toEqual({ ...first, generatedAt: 0 })
+  })
+
+  it('wires lane colour tokens and navigation into the roster', async () => {
+    const value = await buildTimeline(host(), ROOT_SESSION)
+    assertTimeline(value)
+    for (const lane of value.lanes) {
+      // Token NAMES, never values (the validator enforces the shape; this pins
+      // that the host actually fills them instead of sending empty strings).
+      expect(lane.color.bar, lane.id).toMatch(/^--(?:dsw|ds)-/)
+      expect(lane.color.on, lane.id).toMatch(/^--(?:dsw|ds)-/)
+      // POSITIONAL stability (was "stable by member id" before the palette
+      // fix): with the roster unchanged, the same lane index gets the same
+      // colour pair. A roster reshuffle may legitimately recolour teammates —
+      // see the distinctness test below for the guarantee that replaced it.
+      const again = await buildTimeline(host(), ROOT_SESSION).then((other) => other.lanes.find((candidate) => candidate.id === lane.id))
+      expect(again?.color, lane.id).toEqual(lane.color)
+      if (lane.id === 'unassigned') expect(lane.navigation, 'the sentinel lane is not a session').toBeUndefined()
+    }
+    const lead = value.lanes.find((lane) => lane.id === 'lead')
+    expect(lead?.navigation, 'the Lead lane head must be clickable').toBeDefined()
+    // The Lead is pinned to the head of the palette, in every team and session.
+    expect(lead?.color).toEqual(LANE_COLOR_TOKENS[0])
+  })
+
+  it('gives the first five lanes five different colours (the Lead\'s criterion)', async () => {
+    // REJECTION POWER: the first implementation hashed the lane id into the
+    // palette, and the real run had 8 teammates sharing 5 tokens (lead, ui and
+    // docs all rendered `state-success-primary`). This test fails on that
+    // implementation and passes only on positional assignment.
+    //
+    // The roster is isolated from the journal fixture on purpose: the fixture's
+    // own `team/member` rows would add lanes and blur the index maths.
+    const members = Array.from({ length: 6 }, (_, index) => ({ id: `member-${index + 1}`, name: `member-${index + 1}` }))
+    const value = await buildTimeline(
+      host({ members, rootEvents: [{ type: 'session', id: ROOT_SESSION, createdAt: T0 }] }),
+      ROOT_SESSION,
+    )
+    assertTimeline(value)
+
+    const rosterLanes = value.lanes.filter((lane) => lane.id !== 'unassigned')
+    expect(rosterLanes).toHaveLength(7) // the Lead plus six teammates
+    expect(rosterLanes[0]?.id).toBe('lead')
+    expect(rosterLanes[0]?.color).toEqual(LANE_COLOR_TOKENS[0])
+
+    // The Lead's stated criterion, expressed against the palette size so it
+    // keeps working if the palette grows: the first N lanes are pairwise
+    // distinct, N = the number of distinct hues available.
+    const firstN = rosterLanes.slice(0, LANE_COLOR_TOKENS.length).map((lane) => lane.color.bar)
+    expect(firstN).toHaveLength(LANE_COLOR_TOKENS.length)
+    expect(new Set(firstN).size, `first ${LANE_COLOR_TOKENS.length} lane colours: ${firstN.join(', ')}`).toBe(LANE_COLOR_TOKENS.length)
+    expect(firstN[0]).toBe(LANE_COLOR_TOKENS[0]?.bar)
+
+    // No lane may invent a colour outside the palette, and the palette itself is
+    // the documented ceiling: lanes past it repeat (see the next test).
+    const palette = new Set(LANE_COLOR_TOKENS.map((entry) => entry.bar))
+    expect(palette.size).toBe(LANE_COLOR_TOKENS.length)
+    for (const lane of value.lanes) expect(palette.has(lane.color.bar), `${lane.id} → ${lane.color.bar}`).toBe(true)
+    expect(new Set(rosterLanes.map((lane) => lane.color.bar)).size).toBeLessThanOrEqual(palette.size)
+  })
+
+  it('assigns by position, pins the Lead, and wraps at the palette ceiling', () => {
+    // Direct check of the assignment rule (the exported pure function), which
+    // is what makes the palette ceiling explicit instead of implied.
+    expect(laneColorTokens('lead', 0)).toEqual(LANE_COLOR_TOKENS[0])
+    expect(laneColorTokens('lead', 3), 'the Lead ignores its index').toEqual(LANE_COLOR_TOKENS[0])
+    // Teammates take everything except the Lead's slot, in roster order: with
+    // (palette - 1) teammates every remaining hue is used exactly once.
+    const teammateCount = LANE_COLOR_TOKENS.length - 1
+    const teammateBars = Array.from({ length: teammateCount }, (_, index) => laneColorTokens(`member-${index}`, index + 1).bar)
+    expect(new Set(teammateBars).size, teammateBars.join(', ')).toBe(teammateCount)
+    expect(teammateBars).not.toContain(LANE_COLOR_TOKENS[0]?.bar)
+    // The documented ceiling: lane index == palette length wraps onto slot 0.
+    expect(laneColorTokens('member-wrap', LANE_COLOR_TOKENS.length)).toEqual(LANE_COLOR_TOKENS[0])
+    // The sentinel bucket never borrows a roster slot.
+    expect(laneColorTokens('unassigned', 7)).toEqual(UNASSIGNED_COLOR_TOKENS)
+  })
+
+  it('the palette is a set of distinct, host-defined hues with the Lead pinned to its head', () => {
+    // Non-vacuity for the test above: the palette must actually have enough
+    // distinct entries to satisfy "five different colours", and every name must
+    // exist in the host theme (a typo renders the lane transparent silently).
+    const known = new Set(knownThemeTokens())
+    const bars = LANE_COLOR_TOKENS.map((entry) => entry.bar)
+    expect(bars.length, 'the palette must cover the first five lanes').toBeGreaterThanOrEqual(5)
+    expect(new Set(bars).size, bars.join(', ')).toBe(bars.length)
+    for (const entry of LANE_COLOR_TOKENS) {
+      expect(known.has(entry.bar), entry.bar).toBe(true)
+      expect(known.has(entry.on), entry.on).toBe(true)
+    }
+    // The five status hues the plan named are all present; the Lead's colour is
+    // the head of this same list, so the two can never drift apart.
+    for (const hue of [
+      '--dsw-alias-state-business-primary',
+      '--dsw-alias-state-success-primary',
+      '--dsw-alias-state-warn-primary',
+      '--dsw-alias-state-error-primary',
+      '--dsw-alias-state-idle-primary',
+    ]) {
+      expect(bars, hue).toContain(hue)
+    }
+  })
+
+  it('turns the real log\'s 80 user/message events into exactly the human prompts', async () => {
+    // The fixture is the real Lead log: 80 `user/message` events of which only
+    // the ones with `data.source.kind === 'user'` are the human typing; the rest
+    // are the runtime (time-context, tool-jobs, team-message, …). Folding all 80
+    // as prompts would put invented prompts on the chart, so this is an exact
+    // end-to-end count rather than a smoke assertion.
+    const expected = journal.events.filter((event) => {
+      if (event.type !== 'user/message') return false
+      const source = event.data?.source
+      return typeof source === 'object' && source !== null && (source as { kind?: unknown }).kind === 'user'
+    }).length
+    expect(expected, 'the fixture must still contain human prompts').toBeGreaterThan(0)
+
+    const value = await buildTimeline(host(), ROOT_SESSION)
+    assertTimeline(value)
+    const prompts = value.lanes.flatMap((lane) => lane.messages).filter((message) => message.kind === 'user-prompt')
+    expect(prompts.map((prompt) => prompt.from.id).every((id) => id === 'user')).toBe(true)
+    expect(prompts.length, 'injected user/message events must not become prompts').toBe(expected)
+  })
+
+  it('pairs real queue/delivery events so at least one message carries an addressee', async () => {
+    const value = await buildTimeline(host(), ROOT_SESSION)
+    assertTimeline(value)
+    const messages = value.lanes.flatMap((lane) => lane.messages).filter((message) => message.kind === 'message')
+    expect(messages.length, 'the real log carries 56 queued/delivered pairs').toBeGreaterThan(0)
+    expect(messages.some((message) => message.to !== undefined), 'a paired delivery must name its target').toBe(true)
+    for (const message of messages) {
+      if (message.to === undefined) continue
+      expect(message.to.kind, 'an addressee is never the human sender').not.toBe('user')
+    }
+  })
+
+  it('emits only theme tokens the host theme actually DEFINES', async () => {
+    // A name that merely matches `--dsw-*` can still be a typo: the browser
+    // resolves it to nothing and the bar renders transparent with no error
+    // anywhere. The token list is a snapshot of what
+    // `@deepseek-ai/dsh-client-ui-theme/lib/client.js` defines (see the
+    // fixture's `_source`), so this catches invented names that the shape
+    // regex in `tests/contract.spec.ts` cannot.
+    //
+    // METHOD NOTE: check the DEFINITION source, never a consumer bundle —
+    // better-sidebar never references `--dsw-alias-state-idle-primary` or
+    // `--dsw-alias-label-primary-inverted`, yet both are defined and were
+    // nearly reported as missing.
+    const known = new Set(knownThemeTokens())
+    expect(known.size, 'the theme snapshot must be populated').toBeGreaterThan(300)
+
+    const value = await buildTimeline(host(), ROOT_SESSION)
+    assertTimeline(value)
+    const emitted = value.lanes.flatMap((lane) => [lane.color.bar, lane.color.on])
+    expect(emitted.length).toBeGreaterThan(0)
+    const unknown = [...new Set(emitted)].filter((token) => !known.has(token))
+    expect(unknown, `these lane colour tokens are not defined by the host theme: ${unknown.join(', ')}`).toEqual([])
+  })
+
+  it('the theme-token check discriminates, and the repo fixtures use real tokens', () => {
+    const known = new Set(knownThemeTokens())
+    // Positive: the tokens the host half emits today.
+    for (const token of ['--dsw-alias-state-idle-primary', '--dsw-alias-state-success-primary', '--dsw-alias-label-primary-inverted']) {
+      expect(known.has(token), token).toBe(true)
+    }
+    // Negative: plausible-looking names that are NOT defined. `--dsw-alias-label-inverse`
+    // is the trap this file itself fell into before the snapshot existed.
+    for (const token of ['--dsw-alias-label-inverse', '--dsw-alias-state-idle-primaryy', '--dsw-alias-brand-primaryy', '--dsw-alias-label-inverted']) {
+      expect(known.has(token), token).toBe(false)
+    }
+    // Keep the repo's own fixtures honest: a fixture that uses an undefined
+    // token teaches the wrong example even when no assertion depends on it.
+    for (const lane of validTimeline().lanes) {
+      expect(known.has(lane.color.bar), `${lane.id} bar`).toBe(true)
+      expect(known.has(lane.color.on), `${lane.id} on`).toBe(true)
+    }
   })
 })
 
@@ -365,7 +608,11 @@ describe('buildTimeline degradation paths', () => {
     assertTimeline(value)
     expect(value.source).toBe('live')
     expect(value.notes.length).toBeGreaterThan(0)
-    expect(value.range.end).toBeNull()
+    // OBSERVED host choice (not a contract requirement, so only the PAIR is
+    // asserted): with nothing observable at all it freezes the board at now —
+    // `live: false` with a real `range.end` — rather than leaving it live
+    // forever. Either choice is legal as long as the pair stays consistent.
+    expect(value.live).toBe(value.range.end === null)
     for (const lane of value.lanes) expect(lane.spans).toEqual([])
   })
 
@@ -411,6 +658,7 @@ describe('buildTimeline degradation paths', () => {
     const value = await buildTimeline(host({ teams: false, agents: false, persistence: false }), lonely)
     assertTimeline(value)
     expect(value.rootSessionId).toBe(lonely)
-    expect(value.range.end).toBeNull()
+    // Same ruling as above: only the frozen pair is contractual.
+    expect(value.live).toBe(value.range.end === null)
   })
 })

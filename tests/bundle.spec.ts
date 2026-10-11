@@ -61,14 +61,13 @@ describe('lib/client.js — the browser half', () => {
     expect(client, 'React must not be inlined').not.toMatch(/react\.production\.min\.js|react\.development\.js|ReactCurrentOwner/)
   })
 
-  it('inlines no other DSH runtime (no stray value imports)', () => {
-    const requires = [...client.matchAll(/require\(\s*"([^"]+)"\s*\)/g)].map((match) => match[1] as string)
-    for (const specifier of requires) {
-      expect(
-        ['react', 'react/jsx-runtime', 'react-dom', 'react-dom/client'].includes(specifier) || specifier.startsWith('@deepseek-ai/'),
-        `unexpected runtime require(${specifier}) — it must be external`,
-      ).toBe(true)
-    }
+  it('requires exactly the two host platform modules (nothing else at runtime)', () => {
+    // The host seeds React into PLATFORM_MODULES; anything beyond
+    // `react` + `react/jsx-runtime` would either be inlined (bad) or need a
+    // module the deployment may not serve (worse). The whitelist is exact, not
+    // "allowed families": a new `require("@deepseek-ai/…")` must fail here.
+    const requires = [...new Set([...client.matchAll(/require\(\s*"([^"]+)"\s*\)/g)].map((match) => match[1] as string))].sort()
+    expect(requires).toEqual(['react', 'react/jsx-runtime'])
   })
 
   it('carries the tab registration and the frozen tab id', () => {

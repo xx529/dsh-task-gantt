@@ -208,6 +208,8 @@ export const BOARD_CSS = `
 .dtg-turn {
   position: absolute;
   border-radius: 3px;
+  /* The renderer paints the lane colour inline (a token reference); this is the
+     neutral default for a payload that carries no lane colour. */
   background: var(--dsw-alias-bg-layer-3);
   opacity: 0.75;
 }
@@ -288,8 +290,114 @@ export const BOARD_CSS = `
   pointer-events: none;
 }
 
+/* --- lane head navigation (requirement: click a teammate -> their chat) - */
+
+/* The host class carries hover/focus/cursor; this only lays the button out so
+   the row looks identical to the non-clickable variant. */
+.dtg-head-btn {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 3px 6px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  -webkit-app-region: no-drag;
+}
+.dtg-head-btn:focus-visible {
+  outline: 2px solid var(--dsw-alias-border-l4);
+  outline-offset: -2px;
+}
+.dtg-lane-mark .dtg-dot { background: var(--dsw-alias-label-dimmed); }
+.dtg-head-name { color: var(--dsw-alias-label-primary); }
+.dtg-head-row { border-left: 2px solid transparent; }
+
+/* --- message markers --------------------------------------------------- */
+
+/* The lane's true message extent: a hairline rhythm strip, never a timeline. */
+.dtg-msg-band {
+  position: absolute;
+  border-radius: 1px;
+  background: var(--dsw-alias-label-dimmed);
+  opacity: 0.35;
+}
+.dtg-msg {
+  position: absolute;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  /* Filled = a delivery from that lane; the outline keeps the dot visible on
+     any bar colour underneath. */
+  background: var(--dsw-alias-label-tertiary);
+  box-shadow: 0 0 0 1px var(--dsw-alias-bg-layer-1);
+}
+/* The human's own prompt: a punched-out dot with a TWO-TONE ring, never a hue.
+   Single tokens are invisible on one theme or the other (measured: the
+   previously-used markdown-citation token scored 1.16:1 on a light panel), and
+   app switches themes without any attribute we could read. Inner ring carries
+   the light panel, outer ring the dark one; the fill is the panel surface so
+   the dot still reads as a hole. */
+.dtg-msg-user {
+  background: var(--dsw-alias-bg-layer-1);
+  border: 0;
+  box-shadow:
+    0 0 0 2px var(--dsw-alias-label-primary),
+    0 0 0 3.5px var(--dsw-alias-label-primary-inverted);
+}
+.dtg-msg-agent { border: 0; }
+.dtg-msg-turn { border-radius: 1px; }
+.dtg-msg-glyph {
+  font: var(--dsw-font-xxxs-strong-11);
+  line-height: 1;
+  /* The glyph is the non-colour signal: ✎ = the human's own prompt,
+     ✉ = a delivery, ▸ = a turn marker. It sits on the lane's saturated fill,
+     so the inverted ink is the readable one there. */
+  color: var(--dsw-alias-label-primary-inverted);
+}
+/* ...except inside the human's punched-out dot, whose fill is the PANEL colour:
+   the inverted ink would be white-on-white in a light theme, so this one glyph
+   takes the primary ink instead (and the two-tone ring carries the outline). */
+.dtg-msg-user .dtg-msg-glyph {
+  color: var(--dsw-alias-label-primary);
+}
+.dtg-msg-count {
+  position: absolute;
+  left: 12px;
+  top: 0;
+  font: var(--dsw-font-xxxs-strong-11);
+  line-height: 1;
+  color: var(--dsw-alias-label-tertiary);
+  pointer-events: none;
+}
+.dtg-legend-msg {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--dsw-alias-label-tertiary);
+}
+.dtg-legend-msg-user {
+  background: var(--dsw-alias-bg-layer-1);
+  box-shadow:
+    0 0 0 2px var(--dsw-alias-label-primary),
+    0 0 0 3.5px var(--dsw-alias-label-primary-inverted);
+}
+
+/* Frozen board: no pulse, so nothing on screen implies ongoing work. */
+.dtg-paused .dtg-step-open { animation: none; }
+.dtg-frozen .dtg-step-open { animation: none; }
+
 /* --- now marker -------------------------------------------------------- */
 .dtg-now { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--dsw-alias-brand-primary); }
+/* Frozen board: the same line, but unmistakably not a live clock. */
+.dtg-now-ended {
+  background: var(--dsw-alias-label-dimmed);
+  border-left: 1px dashed var(--dsw-alias-label-dimmed);
+  width: 0;
+}
 .dtg-now-head {
   position: absolute;
   top: 0;

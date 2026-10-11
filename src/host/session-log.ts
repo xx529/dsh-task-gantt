@@ -69,22 +69,32 @@ export interface SessionLogFailure {
   reason: string
   /** Another channel may still work; the caller decides whether to try. */
   channel: SessionLogChannel | 'none'
+  /**
+   * The channel answered with a well-formed but **empty** event array.
+   *
+   * This is not the same as "no events exist": a resumed session can hand back
+   * an empty in-memory log while the durable log on disk holds the whole
+   * history. It is reported separately so the caller falls through to the
+   * durable channel instead of mistaking "nothing in memory" for "nothing at
+   * all", which would render an empty chart and still label it `source: 'log'`.
+   */
+  empty?: boolean
 }
 
 /** Result union — every failure is reported, never thrown. */
 export type SessionLogResult = SessionLogRead | SessionLogFailure
 
-/** Cache entry lifetime; a panel poll re-reads at most this often. */
-const CACHE_TTL_MS = 1500
-/** Upper bound on cached logs, so a long-lived host cannot grow unbounded. */
-const CACHE_MAX_ENTRIES = 64
-
-interface CacheEntry {
-  at: number
-  value: SessionLogResult
+/**
+ * Kept as a no-op for callers written against the retired log cache.
+ *
+ * The cache itself was removed because serving a memoised log made the
+ * liveness decision stale (see `readSessionLog`). Tests that called this to
+ * reset between cases still compile and still pass: there is nothing left to
+ * reset, so isolation is now automatic.
+ */
+export function clearSessionLogCache(): void {
+  /* intentionally empty — logs are never cached across calls */
 }
-
-const cache = new Map<string, CacheEntry>()
 
 /** Resolve the live agent for one session id. */
 export function liveAgent(ctx: Context, sessionId: string): AgentLike | undefined {
@@ -94,19 +104,6 @@ export function liveAgent(ctx: Context, sessionId: string): AgentLike | undefine
     return agents.get(sessionId)
   } catch {
     return undefined
-  }
-}
-
-/** Keep the cache bounded without pulling in an LRU dependency. */
-function evictIfNeeded(): void {
-  if (cache.size <= CACHE_MAX_ENTRIES) return
-  // Map preserves insertion order: drop the oldest quarter.
-  const drop = Math.ceil(CACHE_MAX_ENTRIES / 4)
-  let removed = 0
-  for (const key of cache.keys()) {
-    cache.delete(key)
-    removed += 1
-    if (removed >= drop) break
   }
 }
 
@@ -143,6 +140,17 @@ function readLive(ctx: Context, sessionId: string): SessionLogRead | SessionLogF
   const events = asEvents(raw)
   if (events === undefined) {
     return { ok: false, reason: `live log of "${sessionId}" is not an event array`, channel: 'live' }
+  }
+  if (events.length === 0) {
+    // A well-formed but empty in-memory log: the session is registered but its
+    // history is not in memory. Treating this as success would hide the durable
+    // log (measured: 0 spans, 0 messages, yet `source: 'log'`). Fall through.
+    return {
+      ok: false,
+      reason: `live log of "${sessionId}" is empty`,
+      channel: 'live',
+      empty: true,
+    }
   }
   return { ok: true, channel: 'live', events, header: agent.session?.header ?? {} }
 }
@@ -195,35 +203,35 @@ function errorMessage(error: unknown): string {
 /**
  * Read one session's event log through the best available channel.
  *
- * Live first (freshest), then durable. A result is cached briefly so a panel
- * that polls faster than the log grows does not decompress the same logs over
- * and over.
+ * Live first (freshest), then durable.
+ *
+ * **Deliberately uncached across calls.** An earlier revision memoised a result
+ * for 1.5 s to avoid re-decompressing a log a fast-polling panel had already
+ * read. That memo was a correctness bug, not an optimisation: the timeline's
+ * liveness flag is derived from this log, so a second request inside the window
+ * was answering from a *stale* snapshot — a session whose log had just opened a
+ * new turn still read as fully closed, and the chart stayed frozen until the
+ * memo expired. Reading the log is the point of the request; the panel polls on
+ * the order of seconds, and duplicate reads *within* one request are already
+ * impossible because the caller folds each lane exactly once.
  *
  * @param ctx - the plugin's host context.
  * @param sessionId - the session to read.
  * @returns the log, or a failure record explaining why it is missing.
  */
 export async function readSessionLog(ctx: Context, sessionId: string): Promise<SessionLogResult> {
-  const cached = cache.get(sessionId)
-  const now = Date.now()
-  if (cached !== undefined && now - cached.at < CACHE_TTL_MS) return cached.value
-
   const live = readLive(ctx, sessionId)
-  let value: SessionLogResult = live
-  if (!live.ok) {
-    const persisted = await readPersisted(ctx, sessionId)
-    // Report the live failure when neither channel worked: it names the closer cause.
-    value = persisted.ok ? persisted : { ...persisted, reason: `${live.reason}; ${persisted.reason}` }
+  if (live.ok) return live
+  const persisted = await readPersisted(ctx, sessionId)
+  if (persisted.ok) return persisted
+  // An empty live read is not an error when the session genuinely has no
+  // history: keep it a *successful* empty read so a brand-new session is not
+  // reported as a degraded board.
+  if (live.empty === true && persisted.channel === 'persisted') {
+    return { ok: true, channel: 'persisted', events: [], header: {} }
   }
-
-  cache.set(sessionId, { at: now, value })
-  evictIfNeeded()
-  return value
-}
-
-/** Drop every cached log. Exposed for tests and for a manual refresh. */
-export function clearSessionLogCache(): void {
-  cache.clear()
+  // Report the live failure when neither channel worked: it names the closer cause.
+  return { ...persisted, reason: `${live.reason}; ${persisted.reason}` }
 }
 
 /**
@@ -255,6 +263,28 @@ export async function readSessionHeader(
 export function liveAgentModel(ctx: Context, sessionId: string): string | undefined {
   const model = liveAgent(ctx, sessionId)?.options?.model
   return typeof model === 'string' && model !== '' ? model : undefined
+}
+
+/**
+ * Every live agent this deployment has registered.
+ *
+ * Used as the last resort for the roster: a teammate whose `team/member` entry
+ * the journal never wrote (or wrote somewhere unreadable) is still a real,
+ * running session, and without this list it would get no lane while its own log
+ * sat there holding the very spans the chart should show.
+ *
+ * @param ctx - the plugin's host context.
+ * @returns the agents, or an empty array when the service is absent/unusable.
+ */
+export function liveAgentList(ctx: Context): AgentLike[] {
+  const agents = ctx.get('agents') as AgentsServiceLike | undefined
+  if (agents === undefined || typeof agents.list !== 'function') return []
+  try {
+    const list = agents.list()
+    return Array.isArray(list) ? list : []
+  } catch {
+    return []
+  }
 }
 
 /**

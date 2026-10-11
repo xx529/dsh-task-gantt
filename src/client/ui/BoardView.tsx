@@ -22,7 +22,7 @@
  * unmount one of them while another stays mounted.
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import type { TimelineResponse, TimelineTask } from '../../shared/contract.ts'
+import type { LaneNavigation, TimelineResponse, TimelineTask } from '../../shared/contract.ts'
 import { fetchTimeline, type RouteBase } from '../api.ts'
 import { t } from '../i18n.ts'
 import { GanttChart } from './GanttChart.tsx'
@@ -46,6 +46,15 @@ export interface BoardViewProps {
    * when absent, `api.ts` falls back to `resolveHostRoute(path)` itself.
    */
   routeBase?: RouteBase
+  /**
+   * Optional shell-injected session opener, called when a lane head is clicked.
+   *
+   * The shell owns the `uiWorkspace` lookup and does it at CLICK time (that
+   * service may arrive later), so this callback cannot be pre-resolved here:
+   * `false` or a throw means "the host did not take it" and the panel degrades
+   * silently. A lane with no `navigation` is never rendered as clickable at all.
+   */
+  navigate?: (target: LaneNavigation) => boolean
 }
 
 /** Stylesheet mount refcount; the element is shared by every board instance. */
@@ -70,7 +79,7 @@ function useBoardStyles(): void {
   }, [])
 }
 
-export function BoardView({ sessionId, visible, routeBase }: BoardViewProps): ReactNode {
+export function BoardView({ sessionId, visible, routeBase, navigate }: BoardViewProps): ReactNode {
   const [data, setData] = useState<TimelineResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [now, setNow] = useState(() => Date.now())
@@ -85,6 +94,21 @@ export function BoardView({ sessionId, visible, routeBase }: BoardViewProps): Re
    */
   const routeBaseRef = useRef<RouteBase | undefined>(routeBase)
   routeBaseRef.current = routeBase
+  /** Same reasoning for the opener: a fresh arrow must not restart anything. */
+  const navigateRef = useRef<BoardViewProps['navigate']>(navigate)
+  navigateRef.current = navigate
+
+  const onNavigate = useCallback((target: LaneNavigation): boolean => {
+    const opener = navigateRef.current
+    if (opener === undefined) return false
+    try {
+      return opener(target) === true
+    } catch {
+      // The shell promises not to throw; if it ever does, a failed jump must not
+      // take the panel down with it.
+      return false
+    }
+  }, [])
 
   /* ------------------------------------------------------- fetch + poll */
 
@@ -120,7 +144,13 @@ export function BoardView({ sessionId, visible, routeBase }: BoardViewProps): Re
 
   /* --------------------------------------------------------- now ticker */
 
-  const live = data !== null && data.range.end === null
+  /**
+   * AUTHORITATIVE liveness comes from the server (`live`), never from the local
+   * clock: when every member has stopped the host says so, and the axis must
+   * stop moving. A payload from before the contract gained `live` is treated as
+   * live, preserving the old behaviour rather than freezing on stale data.
+   */
+  const live = data !== null && data.live !== false
   useEffect(() => {
     if (!visible || !live) return
     setNow(Date.now())
@@ -184,8 +214,8 @@ export function BoardView({ sessionId, visible, routeBase }: BoardViewProps): Re
         {live ? (
           <span className="dtg-chip dtg-chip-live">{uiLabel('nowLabel')}</span>
         ) : (
-          <span className="dtg-chip">
-            {`${formatDateTime(data.range.start, tzOffsetMinutes)} → ${data.range.end === null ? '' : formatDateTime(data.range.end, tzOffsetMinutes)}`}
+          <span className="dtg-chip" title={uiLabel('frozenHint')}>
+            {`${formatDateTime(data.range.start, tzOffsetMinutes)} → ${uiLabel('endedLabel')} ${formatDateTime(data.range.end ?? data.generatedAt, tzOffsetMinutes)}`}
           </span>
         )}
         <span className="dtg-spacer" />
@@ -210,6 +240,7 @@ export function BoardView({ sessionId, visible, routeBase }: BoardViewProps): Re
           now={now}
           selectedTaskId={selectedTaskId}
           onSelectTask={onSelectTask}
+          navigate={onNavigate}
         />
       )}
 

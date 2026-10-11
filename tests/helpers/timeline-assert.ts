@@ -15,6 +15,7 @@
  */
 import {
   API_VERSION,
+  MESSAGE_PREVIEW_MAX,
   type ActivitySpan,
   type TaskEvent,
   type TimelineLane,
@@ -147,6 +148,162 @@ function checkTask(task: unknown, path: string, problems: TimelineProblem[]): vo
 }
 
 /** Validate one lane (a teammate row). */
+/* ------------------------------------------------------------------ */
+/* message spans, lane colour tokens and navigation (contract v2)      */
+/* ------------------------------------------------------------------ */
+
+const SPEAKER_KINDS = new Set(['user', 'lead', 'teammate', 'system'])
+const MESSAGE_KINDS = new Set(['turn', 'message', 'user-prompt'])
+
+/**
+ * A theme-token NAME. Lane colours are token references the browser resolves
+ * against the host theme — never literal paint. This is the anti-bypass rule:
+ * `#fff` in `lane.color` would sidestep `tests/theme.spec.ts`, which only scans
+ * source files, not runtime payloads.
+ */
+const TOKEN_NAME = /^--(?:dsw|ds)-[a-z0-9-]+$/
+
+/** Looks like a literal colour rather than a token name (for a better message). */
+const LITERAL_COLOUR = /^(?:#|rgba?\(|hsla?\(|oklch\(|lab\(|lch\(|color\()/i
+
+/** Validate a `SpanSpeaker`. */
+function checkSpeaker(speaker: unknown, path: string, problems: TimelineProblem[]): void {
+  if (!isRecord(speaker)) {
+    problems.push({ path, message: 'speaker must be an object', severity: 'error' })
+    return
+  }
+  if (typeof speaker.kind !== 'string' || !SPEAKER_KINDS.has(speaker.kind)) {
+    problems.push({ path: `${path}.kind`, message: `speaker kind must be one of ${[...SPEAKER_KINDS].join('|')} (got ${JSON.stringify(speaker.kind)})`, severity: 'error' })
+  }
+  if (!isNonEmptyString(speaker.id)) {
+    problems.push({ path: `${path}.id`, message: 'speaker id must be a non-empty string', severity: 'error' })
+  }
+  if (!isNonEmptyString(speaker.name)) {
+    problems.push({ path: `${path}.name`, message: 'speaker name must be a non-empty string', severity: 'error' })
+  }
+}
+
+/**
+ * Validate one `MessageSpan`.
+ *
+ * The frozen `to` semantics (contract prose): `to` is "present for
+ * `kind: 'message'` … a turn or a user prompt has no addressee and leaves this
+ * `undefined`". Combined with the host rule "if no `delivered` twin matches,
+ * leave `to` empty", the rule enforced here is:
+ *
+ * - `kind: 'message'` → `to` is OPTIONAL (paired with a delivery ⇒ present,
+ *   unmatched queued ⇒ absent);
+ * - `kind: 'turn' | 'user-prompt'` → `to` MUST be absent.
+ */
+function checkMessageSpan(span: unknown, path: string, problems: TimelineProblem[]): void {
+  if (!isRecord(span)) {
+    problems.push({ path, message: 'message span must be an object', severity: 'error' })
+    return
+  }
+  const kind = span.kind
+  if (typeof kind !== 'string' || !MESSAGE_KINDS.has(kind)) {
+    problems.push({ path: `${path}.kind`, message: `message kind must be one of ${[...MESSAGE_KINDS].join('|')} (got ${JSON.stringify(kind)})`, severity: 'error' })
+  }
+  if (!isFiniteNumber(span.time) || span.time <= 0) {
+    problems.push({ path: `${path}.time`, message: `message time must be a positive epoch ms (got ${JSON.stringify(span.time)})`, severity: 'error' })
+  }
+  if (span.end !== null && !isFiniteNumber(span.end)) {
+    problems.push({ path: `${path}.end`, message: `message end must be epoch ms or null (got ${JSON.stringify(span.end)})`, severity: 'error' })
+  }
+  if (isFiniteNumber(span.end) && isFiniteNumber(span.time) && span.end < span.time) {
+    problems.push({ path: `${path}.end`, message: `message end ${span.end} precedes time ${span.time}`, severity: 'error' })
+  }
+  checkSpeaker(span.from, `${path}.from`, problems)
+  if (span.to !== undefined) {
+    checkSpeaker(span.to, `${path}.to`, problems)
+    if (kind === 'turn' || kind === 'user-prompt') {
+      problems.push({
+        path: `${path}.to`,
+        message: `a ${kind as string} has no addressee; only kind 'message' may carry 'to'`,
+        severity: 'error',
+      })
+    }
+  }
+  if (span.preview !== undefined) {
+    if (typeof span.preview !== 'string') {
+      problems.push({ path: `${path}.preview`, message: 'preview must be a string when present', severity: 'error' })
+    } else {
+      if (span.preview.length > MESSAGE_PREVIEW_MAX) {
+        problems.push({
+          path: `${path}.preview`,
+          message: `preview is ${span.preview.length} chars; the host must clip it to MESSAGE_PREVIEW_MAX (${MESSAGE_PREVIEW_MAX})`,
+          severity: 'error',
+        })
+      }
+      if (/[\r\n]/.test(span.preview)) {
+        problems.push({ path: `${path}.preview`, message: 'preview must be the message first line, whitespace-collapsed (no newline)', severity: 'error' })
+      }
+      if (span.preview !== span.preview.trim()) {
+        problems.push({ path: `${path}.preview`, message: 'preview must be trimmed', severity: 'error' })
+      }
+      if (/ {2,}/.test(span.preview)) {
+        problems.push({ path: `${path}.preview`, message: 'preview contains a run of spaces; the host collapses whitespace', severity: 'warn' })
+      }
+    }
+  }
+  if (span.messageId !== undefined && !isNonEmptyString(span.messageId)) {
+    problems.push({ path: `${path}.messageId`, message: 'messageId must be a non-empty string when present', severity: 'error' })
+  }
+  if (!isNonEmptyString(span.sessionId)) {
+    problems.push({ path: `${path}.sessionId`, message: 'message sessionId must be a non-empty string', severity: 'error' })
+  }
+}
+
+/** Validate `LaneColorTokens`: two theme-token NAMES, never literal paint. */
+function checkColorTokens(color: unknown, path: string, problems: TimelineProblem[]): void {
+  if (!isRecord(color)) {
+    problems.push({ path, message: 'lane color must be an object of theme-token names', severity: 'error' })
+    return
+  }
+  for (const key of ['bar', 'on'] as const) {
+    const value = color[key]
+    if (!isNonEmptyString(value)) {
+      problems.push({ path: `${path}.${key}`, message: `${key} must be a non-empty string token name`, severity: 'error' })
+      continue
+    }
+    if (!TOKEN_NAME.test(value)) {
+      problems.push({
+        path: `${path}.${key}`,
+        message: LITERAL_COLOUR.test(value)
+          ? `${key} is a literal colour (${value}); it must be a theme token NAME like --dsw-alias-brand-primary`
+          : `${key} must match ${String(TOKEN_NAME)} (got ${value})`,
+        severity: 'error',
+      })
+    }
+  }
+}
+
+/** Validate `LaneNavigation`. */
+function checkNavigation(navigation: unknown, path: string, problems: TimelineProblem[]): void {
+  if (!isRecord(navigation)) {
+    problems.push({ path, message: 'navigation must be an object', severity: 'error' })
+    return
+  }
+  if (navigation.type === 'session') {
+    if (!isNonEmptyString(navigation.value)) {
+      problems.push({ path: `${path}.value`, message: "a 'session' navigation value must be a non-empty session id", severity: 'error' })
+    }
+    return
+  }
+  if (navigation.type === 'address') {
+    const value = navigation.value
+    if (!isRecord(value)) {
+      problems.push({ path: `${path}.value`, message: "an 'address' navigation value must be an object", severity: 'error' })
+      return
+    }
+    if (!isNonEmptyString(value.sessionId)) {
+      problems.push({ path: `${path}.value.sessionId`, message: "an 'address' navigation value must carry a non-empty sessionId", severity: 'error' })
+    }
+    return
+  }
+  problems.push({ path: `${path}.type`, message: `navigation type must be 'session' | 'address' (got ${JSON.stringify(navigation.type)})`, severity: 'error' })
+}
+
 function checkLane(lane: unknown, path: string, problems: TimelineProblem[]): void {
   if (!isRecord(lane)) {
     problems.push({ path, message: 'lane must be an object', severity: 'error' })
@@ -196,6 +353,38 @@ function checkLane(lane: unknown, path: string, problems: TimelineProblem[]): vo
     if (lane.hasHistory === false && lane.spans.length > 0) {
       problems.push({ path: `${path}.hasHistory`, message: 'hasHistory is false but spans are present', severity: 'warn' })
     }
+  }
+  if (!Array.isArray(lane.messages)) {
+    problems.push({ path: `${path}.messages`, message: 'messages must be an array (empty is fine)', severity: 'error' })
+  } else {
+    lane.messages.forEach((message, index) => checkMessageSpan(message, `${path}.messages[${index}]`, problems))
+    for (let index = 1; index < lane.messages.length; index += 1) {
+      const previous = lane.messages[index - 1] as { time?: unknown }
+      const current = lane.messages[index] as { time?: unknown }
+      if (isFiniteNumber(previous?.time) && isFiniteNumber(current?.time) && current.time < previous.time) {
+        problems.push({
+          path: `${path}.messages[${index}]`,
+          message: `messages must ascend by time: ${current.time} after ${previous.time}`,
+          severity: 'error',
+        })
+      }
+    }
+  }
+  checkColorTokens(lane.color, `${path}.color`, problems)
+  if (lane.navigation !== undefined) {
+    checkNavigation(lane.navigation, `${path}.navigation`, problems)
+    if (lane.id === 'unassigned') {
+      problems.push({
+        path: `${path}.navigation`,
+        message: "'unassigned' is a sentinel lane, not a session; it must not offer navigation",
+        severity: 'error',
+      })
+    }
+  } else if (isNonEmptyString(lane.id) && lane.id !== 'unassigned') {
+    // Advisory: the contract says navigation is absent only when there is no
+    // real session behind the lane, so a normal lane without it is suspicious
+    // but not yet a hard failure.
+    problems.push({ path: `${path}.navigation`, message: `lane "${lane.id}" has no navigation target`, severity: 'warn' })
   }
   if (!Array.isArray(lane.tasks)) {
     problems.push({ path: `${path}.tasks`, message: 'lane tasks must be an array', severity: 'error' })
@@ -249,6 +438,31 @@ export function validateTimeline(value: unknown): TimelineProblem[] {
     }
     if (isFiniteNumber(range.end) && isFiniteNumber(range.start) && range.end < range.start) {
       problems.push({ path: '$.range.end', message: `range.end ${range.end} precedes range.start ${range.start}`, severity: 'error' })
+    }
+  }
+  if (typeof value.live !== 'boolean') {
+    problems.push({ path: '$.live', message: 'live must be a boolean', severity: 'error' })
+  } else if (isRecord(range)) {
+    // FROZEN SEMANTICS (contract): `live === false` ⟺ `range.end` is a
+    // timestamp; `live === true` ⟺ `range.end === null`. The pair is what makes
+    // the chart stop growing on an idle team, so an inconsistent pair is an
+    // ERROR here — not a degradation. Ruling communicated to host-data-2/ui:
+    // a host that cannot tell must pick the CONSISTENT pair (`live: true` with
+    // `end: null`) and say so in `notes`; it must never send `live: false`
+    // together with `end: null`.
+    if (value.live && range.end !== null) {
+      problems.push({
+        path: '$.range.end',
+        message: `live is true but range.end is ${JSON.stringify(range.end)}; a live board must keep end:null (the client pins the right edge to now)`,
+        severity: 'error',
+      })
+    }
+    if (!value.live && !isFiniteNumber(range.end)) {
+      problems.push({
+        path: '$.range.end',
+        message: `live is false but range.end is ${JSON.stringify(range.end)}; a frozen board must carry the frozen timestamp`,
+        severity: 'error',
+      })
     }
   }
   if (typeof value.source !== 'string' || !SOURCES.has(value.source)) {
@@ -355,7 +569,9 @@ export function validTimeline(): TimelineResponse {
     sessionId: 'session-1',
     rootSessionId: 'session-1',
     generatedAt: start + 1000,
+    // `end: null` ⇒ `live: true` (frozen pair; see validateTimeline).
     range: { start, end: null },
+    live: true,
     lanes: [
       {
         id: 'lead',
@@ -366,6 +582,30 @@ export function validTimeline(): TimelineResponse {
         createdAt: start,
         hasHistory: true,
         spans: [{ kind: 'step', start, end: start + 10, turn: 1, step: 1 }],
+        messages: [
+          // The human's own prompt: no addressee, fixed speaker id 'user'.
+          {
+            kind: 'user-prompt',
+            time: start + 20,
+            end: null,
+            from: { kind: 'user', id: 'user', name: 'you' },
+            preview: 'please build the gantt panel',
+            sessionId: 'session-1',
+          },
+          // A delivery that found its `delivered` twin: `to` is present.
+          {
+            kind: 'message',
+            time: start + 30,
+            end: start + 40,
+            from: { kind: 'lead', id: 'lead', name: 'lead' },
+            to: { kind: 'teammate', id: 'session-1', name: 'ui' },
+            preview: 'take task-4',
+            messageId: 'msg-1',
+            sessionId: 'session-1',
+          },
+        ],
+        color: { bar: '--dsw-alias-brand-primary', on: '--dsw-alias-label-primary-inverted' },
+        navigation: { type: 'session', value: 'session-1' },
         tasks: [
           {
             id: 'task-1',

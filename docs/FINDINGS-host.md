@@ -669,3 +669,262 @@ $ git diff --exit-code -- lib            # exit 0  ← 构建幂等，无未暂�
 verify 的 `tests/host-mount.spec.ts` 已覆盖四条路径（8/8 绿）。
 **注意**：我**没有**独立复测真机 live composition 里 `webServer` 的挂载时机 ——
 该结论（apply 时尚未挂载）由改动者给出，我采信但未复验，属 ❓（见 §7）。
+
+---
+
+## 14. `user/message` 的真实形状，以及它**不是**人类发言的多数派（task-7 B）
+
+结论：**`user/message` 事件的 `type` 不能用来判定「人类说了话」**。真正的判别字段是
+`data.source.kind`。
+
+`user/message` 的 `data` 键**固定为 4 个**：`content` / `source` / `role` / `id` ——
+**没有 `turn`**（task-7 描述里那句「是否带 turn」的答案是：不带；`turn` 只出现在
+`turn/start` 的 `data.turn` 里）。
+
+Lead 会话 `session-4d51254b`（3486 条事件）实测 `user/message` 按 `source.kind` 分布：
+
+| `source.kind` | 条数 | 是不是人 |
+|---|---|---|
+| `user` | **11** | ✅ 是 |
+| `time-context` | 19 | ❌ 运行时注入 |
+| `team-message` | 23 | ❌ 队友消息的投递 |
+| `subagent-settled` | 21 | ❌ 子会话结算 |
+| `tool-jobs` | 6 | ❌ 工具作业 |
+| `agent-instructions` / `runtime-context` / `schedule` | 各 1 | ❌ |
+
+同一条日志里 `user/message` 共 **83** 条，其中**只有 11 条**是人类。
+若不按 `source.kind` 过滤，甘特图上会凭空多出 72 个「你说的话」——这正是
+「禁止发明」要挡住的那类错误。
+
+一个 teammate 会话（`66b9735d`）同样成立：17 条 `user/message`，`user` 只有 1 条。
+
+**实现**：`foldMessageRecords` 只接受 `source.kind === 'user'`，其余计入
+`diagnostics.injectedUserMessages` 并写进 `notes`（不静默丢弃）。
+
+## 15. 消息 span：配对规则、归属规则、以及一处真缺陷（task-7 A/C）
+
+### 15.1 配对（`queued` ↔ `delivered`）
+
+- `team/message/queued` 带 `message.{id, senderId, senderName, targetId, content[]}`；
+- `team/message/delivered` **只有** `{messageId, targetId}` —— 没有 sender。
+
+Lead 会话实测：`queued` 57 条、`delivered` 57 条，**按 `messageId` 配对后
+`unpairedDeliveries = 0`**（57/57 全配上）。配对是按 id 查表，**不是**按相邻位置或时间接近度。
+若某个 delivery 的 queue 不在可读窗口内，仍然发这条 span，但**不设 sender**，
+并把 `unpairedDeliveries` 计入 `notes` —— 日志没说谁发的，插件就不说。
+
+### 15.2 归属（谁该被画在谁的泳道上）
+
+**所有** `team/message/*` 事件都写在 **Lead 的日志**里，无论发送者是谁。因此
+**不能**按「从哪个日志读到的」来决定归属，必须按 payload 的 `senderId` 解析到
+roster。实测归属正确：
+
+```
+16:14:08  from=91410edb…/docs   → 66b9735d…/packaging
+16:15:46  from=…4d51254b/lead   → 66b9735d…/packaging
+16:16:18  from=f828dda6…/verify → 87589993…/host-data
+16:22:45  from=7484fccf…/shell  → c79a18f7…/ui
+```
+
+用户 prompt 则归到**承载它的那条日志**的泳道（Lead 的日志 → `lead` 泳道），
+`from` 固定为 `{ kind: 'user', id: 'user', name: 'you' }`。
+
+### 15.3 一处真缺陷：日志缓存让「已停止」判定变陈旧
+
+`src/host/session-log.ts` 原本把一份读到的日志 **memo 1.5 秒**
+（`CACHE_TTL_MS = 1500`，`CACHE_MAX_ENTRIES = 64`）。这在实测里直接表现为
+**同一个 session 的第二次请求拿到上一份快照**：
+
+```
+第一次请求（日志仍开着）→ 缓存
+1.5 秒内第二次请求      → 命中缓存 → 仍然报「全部已关闭」→ live=false
+```
+
+也就是说：用户刚发一条新 prompt，面板可能**停在冻结态**直到 memo 过期。
+健壮性探针最初就是这样误报的（案例 3 明明是 closed 日志却读到 open 日志）。
+
+**已修**：删掉跨请求缓存，改为**每次请求都真读**（同一请求内 `timeline.ts`
+本来就对每个 lane 只 fold 一次，没有重复读）。`clearSessionLogCache()` 保留为
+空实现，仅为既有测试调用点保持编译。
+
+修复后同一组探针全绿（4 个场景）：
+
+```
+ok: own log mid-step => live (live=true, end=null)
+ok: running teammate agent => live (live=true, end=null, 且该 teammate 有独立泳道)
+ok: closed log => not live (frozen at the last event)
+ok: cold teammate log with an open span => not live（冷日志的未闭合 step 是历史，不是「在跑」）
+```
+
+### 15.4 停止判定（task-7 C）——只用事件证据
+
+```
+live = (任一泳道的 agent 正在 running)  OR  (被请求的那个会话自身仍有 open span)
+```
+
+- `ctx.agents.get(id)?.status === 'running'`：**已注册**会话的权威答案；
+- **冷会话**（`ctx.agents.get()` 返回 undefined）里未闭合的 span 是**历史**，不是证据：
+  实测真实日志里 4 个已结束的 teammate 都以未闭合 step 结尾，若把它们当成「在跑」，
+  死去团队的图表会永远向前爬；
+- 冻结时 `range.end = 最后一个被观测到的事件时间`，**不是** `generatedAt` —— 右边缘
+  仍然落在一个真实事件上，不需要发明任何时间戳。
+
+同时给 `ctx.agents.list()` 加了最后一道 roster 兜底：**有 live agent 但日志里没有
+`team/member` 记录**的 teammate 现在也能拿到泳道（否则它的 span 与消息全部消失）。
+只接受 `session.header.parentSession === team root` 的子会话，避免把无关 agent 画成队友。
+
+## 15.5 真缺陷：**空的 live 日志会遮蔽磁盘日志**（本轮实测发现并修复）
+
+`readSessionLog` 的通道选择原本是：
+
+```ts
+const live = readLive(ctx, sessionId)
+if (live.ok) return live          // ← 这里
+const persisted = await readPersisted(ctx, sessionId)
+```
+
+而 `readLive` 只要拿到一个**数组**就返回 `ok: true` —— **包括空数组**。于是
+「会话已注册、但历史还没回放进内存」这种情况（`snapshotEvents()` 返回 `[]`）
+会被判成"读到了日志"，磁盘回退**永远不会执行**。
+
+**实测复现**（真实形状的日志放磁盘、live 通道返回 `[]`）：
+
+```
+source       : log      ← 谎报：说数据来自会话日志
+lead spans   : 0
+lead messages: 0
+observed range: 1791734874993 -> 1791734874993
+```
+
+即：**面板画空图，却声称 `source: 'log'`**。这比"慢"严重得多 —— 它同时犯了
+本插件最忌讳的两件事（数据丢失 + 来源谎报）。
+
+**已修**：
+- `readLive` 对空数组返回 `{ ok: false, empty: true, reason: '…is empty' }`，
+  新增 `SessionLogFailure.empty` 标记「形状正确但为空」；
+- `readSessionLog` 因此会继续走磁盘通道；
+- 若**两条通道都为空**（真正的新会话），返回**成功的空读**，这样全新会话不会被
+  误报成降级的 `partial`，`source` 仍是 `log`。
+
+**修复后同一复现**：`lead spans: 2`、`lead messages: 2`、range 落在真实事件区间。
+
+**为什么之前没被发现**：单元测试与我的探针都用「live 与磁盘返回同一份数据」的假 ctx
+（`snapshotEvents: () => logs[id]`），于是 `live.ok` 为真且**非空**，这条路径根本走不到。
+暴露它的方式是**故意让两条通道不一致**（live 空、磁盘有）—— 记在这里，作为
+「假 ctx 的通道一致性会掩盖分支」的教训。
+
+**遗留 ❓**：真实宿主里「live 通道返回空数组」的实际发生率未测（本机没有这种会话样本）。
+修复的价值在于：无论它多罕见，都不该静默丢数据。
+
+## 16. 泳道配色令牌（task-7 D）——全部实测存在
+
+host 只给**令牌名**，色值由客户端 `var(...)` 解析。在**运行中的桌面 app**
+（DSH 0.2.0-rc.2 + `dsh-better-sidebar@0.25.0`）里读真实样式表验证：这些令牌
+**定义在 `body` 选择器**上（该处共定义 107 个 `--dsw-alias-*`），且都能解析出真实颜色：
+
+| 令牌 | light 皮肤解析值 |
+|---|---|
+| `--dsw-alias-state-business-primary` | `rgb(65, 118, 230)` |
+| `--dsw-alias-state-success-primary` | `rgb(34, 197, 94)` |
+| `--dsw-alias-state-warn-primary` | `rgb(245, 158, 11)` |
+| `--dsw-alias-state-error-primary` | `rgb(236, 19, 19)` |
+| `--dsw-alias-state-idle-primary` | `rgb(212, 212, 212)` |
+| `--dsw-alias-label-primary-inverted`（`on`） | `rgb(255, 255, 255)` |
+
+- `on` 一律用 `--dsw-alias-label-primary-inverted`：设计系统自己的「填充面之上的文字」
+  墨色，better-sidebar 也这么用，不是猜的白。
+- **实测不存在、因此没用**：`--dsw-alias-label-invert`、`--dsw-alias-label-on-brand`。
+- verify 的 F8 曾是**险些误报**：`--dsw-alias-state-idle-primary` 与
+  `--dsw-alias-label-primary-inverted` 在 better-sidebar 产物里一次都不出现。
+  查定义源后确认两者都真：定义源是宿主 `@deepseek-ai/dsh-client-ui-theme`
+  （app.asar 内，408 个 `--(dsw|ds)-*` 定义），better-sidebar 只是消费者。
+  该 408 名字快照已固化为 `tests/fixtures/dsw-theme-tokens.json`，并有守护断言
+  「buildTimeline 发出的每个 lane 色都必须在定义表里」。
+
+### 16.1 为什么是 **5** 个色相，而不是 6 个（我提的第 6 色被 Lead 否掉）
+
+我先提了 `--dsw-alias-onboarding-accent`（实测 `rgb(57, 100, 254)`，确实是与前 5 个不同的
+色相），**Lead 核查后驳回，理由成立**：它属 onboarding 流程，主题改版可合法移除，
+拿它做 team 身份色等于引入一个可能被撤掉的依赖。Lead 独立扫了 app.asar 里全部
+**120** 个 `--dsw-alias-*`（比我的 107 个范围更大），确认没有可用的第 6 个：
+
+- `--dsw-alias-brand-primary` / `--dsw-alias-button-primary-fill` → `rgb(15, 17, 21)` 近黑；
+- `--dsw-alias-link` 与 business **同色值**（多一个名字，不多一个色相）；
+- `--dsw-alias-state-*-tertiary` → `rgb(228, 237, 253)` 一类极浅底，承载不了白字。
+
+**5 个真实饱和填充就是上限**，注释与本文都按上限写，不拿"表格上看起来不同"的令牌充数。
+
+### 16.2 分配方式从「哈希」改为「按位置」（Lead 拍板，已落地）
+
+旧实现 `PALETTE[stableHash(laneId) % 5]`：**只保证稳定，结构上无法避免碰撞** ——
+生日问题下 3 个 id 落 5 槽就有约 0.8 概率撞一对；真实那次 9 泳道只用到 5 个 token，
+8 个 teammate 里多对共享同色。用户的原话是「lead 和**各** teammate 都要有一种颜色」，
+指的是**同屏内彼此可区分**，哈希做不到。
+
+新规则（`laneColorTokens(laneId, index)`）：
+
+| 泳道 | 颜色 |
+|---|---|
+| `lead`（下标 0） | 固定 `PALETTE[0]`（任何团队、任何会话都一样） |
+| roster 第 *n* 个 teammate | `PALETTE[n]`，到第 5 个之后循环 |
+| `unassigned` | 固定 `UNASSIGNED_COLOR_TOKENS`（中性项，不参与轮转） |
+
+**保证**：前 5 条泳道（lead + 4 个 teammate）**必定五色互不相同**。
+**已知上限**：**第 5 个 teammate 起颜色开始循环**；同色时靠泳道名 + 客户端的非颜色
+冗余（描边/明暗）区分，这部分归 ui。
+
+### 16.3 稳定性措辞（精确版，替换旧的"永远跨会话稳定"）
+
+- **lead 永远同色**；
+- **同一 teammate 在 roster 顺序不变时同色**；
+- **roster 顺序变化时，teammate 的颜色可能随之改变** —— 这是为换取
+  「同屏不撞色」付出的代价，**是有意的取舍**，不是缺陷。
+
+旧实现那句"同一 member id 永远得到同一颜色（跨会话稳定）"**不再成立，已从注释与文档删除**。
+
+**这条取舍的验证缺口**：它只有本文件与 `lane-color.ts` 的注释固定，**没有真机观察**
+（verify 的真机冒烟里 roster 顺序没有变化，所以没能触发）。但它**不是待验证的未知行为**：
+分配是纯函数 `PALETTE[index % 5]`，语义由 `tests/host-integration.spec.ts` 直测固定，
+无需运行时观察即可确定。因此这条**不改判为 ❓**，只是把它记为「设计取舍，无真机样本」。
+若将来做真机验证，顺手把「同一 teammate 在不同 roster 顺序下换色」记录一次即可。
+
+### 16.4 读放大代价：**两个量级，分属两条通道**（与 verify 交叉测量后修正）
+
+我最初给的 `18.7 ms`（median）只覆盖**服务路径**，verify 复跑后指出这不是唯一的量。
+现在的完整图景是两条通道分别计价，**两者都保留、都署名**：
+
+| 通道 | 测量者 | 每请求耗时 | 说明 |
+|---|---|---|---|
+| 服务路径（`agents.session.snapshotEvents()`，已在内存的事件对象） | host-data-2 | `20.8 / 19.0 / 18.7 / 18.4 / 18.5 ms`，median **18.7 ms** | 不读盘、不 `JSON.parse` |
+| 磁盘冷读（`sessionPersistence.open().read()`，解 1941 帧 + parse 19k 行） | verify | 变体 A median **1010.3 ms** / 变体 B median **985.9 ms** | 分解：解压 ≈31.9 ms·日志、JSON.parse ≈50.4 ms·日志、fold ≈1.6 ms·日志 |
+
+`18.7 ms` vs `≈1.0 s` 相差约 53×，**不是矛盾**：前者是内存对象，后者是「从磁盘解多帧 zstd
+再逐行 parse」。`src/` 里除本脚本外没有任何 zstd/读盘代码，所以面板请求正常走前者。
+
+**对「删掉 1.5s 缓存」决策的含义**：删缓存的安全性取决于请求走内存通道。若某次请求落到
+磁盘回退通道，那一次就是 ≈1 秒 —— 这是**已知代价**，不是缺陷（面板轮询在秒级，1 秒的
+偶发冷读可接受；而陈旧快照会让面板卡在冻结态，是**错误**而不仅是慢）。
+❓**仍未验证**：真机「冷启动后第一次打开面板」的耗时（verify 记为 ❓17）。
+
+### 16.5 多帧 zstd：不依赖外部 CLI 的读法（verify 提供，我逐日志验证）
+
+这些日志是 **append-only 多帧 zstd**：Lead 文件 2.79 MB 里 **1941 帧**。
+`zlib.zstdDecompressSync(buf)` **只解第一帧且不报错** —— 整文件只得到 222 B / 1 行
+（`unzstd -c` 是 3795 行）；流式 `createZstdDecompress` 同样只给 222 B。
+
+`src/host/dev-verify.mts` 原先用 `zstd -d -c`（正确但依赖外部二进制）。现已改为
+verify 给的**无需 CLI** 写法：
+
+```js
+const parts = []; let off = 0
+while (off < raw.byteLength) {
+  const r = zstdDecompressSync(raw.subarray(off), { info: true })
+  parts.push(r.buffer); const n = r.engine.bytesWritten
+  if (!(n > 0)) break
+  off += n
+}
+```
+
+**逐日志验证**：本工作区全部 **15 个**真实日志，该写法与 `zstd -d -c` 得到**完全相同的行数**
+（107 / 1207 / 1063 / 994 / 4193 / 563 / 88 / 49 / 749 / 4075 / 2621 / 4 / 280 / 3960 / 4），
+mismatches = 0。自检脚本因此不再依赖本机是否装了 `zstd`。

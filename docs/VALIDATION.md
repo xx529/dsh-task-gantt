@@ -11,7 +11,7 @@
 | 门 | 命令 | 结果 | 原始证据 |
 |---|---|---|---|
 | 类型检查 | `pnpm run typecheck` | ✅ `typecheck_exit=0`（`tsc -p tsconfig.json --noEmit`，无任何输出） | `/tmp/gate2.txt` |
-| 单测 | `pnpm run test` | ✅ `Test Files 14 passed (14)` / `Tests 343 passed | 1 skipped (344)`（2026-10-11 02:04 复跑；ci.spec 9→14→18→19，见 §1.3） | 02:04 复跑 |
+| 单测 | `pnpm run test` | ✅ `Test Files 17 passed (17)` / `Tests 438 passed | 1 skipped (439)`（2026-10-12 00:17 复跑；契约 v2 见 §1.4–§1.5） | 00:17 复跑 |
 | 构建 | `pnpm run build` | ✅ 产出 `lib/index.js` + `lib/client.js`（`.d.ts`/`.map` 同批） | `/tmp/gate2.txt` |
 | 产物形状（packaging 脚本） | `pnpm run verify:build` | ✅ `[verify-build] OK`（宿主半 ESM 导出 name/inject/apply，0 个非相对 import；客户端半 wrapper 调用一次且 factory 返回 exports） | `/tmp/gate2.txt` |
 | 展示元数据（packaging 脚本） | `pnpm run verify:meta` | ✅ `[verify-meta] OK`（`locale/en.json`、`locale/zh.json` 经 exports 解析；`icon.svg` 2277 B） | `/tmp/gate2.txt` |
@@ -122,6 +122,57 @@ $ node -e "import('./lib/index.js')…"（新加的那一步）→ host half loa
 
 **仍待验证**：GitHub 上的**重跑**结果（Lead 会 push 并盯）——本地等价命令已全绿，但「云端 runner 上的 setup-node cache、action 版本解析」只有真跑才算数。
 
+## 1.4 契约 v2（task-10）：冻结语义口径 + 新增守护 + 我自己的两处更正
+
+Lead 扩展并冻结了 `src/shared/contract.ts`（`SpanSpeaker` / `MessageSpan` / `LaneColorTokens` / `LaneNavigation` / `TimelineResponse.live` / `MESSAGE_PREVIEW_MAX`）。我同步了门禁，并把**口径**定下来（已发给 host-data-2 与 ui-2）：
+
+| # | 冻结规则 | 口径（谁违反就是 error，不是降级） |
+|---|---|---|
+| 1 | `live === true` ⟺ `range.end === null`；`live === false` ⟺ `range.end` 是时间戳 | **两个方向都按 error 处理**。`live` 与 `source` 是**正交**的：`source:'live'`（没读到日志）可以与 `live:false`（全队已停）同时出现。host 若无法判断，必须选**自洽的一对**（`live:true` + `end:null`）并在 `notes` 里说明；绝不允许 `live:false` + `end:null`（客户端没有可冻结的右边界）或 `live:true` + 硬 end（右边界会停止生长却说还活着） |
+| 2 | `MessageSpan.to` | `kind:'message'` → **可选**（配到 delivered 就有，配不到就留空，因为journal 不说 sender/target 就不许编）；`kind:'turn'` / `'user-prompt'` → **必须缺席**（契约原文「a turn or a user prompt has no addressee」） |
+| 3 | `from` / `to` 的 `SpanSpeaker` | `kind ∈ user\|lead\|teammate\|system`，`id`/`name` 必须非空字符串 |
+| 4 | `preview` | 长度 ≤ `MESSAGE_PREVIEW_MAX`(140)、无换行、已 trim；连续空格只算 warn。host 必须自己裁剪，而不是把长文本甩给面板 |
+| 5 | `LaneColorTokens.bar/on` | 必须是**令牌名** `/^--(?:dsw\|ds)-[a-z0-9-]+$/`。`#fff` / `red` / `var(--dsw-…)` 全部 error——这条专门堵「反正 theme 扫描只看源码，我在这里写色值就能绕过」 |
+| 6 | `navigation` | `session` 必带非空 value；`address` 必带非空 `value.sessionId`；`unassigned` 哨兵泳道**不得**有 navigation（warn：正常泳道缺 navigation） |
+| 7 | `messages` | 按 `time` 升序；`end` 为 null 或 ≥ time；`sessionId` 非空 |
+
+**新增守护（全部有正反标定，能真的红）**
+- `tests/contract.spec.ts` 71 条（原 39）：**新增 21 条反例**（live 缺失/非布尔、两种畸形态、color 缺失/色值/命名色/`var()`/非主题名、messages 非数组、kind 未知、乱序、from.id 空、from.kind 未知、preview 超长/带换行、turn 带 `to`、end<time、navigation 三种坏形态、unassigned 带 navigation），并保留「反例总数 == 被拒总数」这条防空转断点；另有 3 组正向/鉴别力用例（live 两种合法组合、speaker 四种 kind、令牌族接受 `--dsw-*`/`--ds-*` 且拒绝 11 种近似写法，且**能区分**「写了色值」与「名字写错」两种报错文案）。
+- `tests/host-messages.spec.ts` **20 条（新文件）**：`foldMessageRecords` 的配对规则——**交错顺序下仍按 `messageId` 配对**（邻接实现会配对错）、孤儿 delivery 保留但**不编 sender**、重复 queued 取首个/重复 delivered 取末个、queue 缺 target 由 delivery 补、`user/message` 只有 `source.kind==='user'` 才算人类提示（其余 7 种 runtime kind 全部计入 `injectedUserMessages` 且不产出提示）、preview 折叠空白/裁剪到 140 且与契约常量一致、乱序/垃圾输入不抛异常、排列不变性。
+- `tests/host-integration.spec.ts` 18 条：**fixture 升级为真实日志 1263 条事件**（现在包含全部 `team/message/queued` 56 + `delivered` 56 + `user/message` 80 —— 见 §4 事实 15），端到端断言：真实日志里 80 条 `user/message` 只产出**恰好 11 条**人类提示（`source.kind==='user'`）、配对 delivery 带 addressee、每条泳道都有真实令牌色与 navigation、9 条泳道 0 error **0 warn**。
+
+**新发现 F8（我差点误报，记录方法论）**：`lane.color.on` 用的是 `--dsw-alias-label-primary-inverted`、`idle` 泳道用 `--dsw-alias-state-idle-primary`——这两个名字在 better-sidebar 的产物里**一次都没出现**，我一度怀疑是编造的 token（那样 bar 会渲染成透明且**任何地方都不报错**）。查证结论：**它们都是真实存在的**。教训是**必须查定义源**：better-sidebar 只是 token 的**消费者**，定义源是宿主 `@deepseek-ai/dsh-client-ui-theme/lib/client.js`（从 app.asar 提取，共 **408** 个定义）。我把这 408 个名字快照成 `tests/fixtures/dsw-theme-tokens.json`（provenance 写在 `_source`），新增守护「host 发出的每个 lane 色都必须在定义表里」，并做了鉴别力用例（`--dsw-alias-label-inverse` 这种看着很像但**不存在**的名字会被拒）。
+**同一类错误的自我更正**：我自己的 fixture 之前就用了不存在的 `--dsw-alias-label-inverse`（3 个文件、10 处），已全部改成真实的 `--dsw-alias-label-primary-inverted`；并加了一条断言让**仓库 fixture 本身**也必须用真实 token——测试里的坏例子会教坏后来人，即使没有断言依赖它。
+
+**后续（Lead 拍板后）**：我在真实 board 探针里发现的「9 泳道只用 5 个 token、多对 teammate 同色」被 Lead 定为**真缺陷**，host-data-2 已改为**按位置分配 + 5 色真实调色板**；我按新语义重写了配色断言并新增对纯函数 `laneColorTokens` 的位置语义直测（旧哈希实现在其上必红）。完整证据链见 §5 **F9**。
+
+**同时更正我自己两条过时断言（task-10 的 tsc 错误之外）**：`tests/host-timeline.spec.ts` 与 `tests/host-integration.spec.ts` 里三条「`source==='live'` / 没日志 ⇒ `range.end` 必为 null」的断言在 v2 下**不再成立**（host 在完全观察不到时选择 `live:false` + `end=now`，是自洽的一对）。已改为断言冻结的**成对关系**，并把 host 的这个选择标注为「观察到的实现选择，不是契约要求」。
+
+## 1.5 契约 v2 的第二批守护（task-8/task-9 的覆盖缺口）+ 四处更正
+
+`docs` 之外全部落在 `tests/**`。基线：`typecheck exit=0`、`17 files / 438 passed / 1 skipped`（00:17 复跑）。
+
+**新增/加强的覆盖**
+
+| 文件 | 用例 | 内容 |
+|---|---|---|
+| `tests/token-definitions.spec.ts`（新） | 8 | **①存在性**：剥注释后扫 `src/**`（19 文件）的 `var(--token)` 与 `'--token'` 引用，差集必须为空（**当前 25 个 distinct 引用、0 missing**）。②**对比度**：`UR_MARKER_RING_TOKENS` 双层、`UR_MARKER_FILL_TOKEN` = 面板表面、每套皮肤至少一层 ≥3:1、被否掉的 `markdown-citation`（不随皮肤翻转）1.16:1 的反例锁、WCAG 公式自校准（18.90 / 1.17 / 1.16 / 1.00 / 15.41 全复现）。 |
+| `tests/client-navigation.spec.ts`（新） | 13 | `apply()` 期间 `ctx.get` 调用序列**恰为 `['betterSidebar']`**（惰性取用的回归锁）；`navigate()` 四类死服务一律返回 false 且不冒泡（缺服务 / `openSession` 非函数 / 抛错 / **点击时 registry 抛错**）；解包口径（session→**裸字符串**、address→**同一对象引用** `toBe`）；**晚挂载**后同一 `navigate` 闭包开始工作；descriptor（`id`/`order=50`/`single`/`dedupeKey`）与 props **恰为四项**且回调**引用稳定**。 |
+| `tests/layout.spec.ts` +12 | 51 | 冻结窗口语义（`live:false` 时 `now` 取 3 万或 10 亿都不改变 `window.end`/`dataWidth`/span x；闭合 span 不被拉伸；`live:true`→`endMarker.kind='now'`；退化 payload → `endSource='datum'`；**旧 payload 无 `live` 字段 → 仍按 live 处理**）；消息层（**抽稀只删不挪**：每个标记 time 必须等于某条真实消息的 time；`droppedMessageCount` 守恒；密度带 `count/firstTime/lastTime` 覆盖真实首尾；`decimateMarkers` 确定性 + `maxPerLane`；`both` 与 `markers` 的候选差；缺 `to` 不编造；恶意 messages 不抛异常）。 |
+| `tests/bundle.spec.ts` 加强 | 16 | 运行时 `require` **白名单收紧为恰好 `["react","react/jsx-runtime"]`**（原先允许 `@deepseek-ai/*` 与 react-dom，无法发现新增依赖）。 |
+| `tests/host-integration.spec.ts` +3 | 23 | **空 live 读不再遮蔽磁盘日志**的回归用例（见下）；「两条通道都可读但为空」按**成功空读**处理（`source:'log'`、0 span，不诬告成 `partial`）。 |
+
+**从这次梳理里产生的真缺陷（已修，我加同源回归）**：`readSessionLog` 曾把 `readLive` 返回的**空数组**当成成功，于是「会话已注册但历史还没回放进内存」永远不会回退磁盘 → 面板空白却谎报 `source:'log'`。**为什么 403 个用例都漏掉**：所有 fake（含我的 fixture）都让两条通道返回**同一份数组**，该分支不可达。我的新用例故意让 `snapshotEvents()` 返回 `[]` 而 `sessionPersistence` 返回真日志 → 修复前必红。这也回答了我 §6 里那条降级语义：`hasHistory:false` + 空 spans + `source:'log'` 对**全新会话**是有意为之，不是 partial。
+
+**四处更正（我独立复核后改口径，不照抄提案）**
+
+1. **shell 的「36 个 distinct `var()` 引用」是每文件出现次数**（panel-style 12 + styles 24），**不是 distinct**：我实测 19 个文件、**25 个 distinct 引用**（含 `'--token'` 字符串形态）。守护的下限设为 20，避免把实际基线写死成错的数字。
+2. **ui-2 的对比度断言③「任一单层都单独不达标」在现行实现下是假的**：`UR_MARKER_RING_TOKENS[0]` 是 `--dsw-alias-label-primary`，它**随皮肤翻转**（浅色 `#0f1115` = 18.90:1，暗色 `#f9fafb` = 15.41:1），**单层在两种皮肤下都达标**。按他们的写法会让正确代码变红。我改成编码真正的区分属性：被否掉的替代品 `--dsw-alias-markdown-citation` **不随皮肤翻转**（`#ebeef2`），所以在浅色面板只有 1.16:1 —— 这条才是「不许退回单色」的锁。
+3. **转述的 `label-primary-inverted` 暗色 13.83 无法复现**：用他们自己的输入 `rgb(245,247,250)` vs `rgb(32,33,36)` 算得 **15.00**；按定义源暗色链（`…-inverted` → bluish-800 `#353638`）算得 **1.33**。三个输入里没有任何组合给出 13.83，所以我**没有**把它写进断言（阈值语义已足够），并把它作为开放项报给 ui-2/Lead。我另从定义源独立复核了链条：`label-primary` → bluish-1000/50、`inverted` → bluish-00/800、`markdown-citation` → bluish-100 `#ebeef2`（与实测 `rgb(235,238,242)` 吻合，交叉验证了提取正确）。
+4. **`MESSAGE_MARKER_MIN_GAP_PX`(9) < `MESSAGE_MARKER_WIDTH`(11)**：抽稀保证的是**位置间距** ≥9px，但标记宽 11px，所以被保留的两个标记仍可重叠 2px。我按提案断言了 gap 下限，并把这条「若要真的不重叠，gap 下限应 ≥ 宽度」作为观察报给 ui-2（未判为缺陷）。另外 `mode:'both'` 的去重方向我第一次写反了（`both` 比 `markers` **少 1** 个候选），已被用例抓住并修正。
+
+**本轮明确**未**覆盖（不假装有）**：ui-2 的缺口 B（`GanttChart.tsx` 渲染层 22 条，泳道头 button/`dtg-frozen`/`dtg-msg*`/title/aria 等）**一条都没落**；缺口 A 里 A1 的第 5 条我只做了退化分支、A2 的 12 条我做了 5 条（7/8/9/10/11/12 中的 7、8、9、11、12），A3 只做了 13。加上 stub 下 viewport 恒为 0（`cull:true` 会剪掉所有 bar），B 组需要专门的渲染遍历 helper；这是**已知缺口**，不是已覆盖。
+
 ## 2. 环境（实测值）
 
 | 事实 | 值 | 怎么测的 |
@@ -137,13 +188,13 @@ $ node -e "import('./lib/index.js')…"（新加的那一步）→ host half loa
 
 ---
 
-## 3. 我写的测试（14 个 spec / 344 用例：343 passed + 1 skipped）
+## 3. 我写的测试（17 个 spec / 439 用例：438 passed + 1 skipped）
 
 写入范围（本任务独占）：`/Users/lzx/Documents/GitHub/dsh-task-gantt/tests/**`、`/Users/lzx/Documents/GitHub/dsh-task-gantt/vitest.config.ts`、`/Users/lzx/Documents/GitHub/dsh-task-gantt/.github/workflows/**`、本文件。
 
 | 文件（绝对路径） | 用例 | 覆盖 |
 |---|---|---|
-| `/Users/lzx/Documents/GitHub/dsh-task-gantt/tests/contract.spec.ts` | 39 | 冻结字面量（`API_VERSION=1` / `TAB_TYPE_ID='dsh-task-gantt:board'` / `ROUTE_PREFIX`）；`contract.ts` 零 import；**`assertTimeline` 的 27 条反例**（缺字段、spans/history 乱序、deleted 任务、laneId 指向不存在的泳道、lane.tasks 与 tasks 不一致、重复 id…） |
+| `/Users/lzx/Documents/GitHub/dsh-task-gantt/tests/contract.spec.ts` | 71 | 冻结字面量（`API_VERSION=1` / `TAB_TYPE_ID` / `ROUTE_PREFIX`）；`contract.ts` 零 import；**`assertTimeline` 48 条反例**（旧 27 条 + 契约 v2 的 live↔end、messages、color 令牌、navigation 等 21 条）；3 组冻结语义正向与鉴别力用例；反例总数 == 被拒总数的防空转断点 |
 | `/Users/lzx/Documents/GitHub/dsh-task-gantt/tests/helpers/timeline-assert.ts` | — | 契约运行时校验器（helper，非用例） |
 | `/Users/lzx/Documents/GitHub/dsh-task-gantt/tests/manifest.spec.ts` | 17 | 市场规则（三个依赖字段无 `cordis`、无 install 生命周期脚本）；`peerDependencies` 只有 `@deepseek-ai/cordis`（brief §2.3）；`exports["./client"]` 为字符串或 `{default:string}`；`dsh.client.platform==='web'`；`dsh.bundle.patch` 存在且安全；`files[]` 内文件都在 |
 | `/Users/lzx/Documents/GitHub/dsh-task-gantt/tests/theme.spec.ts` | 37 | 扫描 `src/client/**`（含 ui 的 CSS 字符串）零硬编码颜色；**扫描器双向标定**：14 条必须红（hex/rgb/hsl/oklch/颜色名/非主题 var）+ 17 条必须绿（token、`transparent`/`currentColor`/`inherit`、`color-mix(var(--dsw-*))`、注释里的字面量） |
@@ -151,7 +202,7 @@ $ node -e "import('./lib/index.js')…"（新加的那一步）→ host half loa
 | `/Users/lzx/Documents/GitHub/dsh-task-gantt/tests/host-route.spec.ts` | 28 | 用假 `req`/`res` 打真实 handler：200/400/403/404/405、同源判定优先于方法判定、query 路径、分两块到达的 body、`ctx.get` 抛异常时仍返回信封且绝不外抛 |
 | `/Users/lzx/Documents/GitHub/dsh-task-gantt/tests/host-timeline.spec.ts` | 21 | `buildTimeline` 降级矩阵（8 种恶意 ctx：无服务、`get` 抛异常、`sessions.list()` 抛、`sessionPersistence.open()` reject、`handle.read()` reject、`agentTeams.listMembers()` 抛…）：绝不抛异常、响应始终过契约校验、`source ∈ live|partial` 且 `notes` 非空 |
 | `/Users/lzx/Documents/GitHub/dsh-task-gantt/tests/host-fold.spec.ts` | 59 | 折叠容错：缺 `turn/start`、缺 `step/end`（`end:null`）、乱序输入等价、`time` 相等按 `seq` 稳定、孤儿 `step/end` 不生成 span、第二个 `step/start` 把上一个收成 0 长度（**永不为负**）、缺 `time` 事件被丢弃并计数、`turn` 带在 `step` 之前；队日志回放（created→claimed、revision 回退被跳过、roster 相位、`mid-stream` 首快照）；工具调用映射与 CAS 归因；`dateTaskFromToolCalls` 拒绝有歧义的 create；**40 轮伪随机语料**验证不抛异常 + 不变式 + 确定性；F2 的 catalog-first 成员索引用例（host-data 修好后由 `it.skip` 转正，见 §5 F2） |
-| `/Users/lzx/Documents/GitHub/dsh-task-gantt/tests/host-integration.spec.ts` | 13 | **跑在真实日志 fixture 上**的端到端：`tests/fixtures/lead-team-journal.json`（234 条事件，逐字取自本机 Lead 会话日志）+ 假的 `agents`/`sessionPersistence`/`agentTeams` 服务 → 泳道/任务/归因/降级 |
+| `/Users/lzx/Documents/GitHub/dsh-task-gantt/tests/host-integration.spec.ts` | 20 | **跑在真实日志 fixture 上**的端到端：`tests/fixtures/lead-team-journal.json`（**1263 条事件**，逐字取自本机 Lead 会话日志，含全部 message 事件）+ 假的 `agents`/`sessionPersistence`/`agentTeams` 服务 → 泳道/任务/归因/消息/颜色令牌/降级；含**令牌存在性**守护（§1.4 F8）与**配色不撞色**守护（§5 F9） |
 | `/Users/lzx/Documents/GitHub/dsh-task-gantt/tests/host-mount.spec.ts` | 8 | 宿主半挂载：`webServer` 已在 → 注册 `prefix` 路由到 `ROUTE_PREFIX` 且 handler 真能答 `/ping`；`webServer` **尚未挂载** → 走 `ctx.inject(['webServer'],…)` 延迟注册；无动态 inject → 仅告警不抛；register 抛异常不被吞 |
 | `/Users/lzx/Documents/GitHub/dsh-task-gantt/tests/layout.spec.ts` | 39 | 纯函数布局：窗口解析（live 钉在 now / 历史窗口覆盖全部数据 / duration≥1）、缩放钳制、tick 步长/对齐/`MAX_TICKS` 截断、`formatClock` 时区、泳道 y 堆叠、span 几何（open 延到 now、`MIN_SPAN_PX`）、`scrollLeft`→`viewX`、cull、任务卡（history vs live、min/max 宽度、`unplacedTaskIds`）、消毒与确定性 |
 | `/Users/lzx/Documents/GitHub/dsh-task-gantt/tests/client-api.spec.ts` | 14 | 路由解析：反代子路径 `https://h/dataops/proxy/3080/` 必须得到 `…/3080/dsh-task-gantt/api/timeline`（**保留页面前缀**）、`dsh-app://app/`、`__DSH_TRANSPORT__.streamBaseUrl` 优先、注入的 `routeBase` 最优先、无 base 时退回文档相对路径；`postJson` 信封/非 JSON（`ApiHttpError.status`）/`signal` 透传 |
@@ -184,6 +235,9 @@ $ node -e "import('./lib/index.js')…"（新加的那一步）→ host half loa
 | 11 | 宿主 `clientModules` 的按需分块命名门：`const CLIENT_CHUNK = /^client\.[A-Za-z0-9][A-Za-z0-9._-]*\.js$/`，注释原文 *"Published package-local client chunk names accepted by the on-demand route."*；`registration.chunk` 存在且不匹配就 throw。本插件不传 `chunk`，故不触发；已加守护用例固定这条约束 | 我一手提取同一份 `app.asar` 内 `@deepseek-ai/dsh-client-modules/lib/index.js` 后 grep `CLIENT_CHUNK`（与 packaging 的独立结论一致） |
 | 12 | 宿主对插件资源的缓存键**只看文件元数据、不看内容**：`artifactRevision(baseline) = framedHash("plugin-artifact", [mtimeMs, ctimeMs, size])`，注释 *"Identify an entry's build from filesystem metadata without hashing its contents."* → 重建会失效缓存；「内容变了但 mtime/ctime/size 没变」不会失效 | 同一份宿主 bundle，grep `artifactRevision` |
 | 13 | `lib/` 只有 `client.js`(71996 B)、`client.js.map`、`index.d.ts`、`index.js`(40504 B)、`index.js.map`，没有额外 chunk 文件；全部 mtime 落在最后一次构建 | `ls -la /Users/lzx/Documents/GitHub/dsh-task-gantt/lib` |
+| 15 | 主机会话日志在本轮实测中已增长到 **3486 行**（3647 行版本是早期快照）：`user/message` 80（其中 `source.kind='user'` 仅 **11**，其余 69 为 time-context 18 / team-message 22 / subagent-settled 20 / tool-jobs 6 / runtime-context 1 / agent-instructions 1 / schedule 1）、`team/message/queued` 56、`team/message/delivered` 56、`team/task` 26、`team/member` 16、`subagent/catalog` 8、`turn/start` 10、`step/start`/`step/end` 499+499 | `unzstd -c ~/.dsh/sessions/…/session-4d51254b-…/session.v4.jsonl.zstd` 后按 type 计数；fixture 重生成说明在 §7 |
+| 16 | 宿主主题共定义 **408** 个 `--(dsw|ds)-*` 自定义属性；定义源是 `@deepseek-ai/dsh-client-ui-theme/lib/client.js`（101853 B），**不是** better-sidebar 的产物（后者只消费）——我差点把 `--dsw-alias-state-idle-primary` 与 `--dsw-alias-label-primary-inverted` 误报为不存在 | 从 app.asar 提取该文件后 `re.findall(r'(--(?:dsw|ds)-[a-z0-9-]+)\s*:')`；快照已存为 `tests/fixtures/dsw-theme-tokens.json` |
+| 17 | **会话日志是 append-only 的多帧 zstd 流**：Lead 日志 2.79 MB 里含 **1941** 个 zstd 帧；`zlib.zstdDecompressSync(buf)` **只解第一帧且不报错**（整文件只得到 222 B / 1 行，而 `unzstd -c` 得到 3795 行）；流式 API `createZstdDecompress` 同样只给 222 B。仓库的 `src/host/dev-verify.mts:37-41` 已注释并改用 `zstd -d -c` CLI。**无需外部 CLI 的替代写法**（我实测可用）：`zstdDecompressSync(buf.subarray(off), { info: true })` 拿 `engine.bytesWritten` 逐帧推进并拼接。这条是平台事实：单帧解码会**静默拿到残缺日志**（面板会「有日志但几乎没有活动」），排查时先怀疑它 | `node -e "…zstdDecompressSync…"` 对比 `unzstd -c … | wc -l`；并阅读 `src/host/dev-verify.mts` 的注释 |
 | 14 | **构建幂等**（packaging 的说法，我独立复现）：重建前后 `md5 -q lib/index.js lib/client.js` 字节一致，`git diff --stat -- lib` 也仍是同一组 `4 files changed, 2871 insertions(+), 197 deletions(-)` → 产物严格晚于全部源码且重建不产生新差异 | `md5` 前后对比 + `git diff --stat` 前后对比 |
 
 ---
@@ -261,6 +315,33 @@ $ node -e "import('./lib/index.js')…"（新加的那一步）→ host half loa
 
 ---
 
+### F8（**差点误报，转为一条真守护**）token 存在性必须查定义源，不能查消费者产物
+
+- **现象**：host 发出的 `--dsw-alias-label-primary-inverted`（所有泳道的 `on`）与 `--dsw-alias-state-idle-primary`（idle 泳道）在 **better-sidebar 的产物里 0 次出现**，我一度怀疑是编造的 token —— 后果会是 bar **静默渲染成透明且任何地方都不报错**。
+- **查证**：定义源是宿主 `@deepseek-ai/dsh-client-ui-theme/lib/client.js`（app.asar 内，101 853 B，共 **408** 个 `--(dsw|ds)-*` 定义），两者**都真实存在**。better-sidebar 只是 token 的**消费者**，消费不到某个名字不代表它不存在。
+- **落地**：把 408 个名字快照为 `tests/fixtures/dsw-theme-tokens.json`（provenance 在 `_source`）；新增守护「`buildTimeline` 发出的每个 `lane.color.bar/on` 必须在定义表内」+ 鉴别力用例（`--dsw-alias-label-inverse` 这种像真的但不存在会被拒）；并把我自己 fixture 里 10 处不存在的 `--dsw-alias-label-inverse` 全部换成真实 token（测试里的坏例子会教坏后来人）。
+- **方法论**：**存在性查定义源，形态查正则，两者缺一都会漏** —— 正则抓不到拼错，定义表抓不到「写了色值/表达式」。详见 §1.4。
+
+### F9（**真缺陷，我实测发现，已由 host-data-2 修复**）泳道配色碰撞：9 条泳道只用到 5 个 token
+
+- **发现过程**：我在真实日志 fixture 上跑了一次探针（打印每条 lane 的 `color` + 全量 `validateTimeline` 告警），看到 8 位 teammate 里多对共享同色（error 出现 3 次、success/idle 各 2 次）。当时契约只写「同一 member id 稳定」，所以我按「观察」上报、没有报成缺陷。
+- **Lead 拍板为真缺陷**：用户原话是「lead 和各 teammate **都要有一种颜色**」，而旧实现是 `hash(id) % 5` —— 哈希只保证稳定性，**结构上无法避免碰撞**（生日界下 3 个 id 落在 5 槽的碰撞概率约 0.8），实测 9 泳道 5 色等于需求没被满足。
+- **修复（host-data-2，`src/host/lane-color.ts` + `timeline.ts:812/:924`）**：
+  1. `laneColorTokens(laneId, index)` —— **按位置**分配（`lead` 固定 `PALETTE[0]`，teammate 按 roster 顺序取 `PALETTE[1..]`，越界回绕）；
+  2. 调色板 = **5 个真实饱和填充**：`state-business-primary` / `state-success-primary` / `state-warn-primary` / `state-error-primary` / `state-idle-primary`，`on` 统一 `--dsw-alias-label-primary-inverted`；
+  3. `unassigned` 走独立的 `UNASSIGNED_COLOR_TOKENS`（不占 roster 槽）。
+- **为什么最终是 5 色而不是 Lead 最初写的 6 色（我独立复核过两侧证据）**：Lead 原方案第 6 色是 `--dsw-alias-brand-primary`；host-data-2 一度改用 `--dsw-alias-onboarding-accent` 作为「真正不同的色相」。我从**定义源**（`@deepseek-ai/dsh-client-ui-theme/lib/client.js`，app.asar 内）核实：`brand-primary` 定义为 `var(--dsw-static-neutral-bluish-1000)` / `…-50`，与 `--dsw-alias-label-primary` **同值**（浅色皮近黑 `rgb(15,17,21)`）—— 当第 6 色会让那条泳道看起来像正文；`onboarding-accent` 是字面量 `#3964fe`（真蓝色），但 Lead 复核 app.asar 全部 120 个 `--dsw-alias-*` 后判定它属于 onboarding 流程、主题改版可合法移除，**故最终定为 5 色上限**。我的独立测量与两位的结论一致。
+- **新语义（有意变更，host-data-2 已写进文件注释与 FINDINGS）**：`lead` 永远同色；**同一 teammate 在 roster 顺序不变时**同色；roster 顺序变化时 teammate 颜色**可能变** —— 这是为「同屏不撞色」付出的代价。
+- **已知上限**：第 5 个 teammate（第 6 条泳道）起调色板回绕、颜色重复；这是 5 色调色板的诚实上限，不是 bug。
+- **我的守护（按 Lead 的判据，全部通过）**：① 真实 board 探针 **0 error / 0 warn**；② `lead + 6 teammate`（用 `rootEvents` 隔离 fixture，避免 fixture 自带的 8 个 member 混入 —— 这正是我第一版写错 `toHaveLength(7)` 却拿到 15 条 lane 的原因）断言**前 N 条两两不同色**（N = `LANE_COLOR_TOKENS.length`，对调色板长度不敏感）；③ 直接测纯函数 `laneColorTokens` 的位置语义（lead 忽略 index、teammate 填满剩余槽、`index == length` 回绕到 slot 0、`unassigned` 不占槽）——**旧哈希实现在 ②③ 上都会红**；④ 所有 `bar/on` 必须在 408 token 定义表内（不变）。
+- **读放大：我自己独立测了一遍，结论与 host-data-2 的 18.7 ms **不是同一个量**（详见 §4 事实 17 与 §6 ❓17）**：
+  - **冷读（从磁盘解全部 zstd 帧 + JSON.parse + fold）**，9 个真实 lane 日志（14.4 MB 压缩 / 19 004 事件）：
+    - 自写多帧循环（`zstdDecompressSync(buf, {info:true})` + `engine.bytesWritten` 逐帧推进）：`1028.7, 1010.3, 1133.3, 999.3, 852.7` → **median 1010.3 ms / max 1133.3 ms**；分解：解压 ≈31.9 ms/日志、`JSON.parse` ≈50.4 ms/日志、fold ≈1.6 ms/日志。
+    - 仓库自己的路径（`dev-verify.mts` 用的 `zstd -d -c`，一次过解全部帧）：`967.2, 1065.8, 985.9, 985.8, 1024.6` → **median 985.9 ms / max 1065.8 ms**。两种实现互相印证：**一次冷读 ≈ 1.0 秒**。
+  - host-data-2 报的是 **服务路径**（`handle.read()`，19 个样本 median 18.7 / max 20.8 ms，删缓存后实测）——**我不认为它错**：`src/` 里除了 `dev-verify.mts` **没有任何文件/zstd 代码**（`grep -rn "zstd|Decompress|jsonl.zstd|readFile" src/` 只命中 dev-verify），所以面板请求走的是宿主服务、拿到的应是**已在内存里的事件对象**，不需要解压与 parse。两者相差约 53×，差的就是「这次读到底碰没碰磁盘」。
+  - **对决策的含义**：删掉 1.5s 缓存是否安全，取决于**服务路径是否真的在内存里**（service 路径成立则安全）。若有任何请求落到 `sessionPersistence.open().read()` 这类磁盘回退通道，那一次就是 ≈1 秒。这条我列为 ❓17，没有真机测量。
+
+
 ## 6. 未验证假设（❓ 清单，逐条说明谁该验证）
 
 > 状态更新（2026-10-11 定稿）：第 1 条已由 Lead 的 scratch 冒烟**部分闭环**（命中判定见 §1.2，A6/A9/A10/A11 仍是 ❓）；第 11 条已由 Lead 的探针**闭环**；其余条目仍然开放。**任何一条都不得当成"已实测"引用**，除非状态栏写明并给出证据。
@@ -281,6 +362,9 @@ $ node -e "import('./lib/index.js')…"（新加的那一步）→ host half loa
 12. ❓**`subagent/catalog` 的 `data.label` 是任务描述而不是成员名**（host-data 结论），所以 catalog-only 成员的 lane `name` 会退化成子会话 id。我没有独立核对过 `label` 的真实语义；若 ui 要展示可读名字，需要另找来源。
 13. ❓**`hasHistory` 目前是二态**（host-data：日志读到 **且** 折出 ≥1 个 span 才为 true；契约写的是 "false = live/**empty**"）。我在集成用例里确实观察到「journal 认识该成员 + 假持久化返回空事件」→ `hasHistory:false` + 空 spans + `source:'log'`，按契约判定一致、未报缺陷。若要区分「无日志 / 有日志但无活动 / 有活动」三态，需要 Lead 改冻结契约（host-data 说已挂在 Lead 决策清单上）。
 14. ❓**实时增量刷新与 live `agentTeams` 投影路径从未被观察到**：Lead 在 scratch 组合里启动过最小 team，但**没有观察到新 team 形成**，所以「面板随时间推进自动出现新泳道/新任务卡」这条路径**不计入已实测**（构造 fixture 的集成用例覆盖的是数据推导，不是真机实时刷新）。
+15. ❓**token 快照会随宿主主题升级而过期**：`tests/fixtures/dsw-theme-tokens.json` 是 2026-10-11 从 DSH 0.2.0-rc.2 的 `@deepseek-ai/dsh-client-ui-theme` 提取的 408 个名字。若宿主改名/删名，我的「令牌存在性」守护会**误报红**（把仍然合法的 DSH 新版 token 判为不存在）；若宿主**新增**名字而插件用了它，本机这份旧快照也会误报。重新生成方式见 §7；这条守护的价值是抓「拼错/编造」，不保证跨版本前向兼容。
+16. ✅（**曾是真缺陷 F9，已修并验证**）**「lead 与每个 teammate 都要有一种颜色」**：旧实现 `hash(id) % 5` 在实测 9 泳道下多对同色，Lead 拍板为真缺陷；host-data-2 已改为**按位置**分配 + 5 色真实饱和调色板（`lead` 固定 `PALETTE[0]`）。新语义：`lead` 永远同色 / 同一 teammate 在 **roster 顺序不变**时同色 / 顺序变化时可能变色（有意的取舍）。**已知上限**：第 5 个 teammate 起调色板回绕、颜色重复 —— 5 个真实饱和填充就是上限（`brand-primary` 与正文同色、`onboarding-accent` 属 onboarding 流程），这是诚实上限而非 bug。守护：前 N 条（N=调色板长度）两两不同色 + `laneColorTokens` 位置语义直测 + 全部 token 在 408 定义表内，详见 §5 F9。仍未验证的部分：**跨会话 roster 顺序变化导致 teammate 变色**这一取舍只由文档与注释固定，**没有真机观察**（真机冒烟时 roster 顺序未变）。
+17. ❓**面板每次请求到底走哪条读路径未在真机确认**：`src/` 无文件/zstd 代码 ⇒ 请求走宿主服务；服务返回内存事件时约 19 ms（host-data-2 实测），但若落到 `sessionPersistence.open().read()` 之类磁盘回退通道，**冷读一次 ≈1.0 秒**（我实测，§4 事实 17）。删掉 1.5s 跨请求缓存的安全性依赖前者成立——建议真机冒烟时顺带测一次「冷启动后第一次打开面板」的耗时（§1.2 未含此项）。
 
 ---
 
@@ -322,7 +406,35 @@ node -e "import('./lib/index.js').then((m)=>{if(typeof m.apply!=='function'||m.n
 for f in index.js client.js index.js.map client.js.map; do diff <(md5 -q "$REPO/lib/$f") <(md5 -q "/tmp/ci-clean/lib/$f") && echo "✓ $f"; done
 ```
 
-真实日志 fixture 的来源（可重新生成）：
+契约 v2 的两份 fixture 都可重新生成（**改完请一并提交，否则 CI 会红**）：
+
+```bash
+# 1) tests/fixtures/lead-team-journal.json —— 真实会话日志（含全部 message 事件）
+unzstd -c ~/.dsh/sessions/--Users-lzx-Documents-GitHub-dsh-task-gantt--/session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99/session.v4.jsonl.zstd > /tmp/lead-session.jsonl
+python3 - <<'EOF'
+import json
+keep=[]
+for line in open('/tmp/lead-session.jsonl'):
+    line=line.strip()
+    if not line: continue
+    e=json.loads(line); t=e.get('type')
+    if t in ('session','turn/start','step/start','step/end','team/task','team/member','subagent/catalog',
+             'team/message/queued','team/message/delivered','user/message'):
+        keep.append(e)
+    elif t=='tool/call' and str((e.get('data') or {}).get('name','')).startswith('team_task_'):
+        keep.append(e)
+keep.sort(key=lambda e: e.get('seq', 0))
+print('events', len(keep))   # 只做结构保留；长文本字段（subject/description/label/senderName/content[].text）裁到 90 字符
+json.dump({'_note':'VERBATIM structure from a real log; long text clipped to 90 chars','events':keep},
+          open('tests/fixtures/lead-team-journal.json','w'), ensure_ascii=False, indent=1)
+EOF
+
+# 2) tests/fixtures/dsw-theme-tokens.json —— 宿主主题定义的 token 名快照（408 个）
+#    定义源 = app.asar 内 @deepseek-ai/dsh-client-ui-theme/lib/client.js（不是 better-sidebar 的产物）
+#    提取该文件后收集 /(--(?:dsw|ds)-[a-z0-9-]+)\s*:/ 的全部匹配并排序去重。
+```
+
+真实日志 fixture 的历史来源（同一条命令，旧快照 234 事件）：
 
 ```bash
 unzstd -c ~/.dsh/sessions/--Users-lzx-Documents-GitHub-dsh-task-gantt--/session-4d51254b-d8f4-4f21-a245-6b3ee56f6a99/session.v4.jsonl.zstd > /tmp/lead-session.jsonl

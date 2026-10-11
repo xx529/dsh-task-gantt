@@ -17,10 +17,13 @@
  * - Registration is wrapped in `ctx.effect(...)` so the disposer is held by the
  *   fiber and HMR / plugin-disable revokes it (guide §9). Without that, the next
  *   activation throws `tab type "…" already registered`.
+ * - `uiWorkspace` (session navigation) is probed **lazily, per click**, never at
+ *   registration: it is a different plugin's service and may not be mounted yet.
+ *   See {@link navigateToSession}.
  */
 import { createElement, type ReactNode } from 'react'
 import type { Context } from '@deepseek-ai/cordis'
-import { TAB_TYPE_ID, type BetterSidebarTabService } from '../shared/contract.ts'
+import { TAB_TYPE_ID, type BetterSidebarTabService, type LaneNavigation } from '../shared/contract.ts'
 import { t } from './i18n.ts'
 import { injectPanelStyles } from './panel-style.ts'
 import { resolveHostRoute } from './transport.ts'
@@ -37,6 +40,12 @@ export const inject: readonly string[] = []
 
 /** The cordis service name of dsh-better-sidebar on the client side. */
 const SERVICE_NAME = 'betterSidebar'
+
+/**
+ * The cordis service name of the workspace shell — the only thing that can move
+ * the main view to another conversation.
+ */
+const WORKSPACE_SERVICE = 'uiWorkspace'
 
 /** `+` menu rank: after the built-ins (`terminal-bottom` = 40), before the default 100. */
 const TAB_ORDER = 50
@@ -120,6 +129,12 @@ function readTabService(ctx: Context): BetterSidebarTabService | undefined {
  * @returns the registration disposer (a no-op when registration was refused).
  */
 function registerTab(ctx: Context, service: BetterSidebarTabService): () => void {
+  // Built ONCE per registration, outside the `component` lambda (which React
+  // calls on every render): the board must see a stable function identity, or a
+  // callback in a dependency array would re-run its effects on every render.
+  const routeBase = (path: string): string => resolveHostRoute(path, service)
+  const navigate = (target: LaneNavigation): boolean => navigateToSession(ctx, target)
+
   try {
     return service.registerTab({
       id: TAB_TYPE_ID,
@@ -142,7 +157,8 @@ function registerTab(ctx: Context, service: BetterSidebarTabService): () => void
         createElement(BoardView, {
           sessionId: scope.sessionId,
           visible,
-          routeBase: (path: string) => resolveHostRoute(path, service),
+          routeBase,
+          navigate,
         }),
     })
   } catch (error) {
@@ -151,6 +167,66 @@ function registerTab(ctx: Context, service: BetterSidebarTabService): () => void
     // to take the plugin fiber down.
     warn(ctx, `dsh-task-gantt: could not register the "${TAB_TYPE_ID}" tab: ${describe(error)}`)
     return () => {}
+  }
+}
+
+/**
+ * The slice of `uiWorkspace` this shell uses.
+ *
+ * Declared structurally (like {@link BetterSidebarTabService}) so no value import
+ * of the host package is needed. better-sidebar declares the same face as
+ * `ConversationNavigation` (`SubagentView.tsx:83-85`):
+ * `openSession?(target: SidebarSubagentAddress | string): void`.
+ */
+interface WorkspaceNavigation {
+  openSession?(target: unknown): void
+}
+
+/**
+ * Move the editor's main view to one lane's session.
+ *
+ * `uiWorkspace` belongs to a DIFFERENT client plugin row
+ * (`@deepseek-ai/dsh-client-ui-workspace` provides `UiWorkspaceService` through
+ * `super(ctx, 'uiWorkspace')`), so it is not guaranteed to be mounted when this
+ * plugin applies — the same activation-order hazard as `webServer`, which the
+ * Lead measured as `undefined` at apply time on a scratch composition. Nobody in
+ * the shipped client assumes otherwise: the chat, conversation and workflow-run
+ * bundles all list `uiWorkspace` in their `inject` arrays, and better-sidebar
+ * resolves it *inside* its click callback rather than at mount
+ * (`dsh-better-sidebar/src/client/SubagentView.tsx:277-280`).
+ *
+ * Hence this reads `ctx.get('uiWorkspace')` on **every** call instead of closing
+ * over one instance at registration time. Two things fall out of that:
+ *
+ * - the tab never has to wait for a service the panel does not strictly need, so
+ *   a profile without the workspace shell still gets the board; and
+ * - a service that mounts late, or is replaced on HMR, is picked up without
+ *   re-registering the tab.
+ *
+ * Never throws — a missing service, a non-callable `openSession` or a failing
+ * call all report `false`, which the board renders as "silently not clickable".
+ *
+ * @param ctx - the client cordis context; read lazily, per call.
+ * @param target - the lane's navigation target (frozen in `src/shared/contract.ts`).
+ * @returns `true` when the workspace shell accepted the navigation.
+ */
+function navigateToSession(ctx: Context, target: LaneNavigation): boolean {
+  try {
+    const workspace = ctx.get(WORKSPACE_SERVICE) as WorkspaceNavigation | undefined | null
+    const openSession = workspace?.openSession
+    if (typeof openSession !== 'function') return false
+    // `LaneNavigation.value` is already the host-native form in BOTH arms, so
+    // nothing is re-derived here: a bare session id for `type: 'session'`, and
+    // DSH's own structured subagent address for `type: 'address'`. The host
+    // splits on exactly that shape itself — `UiWorkspaceService.replaceMain`:
+    // `const subagentAddress = typeof target === 'string'
+    //    ? this.sessions.subagentAddress(reference.sessionId) : target`.
+    // `openSession` is synchronous but may throw (`signal.throwIfAborted()`,
+    // `sessions.retain()`), which the catch below absorbs.
+    openSession.call(workspace, target.value)
+    return true
+  } catch {
+    return false
   }
 }
 

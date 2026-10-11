@@ -54,6 +54,9 @@ const zh = {
   zoomReset: '重置缩放',
   liveOnly: '实时状态（无历史时间）',
   notes: '数据说明',
+  openSession: '打开该会话',
+  you: '你',
+  noSession: '无会话可跳转',
 } as const
 
 /** Every message key; both dictionaries must define all of them. */
@@ -91,6 +94,9 @@ const en: Record<MessageKey, string> = {
   zoomReset: 'Reset zoom',
   liveOnly: 'Live state (no dated history)',
   notes: 'Notes',
+  openSession: 'Open this session',
+  you: 'You',
+  noSession: 'No session to open',
 }
 
 const DICTIONARIES: Record<Locale, Record<MessageKey, string>> = { zh, en }

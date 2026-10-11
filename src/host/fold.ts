@@ -27,7 +27,7 @@
  * Both spellings are accepted; the header is where `sessionCreatedAt` and the
  * upward `parentSession` link come from.
  *
- * ## Output — three orthogonal folds
+ * ## Output — four orthogonal folds
  *
  * 1. `foldActivitySpans(events)` → the lane's activity bands.
  *    - `turn/start` … `turn/end`        ⇒ one `{ kind: 'turn' }` span
@@ -64,12 +64,20 @@
  *    `team_task_update` carries `task_id` + `expected_revision` (a CAS
  *    precondition ⇒ it uniquely identifies the revision that consumed it).
  *
- * `foldSessionEvents(events, sessionId)` runs all three over one log.
+ * 4. `foldMessageRecords(events)` → message-carrying records: who told whom
+ *    what, when (see the section header at `1b` for the exact pairing rules).
+ *    Only three event types are read — `team/message/queued`,
+ *    `team/message/delivered`, and the human's own `user/message` — and a
+ *    delivery is paired to its queue by `messageId`, never by adjacency.
+ *
+ * `foldSessionEvents(events, sessionId)` runs all four over one log.
  *
  * ## Ordering guarantees
  *
  * - `spans`: ascending by `(start, kind, index)`.
  * - `transitions` / `toolCalls`: ascending by `(time, seq, index)`.
+ * - `messages.records`: ascending by `(queuedAt ?? deliveredAt, seq)`.
+ * - `messages.userPrompts`: ascending by `(time, seq)`.
  * - `members`: first-appearance order in the log.
  * - `members[i].phases`: log order.
  *
@@ -198,12 +206,14 @@ export interface ToolCallTransition {
   seq: number
 }
 
-/** All three folds of one session log. */
+/** All folds of one session log. */
 export interface FoldedSession {
   sessionId: string
   activity: FoldedActivity
   team: FoldedTeam
   toolCalls: ToolCallTransition[]
+  /** Message exchanges + the human's prompts carried by this log. */
+  messages: FoldedMessages
 }
 
 /** A status value the board can publish. */
@@ -445,6 +455,246 @@ export function foldActivitySpans(events: readonly unknown[]): FoldedActivity {
   const kindRank = (span: ActivitySpan): number => (span.kind === 'turn' ? 0 : 1)
   spans.sort((a, b) => (a.start - b.start) || (kindRank(a) - kindRank(b)))
   return { spans, diagnostics }
+}
+
+// --------------------------------------------------------------------------
+// 1b. Message-carrying records (who told whom what, at what instant)
+// --------------------------------------------------------------------------
+
+/**
+ * The `source.kind` that marks a `user/message` as typed by the human.
+ *
+ * Verified on this machine against the real logs (see docs/FINDINGS-host.md
+ * §14): every `user/message` in the run — 80 in the Lead's log, 17 in a
+ * teammate's — carries `data.source.kind`, and only a minority are the human:
+ * the rest are the runtime feeding the model (`time-context`, `tool-jobs`,
+ * `subagent-settled`, `team-message`, `runtime-context`, `agent-instructions`,
+ * `schedule`). Treating every `user/message` as the user would put 69 invented
+ * "prompts" on the chart, so the kind is the discriminator, not the event type.
+ */
+const USER_SOURCE_KIND = 'user'
+
+/**
+ * The longest preview this module emits, mirroring `MESSAGE_PREVIEW_MAX`.
+ *
+ * Duplicated as a literal on purpose: `fold.ts` is the pure-data layer and must
+ * not gain a dependency on the wire contract just to read one number. The
+ * `dev-verify` self-check asserts the two stay equal.
+ */
+const PREVIEW_MAX = 140
+
+/** One `team/message/*` exchange as the durable journal records it. */
+export interface FoldedMessageRecord {
+  /** The journal's message id — what ties a queue to its delivery. */
+  messageId: string
+  /**
+   * Epoch ms of the `queued` event: when the sender handed the message over.
+   * `undefined` only for a delivery with no queue in the readable window.
+   */
+  queuedAt?: number
+  /** Epoch ms of the `delivered` event, when one was read. */
+  deliveredAt?: number
+  /** `senderId` from the `queued` event. Absent when only a delivery was read. */
+  senderId?: string
+  /** `senderName` from the `queued` event (display only). */
+  senderName?: string
+  /** `targetId`; every observed delivery also carries it. */
+  targetId?: string
+  /** Collapsed `content[].text`, clipped to {@link PREVIEW_MAX}. */
+  preview?: string
+  /** Log `seq` of the record that opened this exchange (stable ordering). */
+  seq: number
+}
+
+/** One human prompt read from `user/message`. */
+export interface FoldedUserPrompt {
+  /** Epoch ms of the event. */
+  time: number
+  /** Log `seq`, for stable ordering against the other records. */
+  seq: number
+  /** Clipped prompt text. */
+  preview?: string
+  /**
+   * `data.source.kind` — always {@link USER_SOURCE_KIND} today, kept so the
+   * caller can prove the discriminator rather than trust it.
+   */
+  sourceKind: string
+}
+
+/** What one message fold observed, for the response-level `notes`. */
+export interface MessageFoldDiagnostics {
+  /** `team/message/queued` events read. */
+  queued: number
+  /** `team/message/delivered` events read. */
+  delivered: number
+  /**
+   * Deliveries with no readable queue. Their sender is unknown, so the emitted
+   * span carries no `from`; this counter is what makes that visible.
+   */
+  unpairedDeliveries: number
+  /** `user/message` events whose `source.kind` marked them as the human's. */
+  userPrompts: number
+  /** `user/message` events that were runtime injections, not the human. */
+  injectedUserMessages: number
+}
+
+/** The message fold of one session log. */
+export interface FoldedMessages {
+  /** Ascending by `(queuedAt ?? deliveredAt, seq)`. */
+  records: FoldedMessageRecord[]
+  /** Ascending human prompts. */
+  userPrompts: FoldedUserPrompt[]
+  diagnostics: MessageFoldDiagnostics
+}
+
+/** Collapse every whitespace run to one space and clip to {@link PREVIEW_MAX}. */
+function previewOf(value: string): string | undefined {
+  const collapsed = value.replace(/\s+/g, ' ').trim()
+  if (collapsed === '') return undefined
+  return collapsed.length <= PREVIEW_MAX ? collapsed : `${collapsed.slice(0, PREVIEW_MAX - 1)}\u2026`
+}
+
+/**
+ * Flatten a journal message `content` into one preview line.
+ *
+ * Verified shape: `content: [{ type: 'text', text: '…' }]`. Anything else is
+ * ignored rather than stringified — a preview is a hint, never a parse.
+ */
+function previewFromContent(content: unknown): string | undefined {
+  if (!Array.isArray(content)) return undefined
+  const parts: string[] = []
+  for (const item of content) {
+    const record = asRecord(item)
+    if (record === undefined) continue
+    const value = record.text
+    if (typeof value === 'string' && value !== '') parts.push(value)
+  }
+  if (parts.length === 0) return undefined
+  return previewOf(parts.join(' '))
+}
+
+/**
+ * Fold one session log into message-carrying records.
+ *
+ * Reads exactly three event types and never invents a fourth:
+ * - `team/message/queued`   — carries the sender, target and text;
+ * - `team/message/delivered`— carries only `messageId` + `targetId`, so it is
+ *   paired to its queue **by id** and never guessed from adjacency or time;
+ * - `user/message`          — the human's own prompt, but only when
+ *   `data.source.kind === 'user'`.
+ *
+ * Total by construction: missing, reordered, duplicated and malformed payloads
+ * all degrade into diagnostics; nothing throws and nothing is back-filled with
+ * a synth.
+ *
+ * @param events - raw events of ONE session (any order, any shape).
+ * @returns ascending records, ascending prompts, and non-fatal diagnostics.
+ */
+export function foldMessageRecords(events: readonly unknown[]): FoldedMessages {
+  const indexed = inLogOrder(indexEvents(events))
+  const diagnostics: MessageFoldDiagnostics = {
+    queued: 0,
+    delivered: 0,
+    unpairedDeliveries: 0,
+    userPrompts: 0,
+    injectedUserMessages: 0,
+  }
+
+  /** The queue half of every exchange: what the sender actually did. */
+  const queues = new Map<string, FoldedMessageRecord>()
+  /** Delivery `seq` per message id — the last one wins (logs are append-only). */
+  const deliveries = new Map<string, { time: number; targetId?: string; seq: number }>()
+  const deliveryOrder: string[] = []
+  const userPrompts: FoldedUserPrompt[] = []
+
+  for (const item of indexed) {
+    const type = eventType(item)
+    const time = item.time
+    const data = eventData(item)
+    if (type === undefined || data === undefined) continue
+
+    if (type === 'team/message/queued') {
+      const message = asRecord(data.message)
+      if (message === undefined) continue
+      const messageId = asText(message.id)
+      if (messageId === undefined || time === undefined) continue
+      diagnostics.queued += 1
+      const record: FoldedMessageRecord = { messageId, queuedAt: time, seq: item.seq }
+      const senderId = asText(message.senderId)
+      if (senderId !== undefined) record.senderId = senderId
+      const senderName = asText(message.senderName)
+      if (senderName !== undefined) record.senderName = senderName
+      const targetId = asText(message.targetId)
+      if (targetId !== undefined) record.targetId = targetId
+      const preview = previewFromContent(message.content)
+      if (preview !== undefined) record.preview = preview
+      // First queue wins: a duplicate queued event is a re-append, not a
+      // second message, and the earliest timestamp is the real hand-over.
+      if (!queues.has(messageId)) queues.set(messageId, record)
+      continue
+    }
+
+    if (type === 'team/message/delivered') {
+      const messageId = asText(data.messageId)
+      if (messageId === undefined || time === undefined) continue
+      diagnostics.delivered += 1
+      if (!deliveries.has(messageId)) deliveryOrder.push(messageId)
+      const targetId = asText(data.targetId)
+      const entry: { time: number; targetId?: string; seq: number } = { time, seq: item.seq }
+      if (targetId !== undefined) entry.targetId = targetId
+      deliveries.set(messageId, entry)
+      continue
+    }
+
+    if (type === 'user/message') {
+      const source = asRecord(data.source)
+      const sourceKind = asText(source?.kind)
+      if (sourceKind !== USER_SOURCE_KIND) {
+        if (sourceKind !== undefined) diagnostics.injectedUserMessages += 1
+        continue
+      }
+      if (time === undefined) continue
+      diagnostics.userPrompts += 1
+      const prompt: FoldedUserPrompt = { time, seq: item.seq, sourceKind }
+      const preview = previewFromContent(data.content)
+      if (preview !== undefined) prompt.preview = preview
+      userPrompts.push(prompt)
+    }
+  }
+
+  const records: FoldedMessageRecord[] = []
+  for (const record of queues.values()) {
+    const delivered = deliveries.get(record.messageId)
+    const merged: FoldedMessageRecord = { ...record }
+    if (delivered !== undefined) {
+      merged.deliveredAt = delivered.time
+      if (merged.targetId === undefined && delivered.targetId !== undefined) {
+        merged.targetId = delivered.targetId
+      }
+    }
+    records.push(merged)
+  }
+  // A delivery whose queue is not in the readable window: emit it rather than
+  // drop it (the delivery time is real), but leave the sender unset — the
+  // journal does not say who sent it, and a guess would be a fabrication.
+  for (const messageId of deliveryOrder) {
+    if (queues.has(messageId)) continue
+    const delivered = deliveries.get(messageId)
+    if (delivered === undefined) continue
+    diagnostics.unpairedDeliveries += 1
+    const record: FoldedMessageRecord = {
+      messageId,
+      deliveredAt: delivered.time,
+      seq: delivered.seq,
+    }
+    if (delivered.targetId !== undefined) record.targetId = delivered.targetId
+    records.push(record)
+  }
+
+  const orderOf = (record: FoldedMessageRecord): number => record.queuedAt ?? record.deliveredAt ?? 0
+  records.sort((a, b) => (orderOf(a) - orderOf(b)) || (a.seq - b.seq))
+  userPrompts.sort((a, b) => (a.time - b.time) || (a.seq - b.seq))
+  return { records, userPrompts, diagnostics }
 }
 
 // --------------------------------------------------------------------------
@@ -865,6 +1115,7 @@ export function foldSessionEvents(events: readonly unknown[], sessionId: string)
     activity: foldActivitySpans(events),
     team: foldTeamEvents(events, sessionId),
     toolCalls: foldToolCallTransitions(events, sessionId),
+    messages: foldMessageRecords(events),
   }
 }
 

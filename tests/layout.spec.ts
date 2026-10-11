@@ -10,7 +10,7 @@
  * input must always produce a deep-equal layout.
  */
 import { describe, expect, it } from 'vitest'
-import type { TimelineResponse } from '../src/shared/contract.ts'
+import type { MessageSpan, TimelineResponse } from '../src/shared/contract.ts'
 import {
   DAY_MS,
   DEFAULT_HEADER_HEIGHT,
@@ -36,6 +36,8 @@ import {
   fitMsPerPx,
   formatClock,
   formatDateTime,
+  MESSAGE_MARKER_MIN_GAP_PX,
+  decimateMarkers,
   formatTickLabel,
   layoutTimeline,
   pickTickStep,
@@ -50,7 +52,9 @@ function liveResponse(): TimelineResponse {
   const data = validTimeline()
   return {
     ...data,
+    // Frozen pair: `end: null` ⇒ `live: true` (see timeline-assert).
     range: { start: 1_000, end: null },
+    live: true,
     lanes: [
       {
         id: 'lead',
@@ -61,6 +65,9 @@ function liveResponse(): TimelineResponse {
           { kind: 'step', start: 2_000, end: 3_000 },
           { kind: 'turn', start: 2_000, end: null },
         ],
+        messages: [],
+        color: { bar: '--dsw-alias-brand-primary', on: '--dsw-alias-label-primary-inverted' },
+        navigation: { type: 'session', value: 'session-1' },
         tasks: [],
       },
     ],
@@ -88,14 +95,14 @@ describe('computeWindow', () => {
   })
 
   it('honours a closed range end and still covers later data', () => {
-    const data = { ...liveResponse(), range: { start: 1_000, end: 5_000 } }
+    const data = { ...liveResponse(), range: { start: 1_000, end: 5_000 }, live: false }
     expect(computeWindow(data, 99_999)).toMatchObject({ start: 1_000, end: 5_000, live: false })
     const later = { ...data, lanes: [{ ...data.lanes[0]!, spans: [{ kind: 'step' as const, start: 2_000, end: 9_000 }] }] }
     expect(computeWindow(later, 99_999).end).toBe(9_000)
   })
 
   it('never returns a non-positive duration', () => {
-    const data = { ...liveResponse(), range: { start: 5_000, end: 5_000 }, lanes: [], tasks: [] }
+    const data = { ...liveResponse(), range: { start: 5_000, end: 5_000 }, live: false, lanes: [], tasks: [] }
     expect(computeWindow(data, 0).durationMs).toBeGreaterThanOrEqual(1)
   })
 
@@ -311,11 +318,11 @@ describe('layoutTimeline — geometry', () => {
     expect(layout.nowX).toBe(100)
     expect(layout.nowViewX).toBe(100)
     expect(layout.nowVisible).toBe(true)
-    const past = layoutTimeline({ ...data, range: { start: 1_000, end: 5_000 } }, VIEWPORT, { now: 99_999, msPerPx: 100, tzOffsetMinutes: 0 })
+    const past = layoutTimeline({ ...data, range: { start: 1_000, end: 5_000 }, live: false }, VIEWPORT, { now: 99_999, msPerPx: 100, tzOffsetMinutes: 0 })
     expect(past.nowX).toBe(past.dataWidth)
     expect(past.nowVisible).toBe(true)
     // In a narrow pane the clamped NOW marker sits outside the visible band.
-    const narrow = layoutTimeline({ ...data, range: { start: 1_000, end: 5_000 } }, { ...VIEWPORT, width: 10 }, { now: 99_999, msPerPx: 100, tzOffsetMinutes: 0 })
+    const narrow = layoutTimeline({ ...data, range: { start: 1_000, end: 5_000 }, live: false }, { ...VIEWPORT, width: 10 }, { now: 99_999, msPerPx: 100, tzOffsetMinutes: 0 })
     expect(narrow.nowViewX).toBeGreaterThan(10)
     expect(narrow.nowVisible).toBe(false)
   })
@@ -473,5 +480,195 @@ describe('layoutTimeline — sanitization and totality', () => {
     expect(MIN_MS_PER_PX).toBeLessThan(MAX_MS_PER_PX)
     expect(HOUR_MS).toBe(3_600_000)
     expect(DAY_MS).toBe(86_400_000)
+  })
+})
+
+/* ------------------------------------------------------------------------- */
+/* Contract v2: the frozen right edge and the message layer (task-8)          */
+/* ------------------------------------------------------------------------- */
+
+/**
+ * Proposed by ui-2 as the highest-value part of the layout coverage gap. The
+ * theme here is "the client clock must not be able to change the geometry":
+ * once the team stops, `range.end` is a timestamp and every x/width in the
+ * layout has to be independent of `now`.
+ */
+describe('frozen window semantics (live ⇔ range.end)', () => {
+  /** A closed window: the team has stopped, so the right edge is a timestamp. */
+  function frozen(): TimelineResponse {
+    return { ...liveResponse(), range: { start: 1_000, end: 5_000 }, live: false }
+  }
+
+  it('ignores the client clock entirely when the window is frozen', () => {
+    const early = layoutTimeline(frozen(), VIEWPORT, { now: 30_000, msPerPx: 100, tzOffsetMinutes: 0 })
+    const late = layoutTimeline(frozen(), VIEWPORT, { now: 999_999_999, msPerPx: 100, tzOffsetMinutes: 0 })
+    expect(early.window.end).toBe(5_000)
+    expect(late.window.end).toBe(5_000)
+    expect(late.dataWidth).toBe(early.dataWidth)
+    expect(late.spans.map((span) => span.x)).toEqual(early.spans.map((span) => span.x))
+    expect(early.endMarker).toMatchObject({ kind: 'ended', time: 5_000 })
+    expect(early.endSource).toBe('range')
+    expect(late.endSource).toBe('range')
+  })
+
+  it('never stretches a closed span to now', () => {
+    const data = {
+      ...frozen(),
+      lanes: [{ ...frozen().lanes[0]!, spans: [{ kind: 'step' as const, start: 1_000, end: 3_000 }] }],
+    }
+    const layout = layoutTimeline(data, VIEWPORT, { now: 999_999_999, msPerPx: 100, tzOffsetMinutes: 0 })
+    expect(layout.spans[0]?.end).toBe(3_000)
+  })
+
+  it('pins a live window to now and marks the edge as NOW', () => {
+    const layout = layoutTimeline(liveResponse(), VIEWPORT, { now: 11_000, msPerPx: 100, tzOffsetMinutes: 0 })
+    expect(layout.window.live).toBe(true)
+    expect(layout.window.end).toBe(11_000)
+    expect(layout.endMarker).toMatchObject({ kind: 'now', time: 11_000 })
+    expect(layout.endSource).toBe('now')
+  })
+
+  it('falls back to the last datum when a frozen payload still has end:null', () => {
+    // Should not happen under the frozen contract, but the renderer must not
+    // hang the right edge off the client clock if it does.
+    const degenerate = { ...liveResponse(), live: false }
+    const early = layoutTimeline(degenerate, VIEWPORT, { now: 500_000, msPerPx: 100, tzOffsetMinutes: 0 })
+    const late = layoutTimeline(degenerate, VIEWPORT, { now: 5_000_000, msPerPx: 100, tzOffsetMinutes: 0 })
+    expect(early.endSource).toBe('datum')
+    expect(late.window.end).toBe(early.window.end)
+  })
+
+  it('treats a legacy payload with no `live` field as live', () => {
+    // Backward compatibility: the field arrived with contract v2, and an old
+    // cached payload must not freeze the chart.
+    const legacy = { ...liveResponse() } as Record<string, unknown>
+    delete legacy.live
+    const layout = layoutTimeline(legacy as unknown as TimelineResponse, VIEWPORT, { now: 11_000, msPerPx: 100, tzOffsetMinutes: 0 })
+    expect(layout.window.live).toBe(true)
+    expect(layout.endSource).toBe('now')
+  })
+})
+
+describe('message markers and density bands', () => {
+  /** 51 messages inside a 10px-wide window: decimation must engage. */
+  function crowded(count = 51): TimelineResponse {
+    const messages: MessageSpan[] = Array.from({ length: count }, (_, index) => ({
+      kind: 'message',
+      time: 1_000 + index * 20,
+      end: null,
+      from: { kind: 'lead', id: 'lead', name: 'lead' },
+      to: { kind: 'teammate', id: 'member-1', name: 'member-1' },
+      preview: `message ${index}`,
+      sessionId: 'session-1',
+    }))
+    const base = liveResponse()
+    return {
+      ...base,
+      lanes: [{ ...base.lanes[0]!, messages, spans: [] }],
+      range: { start: 1_000, end: null },
+      live: true,
+    }
+  }
+
+  it('omits markers without ever moving one to a different time', () => {
+    const data = crowded()
+    const raw = (data.lanes[0]?.messages ?? []).map((message) => message.time)
+    const layout = layoutTimeline(data, VIEWPORT, { now: 11_000, msPerPx: 100, tzOffsetMinutes: 0 })
+    expect(layout.messages.length).toBeGreaterThan(0)
+    expect(layout.messages.length).toBeLessThan(raw.length)
+    // THE lock: every rendered marker carries a time that some real message had.
+    for (const marker of layout.messages) expect(raw, `marker time ${marker.time}`).toContain(marker.time)
+    expect(layout.droppedMessageCount).toBe(raw.length - layout.messages.length)
+    expect(layout.messageCount).toBe(raw.length)
+  })
+
+  it('keeps the density band at the TRUE first→last extent (decimation cannot shrink it)', () => {
+    const layout = layoutTimeline(crowded(), VIEWPORT, { now: 11_000, msPerPx: 100, tzOffsetMinutes: 0 })
+    expect(layout.messageBands).toHaveLength(1)
+    expect(layout.messageBands[0]).toMatchObject({ count: 51, firstTime: 1_000, lastTime: 2_000 })
+  })
+
+  it('separates kept markers by the documented minimum gap', () => {
+    const layout = layoutTimeline(crowded(), VIEWPORT, { now: 11_000, msPerPx: 100, tzOffsetMinutes: 0 })
+    const xs = layout.messages.map((marker) => marker.x)
+    for (let index = 1; index < xs.length; index += 1) {
+      expect((xs[index] as number) - (xs[index - 1] as number)).toBeGreaterThanOrEqual(MESSAGE_MARKER_MIN_GAP_PX)
+    }
+    // OBSERVATION (not asserted as a failure): MESSAGE_MARKER_WIDTH is 11 while
+    // the gap floor is 9, so two kept markers can still overlap by 2px. The
+    // decimation contract is about the gap; if the intent was "never touch",
+    // the gap floor should be >= the marker width (ui-2's call, reported).
+  })
+
+  it('the pure decimator is deterministic and honours maxPerLane', () => {
+    const list: MessageSpan[] = Array.from({ length: 12 }, (_, index) => ({
+      kind: 'message',
+      time: 1_000 + index * 1_000,
+      end: null,
+      from: { kind: 'lead', id: 'lead', name: 'lead' },
+      sessionId: 'session-1',
+    }))
+    const input = { windowStart: 1_000, msPerPx: 10, widthPx: 600, mode: 'markers' as const, gapPx: 9, maxPerLane: 3 }
+    const first = decimateMarkers(list, input)
+    const second = decimateMarkers(list, input)
+    expect(JSON.stringify(second)).toBe(JSON.stringify(first))
+    expect(first.indices).toHaveLength(3)
+    expect(first.candidates).toBe(12)
+    expect(first.droppedTotal).toBe(9)
+  })
+
+  it('de-duplicates a turn from the message candidates in both-mode', () => {
+    const turn: MessageSpan = {
+      kind: 'turn',
+      time: 1_500,
+      end: 1_600,
+      from: { kind: 'lead', id: 'lead', name: 'lead' },
+      sessionId: 'session-1',
+    }
+    const message: MessageSpan = {
+      kind: 'message',
+      time: 1_400,
+      end: null,
+      from: { kind: 'lead', id: 'lead', name: 'lead' },
+      sessionId: 'session-1',
+    }
+    const base = { windowStart: 1_000, msPerPx: 10, widthPx: 600, gapPx: 9, maxPerLane: 40 }
+    const both = decimateMarkers([message, turn], { ...base, mode: 'both' })
+    const markers = decimateMarkers([message, turn], { ...base, mode: 'markers' })
+    // In 'both' mode the turn is de-duplicated because its turn BAND already
+    // carries it; in 'markers' mode it is a candidate like any other. (This is
+    // ui-2's stated intent — "both 时 turn 被去重、candidates 少 1" — and the
+    // implementation does exactly that; my first assertion had the direction
+    // inverted and this test caught it.)
+    expect(markers.candidates).toBe(both.candidates + 1)
+    expect(markers.indices).toHaveLength(both.indices.length + 1)
+    expect(both.candidates).toBe(1) // only the message
+    expect(markers.candidates).toBe(2) // the message and the turn
+  })
+
+  it('draws a message with no addressee instead of inventing one', () => {
+    // Contract v2: an unmatched queued message keeps `to` undefined.
+    const data = crowded(1)
+    const lone: MessageSpan = { ...(data.lanes[0]?.messages?.[0] as MessageSpan) }
+    delete lone.to
+    const layout = layoutTimeline(
+      { ...data, lanes: [{ ...data.lanes[0]!, messages: [lone] }] },
+      VIEWPORT,
+      { now: 11_000, msPerPx: 100, tzOffsetMinutes: 0 },
+    )
+    expect(layout.messages).toHaveLength(1)
+    expect(layout.messages[0]?.to).toBeUndefined()
+    expect(layout.messages[0]?.time).toBe(1_000)
+  })
+
+  it('survives malformed messages and keeps a positive window', () => {
+    const hostile = {
+      ...crowded(1),
+      lanes: [{ ...crowded(1).lanes[0]!, messages: [null, { kind: 'message' }, { kind: 'message', time: Number.NaN }] as unknown as MessageSpan[] }],
+    }
+    expect(() => layoutTimeline(hostile, VIEWPORT, { now: 11_000, msPerPx: 100, tzOffsetMinutes: 0 })).not.toThrow()
+    const layout = layoutTimeline(hostile, VIEWPORT, { now: 11_000, msPerPx: 100, tzOffsetMinutes: 0 })
+    expect(layout.messages.length).toBeLessThanOrEqual(1)
+    expect(layout.window.end).toBeGreaterThanOrEqual(layout.window.start + 1)
   })
 })

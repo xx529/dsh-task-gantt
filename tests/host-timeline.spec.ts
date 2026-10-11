@@ -129,13 +129,16 @@ describe('buildTimeline degradation (never throws, always honest)', () => {
     }
   })
 
-  it('echoes the requested session and never invents a closed range end', async () => {
+  it('echoes the requested session and keeps the frozen live ⇔ end pair', async () => {
     const value = await buildTimeline(fakeContext(), 'session-xyz')
     assertTimeline(value)
     expect(value.sessionId).toBe('session-xyz')
-    if (value.source === 'live') {
-      expect(value.range.end, 'a live board keeps the right edge pinned to now (end: null)').toBeNull()
-    }
+    // `source` (how the timeline was assembled) and `live` (is the team still
+    // doing something) are ORTHOGONAL under contract v2: a projection-only
+    // board whose members have all stopped is `source: 'live'` *and*
+    // `live: false` with a real `range.end`. The frozen rule is the PAIR, never
+    // one field alone — `assertTimeline` enforces it; this pins the intent.
+    expect(value.live, 'live must be exactly "range.end is null"').toBe(value.range.end === null)
   })
 
   it('keeps generatedAt at or before now (never a future timestamp)', async () => {
@@ -187,10 +190,14 @@ describe('buildTimeline degradation (never throws, always honest)', () => {
   it('surfaces every problem as data, never as a thrown error (fuzz over empty ids)', async () => {
     for (const id of ['', ' ', 'session', '0']) {
       const problems = validateTimeline(await buildTimeline(fakeContext(), id)).filter((problem) => problem.severity === 'error')
-      // The route already rejects a blank sessionId with 400, so a blank id
-      // reaching this layer may be echoed verbatim into sessionId/rootSessionId;
-      // anything else would be a real contract violation.
-      const onlyEchoedId = problems.every((problem) => problem.path === '$.sessionId' || problem.path === '$.rootSessionId')
+      // The route already rejects a blank sessionId with 400, so a blank id can
+      // only reach this layer when a caller bypasses it; whatever it echoes
+      // back is then blank too. Problems CAUSED by the blank id are therefore
+      // tolerated here (the id itself, and the navigation target derived from
+      // it); anything else would be a real contract violation.
+      const blankIdEcho = (path: string): boolean =>
+        path === '$.sessionId' || path === '$.rootSessionId' || path.endsWith('.navigation.value')
+      const onlyEchoedId = problems.every((problem) => blankIdEcho(problem.path))
       expect(problems.length === 0 || onlyEchoedId, `${JSON.stringify(id)}: ${JSON.stringify(problems)}`).toBe(true)
     }
   })

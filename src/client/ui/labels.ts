@@ -54,6 +54,21 @@ const zh = {
   scopesNone: '无',
   historySource: '时间来自会话日志',
   spinner: '读取中',
+  endedLabel: '结束',
+  frozenHint: '团队已全部停止：时间轴冻结在最后一个事件，不再向前推进',
+  messageCountLabel: '{count} 条消息',
+  messageBandTitle: '{count} 条消息，从 {from} 到 {to}',
+  messageLegendYou: '我发起（挖空+双色环）',
+  messageLegendTeammate: 'teammate 消息（实心）',
+  messageLegendHint: '我发起 = 挖空点 + 深浅双色环（不用色相，保证浅色/暗色主题都看得见）· ✎=我发起 · ✉=消息投递 · 空隙处的 +N 表示该处省略了 N 条，位置不动',
+  messageModeBoth: '活动+消息',
+  messageModeMarkers: '只看消息',
+  messageModeHint: '切换是否显示 turn/step 活动条（只影响绘制，不影响任何时间）',
+  messageOmitted: '此处另有 {count} 条未绘制',
+  messageDropped: '{shown}/{total} 条消息已绘制',
+  messageDroppedHint: '按像素间距抽稀；每个标记仍是它自己的真实时间，未绘制的只被省略、未被挪动',
+  messageAria: '{time}，{route}，{preview}',
+  leadLabel: 'Lead',
 } as const
 
 export type UiMessageKey = keyof typeof zh
@@ -103,6 +118,21 @@ const en: Record<UiMessageKey, string> = {
   scopesNone: 'none',
   historySource: 'Times come from session logs',
   spinner: 'Loading',
+  endedLabel: 'ended',
+  frozenHint: 'Every member has stopped: the axis is frozen at the last event and no longer advances',
+  messageCountLabel: '{count} messages',
+  messageBandTitle: '{count} messages, {from} to {to}',
+  messageLegendYou: 'from me (hole + two-tone ring)',
+  messageLegendTeammate: 'teammate message (solid)',
+  messageLegendHint: 'from me = a punched-out dot with a light/dark two-tone ring (no hue, so it is legible on either theme) · ✎ = I sent it · ✉ = a delivery · a +N in a gap means N more messages sit there, unmoved',
+  messageModeBoth: 'bars+messages',
+  messageModeMarkers: 'messages only',
+  messageModeHint: 'Toggle the turn/step bars (drawing only — no timestamp changes)',
+  messageOmitted: '{count} more here, not drawn',
+  messageDropped: '{shown}/{total} messages drawn',
+  messageDroppedHint: 'Thinned by pixel spacing; every marker keeps its own real time — omitted ones are never moved',
+  messageAria: '{time}, {route}, {preview}',
+  leadLabel: 'Lead',
 }
 
 const dictionaries: Record<'zh' | 'en', Record<UiMessageKey, string>> = { zh, en }

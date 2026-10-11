@@ -78,6 +78,83 @@ export interface TaskEvent {
   sessionId: string
 }
 
+/**
+ * The speaker of a timeline span, as the team journal records it.
+ *
+ * `kind: 'user'` is the human at the keyboard — their own prompt to the lead —
+ * and gets one fixed colour everywhere, so "I said this" is never confused with
+ * "a teammate said this".
+ */
+export interface SpanSpeaker {
+  kind: 'user' | 'lead' | 'teammate' | 'system'
+  /** Session/roster id: a member session id, `'lead'`, or `'user'`. */
+  id: string
+  /** Display name from the journal (`senderName`), or the literal `'you'`. */
+  name: string
+}
+
+/**
+ * A message-carrying span: one turn, one delivery, or one user prompt.
+ *
+ * These are what make the chart answer "at this moment, who told whom what".
+ * Every span is dated from a durable session-journal event (`turn/start`,
+ * `team/message/queued` + its `delivered` twin, `user/message`); nothing here
+ * is inferred from wall-clock arrival at the panel.
+ */
+export interface MessageSpan {
+  /** What the span represents; drives the marker's glyph and shape. */
+  kind: 'turn' | 'message' | 'user-prompt'
+  /** Epoch ms of the record that opened the span. */
+  time: number
+  /** Epoch ms the span closed; `null` while the turn is still open. */
+  end: number | null
+  /** Who produced it. */
+  from: SpanSpeaker
+  /**
+   * Who received it. Present for `kind: 'message'` (the journal's `targetId`);
+   * a turn or a user prompt has no addressee and leaves this `undefined`.
+   */
+  to?: SpanSpeaker
+  /**
+   * The message's own first line of text, whitespace-collapsed and already
+   * clipped to {@link MESSAGE_PREVIEW_MAX} — the panel shows it as-is.
+   */
+  preview?: string
+  /** The journal's message id, for correlating a queue with its delivery. */
+  messageId?: string
+  /** The owning session whose log carries the event. */
+  sessionId: string
+}
+
+/** Hard clip applied to {@link MessageSpan.preview} by the host half. */
+export const MESSAGE_PREVIEW_MAX = 140
+
+/**
+ * The next hop for a lane head: a session this chart can navigate to.
+ *
+ * `type: 'session'` carries a bare session id. `type: 'address'` carries DSH's
+ * structured subagent address for the same conversation — better-sidebar's
+ * `uiWorkspace.openSession` accepts either, and passing the exact shape DSH
+ * minted avoids re-deriving it here.
+ */
+export type LaneNavigation =
+  | { type: 'session'; value: string }
+  | { type: 'address'; value: { sessionId: string; [key: string]: unknown } }
+
+/**
+ * Theme tokens for one lane's identity colour.
+ *
+ * Deliberately a pair of design-token *names*, never literal colours: the
+ * theme contract forbids hard-coded paint in this plugin, so each lane carries
+ * the token references its bars and markers should resolve.
+ */
+export interface LaneColorTokens {
+  /** Fill for the lane's step bars and the left edge of its markers. */
+  bar: string
+  /** Text/icon colour that sits on {@link bar}. */
+  on: string
+}
+
 /** One shared task, as the durable board publishes it plus its dated history. */
 export interface TimelineTask {
   id: string
@@ -120,6 +197,21 @@ export interface TimelineLane {
   hasHistory: boolean
   /** Ascending activity spans. */
   spans: ActivitySpan[]
+  /**
+   * Ascending message-carrying spans (turns, deliveries, the human's prompts).
+   * Rendered as coloured markers so a lane shows who said what, when.
+   */
+  messages: MessageSpan[]
+  /**
+   * This lane's identity colour, as theme-token names. Stable for a given
+   * member id, so the same teammate keeps one colour across every panel.
+   */
+  color: LaneColorTokens
+  /**
+   * Where clicking this lane head should navigate. Absent when the lane has no
+   * real session behind it (`unassigned`, or a roster row with no id yet).
+   */
+  navigation?: LaneNavigation
   /** Tasks drawn on this lane, ascending by first history time. */
   tasks: TimelineTask[]
 }
@@ -138,10 +230,19 @@ export interface TimelineResponse {
   /** Epoch ms the host built this response. */
   generatedAt: number
   /**
-   * Chart bounds in epoch ms. `end` is `null` while the board is still live,
-   * which tells the client to keep the right edge pinned to "now".
+   * Chart bounds in epoch ms.
+   *
+   * `end` is `null` while the board is still live, which tells the client to
+   * keep the right edge pinned to "now". When every member has stopped, `end`
+   * is a real timestamp instead and {@link live} is `false`, so the chart stops
+   * growing — the window no longer creeps forward on an idle team.
    */
   range: { start: number; end: number | null }
+  /**
+   * Whether the team is still doing something. `false` freezes the right edge
+   * at {@link range}.`end`; the client must not advance it with its own clock.
+   */
+  live: boolean
   /** The Lead's durable team failure string, when the board stopped early. */
   failure?: string
   /** Lanes, Lead first, then teammates in roster order, then `unassigned`. */

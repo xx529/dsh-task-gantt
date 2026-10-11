@@ -37,6 +37,8 @@ import {
   API_VERSION,
   type MemberPhase,
   type MemberStatus,
+  type MessageSpan,
+  type SpanSpeaker,
   type TimelineLane,
   type TimelineResponse,
   type TimelineTask,
@@ -47,13 +49,22 @@ import {
   foldSessionEvents,
   mergeDiagnostics,
   type FoldDiagnostics,
+  type FoldedMessageRecord,
   type FoldedSession,
   type FoldedTeam,
   type FoldedTeamMember,
   type TeamTaskSnapshot,
   type ToolCallTransition,
 } from './fold.ts'
-import { liveAgent, liveAgentModel, liveAgentRunning, readSessionHeader, readSessionLog } from './session-log.ts'
+import { laneColorTokens } from './lane-color.ts'
+import {
+  liveAgent,
+  liveAgentList,
+  liveAgentModel,
+  liveAgentRunning,
+  readSessionHeader,
+  readSessionLog,
+} from './session-log.ts'
 
 // --------------------------------------------------------------------------
 // Structural faces of the host services this module consumes.
@@ -372,6 +383,152 @@ function toTimelineTask(draft: TaskDraft, laneId: string): TimelineTask {
 }
 
 // --------------------------------------------------------------------------
+// Message-carrying spans (who told whom what, at what instant)
+// --------------------------------------------------------------------------
+
+/**
+ * Resolve a journal `senderId` / `targetId` to a speaker.
+ *
+ * Identity is what the payload says, never the log it was read from: every
+ * `team/message` event is appended to the **Lead's** log regardless of who sent
+ * it, so attributing by log would paint every teammate's message on the Lead's
+ * lane. `id` is tried before `name` because it is the stable key; the name is
+ * only consulted for the board's `ownerName` spelling of the same member.
+ * Anything unrecognised becomes `system` — a fabricated teammate would be worse
+ * than an honest "not from the roster".
+ *
+ * @param id - `senderId` / `targetId` from the event.
+ * @param name - `senderName` from the event, when present.
+ * @returns the speaker, or `undefined` when the id is missing entirely.
+ */
+function makeSpeakerLookup(
+  laneByMemberId: Map<string, string>,
+  memberIdByName: Map<string, string>,
+): (id: string | undefined, name: string | undefined) => SpanSpeaker | undefined {
+  return (id, name) => {
+    if (id === undefined) return undefined
+    const laneId = laneByMemberId.get(id)
+    if (laneId === 'lead') return { kind: 'lead', id: 'lead', name: name ?? 'lead' }
+    if (laneId !== undefined) return { kind: 'teammate', id: laneId, name: name ?? laneId }
+    if (name !== undefined) {
+      const byName = memberIdByName.get(name)
+      if (byName === 'lead') return { kind: 'lead', id: 'lead', name }
+      if (byName !== undefined) return { kind: 'teammate', id: byName, name }
+    }
+    if (id === 'lead') return { kind: 'lead', id: 'lead', name: name ?? 'lead' }
+    return { kind: 'system', id, name: name ?? id }
+  }
+}
+
+/**
+ * Turn one log's folded message records into wire spans.
+ *
+ * Pairing, per the journal's real shape: `queued` carries the sender and the
+ * text, `delivered` carries only `messageId` + `targetId`, so the two are
+ * joined by id inside {@link foldMessageRecords} and a delivery with no queue
+ * yields a span with **no `from`** — the journal does not name the sender there
+ * and this plugin does not guess one.
+ *
+ * @param fold - the fold of the log that carried the events.
+ * @param lookup - roster resolver for both ids.
+ * @param seen - message ids already emitted (one exchange = one span).
+ * @returns ascending spans.
+ */
+function messageSpansFrom(
+  fold: FoldedSession,
+  lookup: (id: string | undefined, name: string | undefined) => SpanSpeaker | undefined,
+  seen: Set<string>,
+): MessageSpan[] {
+  const spans: MessageSpan[] = []
+  for (const record of fold.messages.records) {
+    const time = record.queuedAt ?? record.deliveredAt
+    if (time === undefined) continue
+    if (record.queuedAt !== undefined) {
+      if (seen.has(record.messageId)) continue
+      seen.add(record.messageId)
+    }
+    const span: MessageSpan = {
+      kind: 'message',
+      time,
+      end: record.deliveredAt ?? null,
+      from: lookup(record.senderId, record.senderName) ?? {
+        kind: 'system',
+        id: record.senderId ?? 'unknown',
+        name: record.senderName ?? 'unknown',
+      },
+      messageId: record.messageId,
+      sessionId: fold.sessionId,
+    }
+    const to = lookup(record.targetId, undefined)
+    if (to !== undefined) span.to = to
+    if (record.preview !== undefined) span.preview = record.preview
+    spans.push(span)
+  }
+  return spans
+}
+
+/**
+ * The human's own prompts, as spans.
+ *
+ * `from.id` is the literal `'user'` so the client can give every prompt one
+ * fixed colour: "I said this" must never look like "a teammate said this".
+ *
+ * @param fold - the fold of the log that carried the events.
+ * @returns ascending spans.
+ */
+function userPromptSpansFrom(fold: FoldedSession): MessageSpan[] {
+  return fold.messages.userPrompts.map((prompt) => {
+    const span: MessageSpan = {
+      kind: 'user-prompt',
+      time: prompt.time,
+      end: null,
+      from: { kind: 'user', id: 'user', name: 'you' },
+      sessionId: fold.sessionId,
+    }
+    if (prompt.preview !== undefined) span.preview = prompt.preview
+    return span
+  })
+}
+
+/**
+ * One log's turns as message spans, so a lane records "this teammate was
+ * working from t₀ to t₁" alongside what it sent.
+ *
+ * A turn is taken from the *activity* fold rather than re-derived from
+ * `turn/start` / `turn/end`: `foldActivitySpans` already applied every
+ * tolerance rule (unpaired closes, duplicated starts, clamping, ordering) and a
+ * second implementation here would be a second source of truth.
+ *
+ * @param fold - the fold of the lane's own log.
+ * @param speaker - who owns the lane.
+ * @returns ascending spans, one per turn.
+ */
+function turnSpansFrom(fold: FoldedSession, speaker: SpanSpeaker): MessageSpan[] {
+  const spans: MessageSpan[] = []
+  for (const span of fold.activity.spans) {
+    if (span.kind !== 'turn') continue
+    const emitted: MessageSpan = {
+      kind: 'turn',
+      time: span.start,
+      end: span.end,
+      from: speaker,
+      sessionId: fold.sessionId,
+    }
+    // The journal's turn number is a real field of `turn/start`; keep it in the
+    // id slot so two turns of one lane stay distinguishable to the client.
+    if (span.turn !== undefined) emitted.messageId = `turn:${fold.sessionId}:${span.turn}`
+    spans.push(emitted)
+  }
+  return spans
+}
+
+/** Ascending by `(time, end)`, with `turn` under `message`/`user-prompt`. */
+function sortMessageSpans(spans: MessageSpan[]): MessageSpan[] {
+  const rank = (span: MessageSpan): number => (span.kind === 'turn' ? 0 : span.kind === 'message' ? 1 : 2)
+  return spans.sort((a, b) => a.time - b.time || rank(a) - rank(b))
+}
+
+// --------------------------------------------------------------------------
 // buildTimeline
 // --------------------------------------------------------------------------
 
@@ -397,7 +554,10 @@ export async function buildTimeline(ctx: Context, sessionId: string): Promise<Ti
       sessionId,
       rootSessionId: sessionId,
       generatedAt,
-      range: { start: generatedAt, end: null },
+      // Nothing was derived, so there is nothing to keep growing: freeze an
+      // empty window instead of promising a live edge we cannot justify.
+      range: { start: generatedAt, end: generatedAt },
+      live: false,
       lanes: [],
       tasks: [],
       source: 'live',
@@ -473,6 +633,29 @@ async function deriveTimeline(ctx: Context, sessionId: string, generatedAt: numb
     if (seenLaneIds.has(member.id) || member.id === rootSessionId) continue
     seenLaneIds.add(member.id)
     drafts.push(teammateDraftFromJournal(member))
+  }
+  // Last resort: the runtime's own child sessions of the root. A teammate
+  // whose `team/member` event never reached the journal is still a real session
+  // with a real log, and dropping it would hide both its spans and its
+  // messages. Only sessions the runtime itself reports as children of the root
+  // qualify, so an unrelated agent can never be drawn as a teammate.
+  const runtimeMembers = liveAgentList(ctx)
+  if (runtimeMembers.length > 0) {
+    for (const agent of runtimeMembers) {
+      const id = text(agent.id)
+      if (id === undefined || id === rootSessionId || seenLaneIds.has(id)) continue
+      const header = agent.session?.header
+      const parent = header === undefined ? undefined : text(header.parentSession)
+      if (parent !== rootSessionId) continue
+      seenLaneIds.add(id)
+      const draft: LaneDraft = { id, name: id, role: 'teammate', sessionId: id }
+      const model = text(agent.options?.model)
+      if (model !== undefined) draft.model = model
+      const createdAt = num(header?.createdAt)
+      if (createdAt !== undefined) draft.createdAt = createdAt
+      draft.viewStatus = agent.status === 'running' ? 'running' : 'inactive'
+      drafts.push(draft)
+    }
   }
 
   // ---- 5. read every lane's own log (spans + tool-call attribution) --------
@@ -576,15 +759,45 @@ async function deriveTimeline(ctx: Context, sessionId: string, generatedAt: numb
   }
 
   // ---- 7. lanes: spans + status -------------------------------------------
+  /** Lane id per member session id — the bridge from a message's id to a row. */
+  const laneByMemberId = new Map<string, string>()
+  laneByMemberId.set(rootSessionId, 'lead')
+  for (const draft of drafts) {
+    if (draft.sessionId !== undefined) laneByMemberId.set(draft.sessionId, draft.id)
+  }
+  for (const member of rootFold.team.members) {
+    if (!laneByMemberId.has(member.id)) laneByMemberId.set(member.id, member.id)
+  }
+
   const lanes: TimelineLane[] = []
   for (const draft of drafts) {
+    // Position in the final lane array — the Lead is index 0 because `drafts`
+    // starts with the Lead. Colours are assigned by position (not by hashing the
+    // id) so that the first five lanes are guaranteed five distinct hues; see
+    // `lane-color.ts` for the ceiling and the stability trade-off.
+    const laneIndex = lanes.length
     const fold = draft.sessionId === undefined ? undefined : folds.get(draft.sessionId)
     const spans = fold?.activity.spans ?? []
     const hasOpenSpan = spans.some((span) => span.end === null)
     const fromView = statusFromViewStatus(draft.viewStatus)
     const running = draft.sessionId === undefined ? undefined : liveAgentRunning(ctx, draft.sessionId)
+    // A session with no registered agent is cold: its log can never grow again,
+    // so an unclosed span in it is history, not evidence of work in progress.
+    // `running` is only trusted when the probe answered with a real boolean.
+    const runningKnown = typeof running === 'boolean'
+    const coldSession = draft.sessionId !== undefined && !runningKnown
     const status: MemberStatus =
-      fromView === 'running' || fromView === 'idle' ? fromView : deriveStatus(draft.phase, running, hasOpenSpan)
+      fromView === 'running' || fromView === 'idle'
+        ? fromView
+        : deriveStatus(draft.phase, runningKnown ? running : undefined, coldSession ? false : hasOpenSpan)
+
+    // The lane's own turns, plus this lane's identity colour. `navigation`
+    // is only set for a lane with a real session behind it.
+    const speaker: SpanSpeaker =
+      draft.role === 'lead'
+        ? { kind: 'lead', id: 'lead', name: draft.name }
+        : { kind: 'teammate', id: draft.id, name: draft.name }
+    const messages = fold === undefined ? [] : turnSpansFrom(fold, speaker)
 
     const lane: TimelineLane = {
       id: draft.id,
@@ -595,7 +808,12 @@ async function deriveTimeline(ctx: Context, sessionId: string, generatedAt: numb
       // the flag tells the UI "this is durable history", not "a log exists".
       hasHistory: fold !== undefined && spans.length > 0,
       spans,
+      messages: sortMessageSpans(messages),
+      color: laneColorTokens(draft.id, laneIndex),
       tasks: [],
+    }
+    if (draft.sessionId !== undefined) {
+      lane.navigation = { type: 'session', value: draft.sessionId }
     }
     if (draft.phase !== undefined) lane.phase = draft.phase
     if (draft.createdAt !== undefined) lane.createdAt = draft.createdAt
@@ -604,6 +822,50 @@ async function deriveTimeline(ctx: Context, sessionId: string, generatedAt: numb
     lanes.push(lane)
   }
   const laneIds = new Set(lanes.map((lane) => lane.id))
+
+  // ---- 7b. messages: attribute every exchange to its sender's lane --------
+  // Reads BOTH the root log and each member log, because a teammate's message
+  // is journalled into the Lead's log while the teammate's own replies live in
+  // its own log. Attribution is by the payload's ids (see `makeSpeakerLookup`),
+  // so a span lands on the row of whoever actually spoke.
+  const lookup = makeSpeakerLookup(laneByMemberId, memberIdByName)
+  const laneById = new Map(lanes.map((lane) => [lane.id, lane]))
+  const seenMessages = new Set<string>()
+  const messageDiagnostics = []
+  for (const [foldSessionId, fold] of folds) {
+    messageDiagnostics.push(fold.messages.diagnostics)
+    const exchanges = messageSpansFrom(fold, lookup, seenMessages)
+    const prompts = userPromptSpansFrom(fold)
+    for (const span of [...exchanges, ...prompts]) {
+      // A message belongs to the lane of its sender; a *user prompt* belongs to
+      // the lane whose log carried it (the human is not a roster member), which
+      // for the Lead's own log is the Lead row.
+      const owner =
+        span.kind === 'user-prompt'
+          ? (laneByMemberId.get(foldSessionId) ?? foldSessionId)
+          : span.from.id
+      const lane = laneById.get(owner)
+      if (lane === undefined) continue
+      lane.messages.push(span)
+    }
+  }
+  for (const lane of lanes) lane.messages = sortMessageSpans(lane.messages)
+  let unpairedDeliveries = 0
+  let injectedUserMessages = 0
+  for (const diagnostics of messageDiagnostics) {
+    unpairedDeliveries += diagnostics.unpairedDeliveries
+    injectedUserMessages += diagnostics.injectedUserMessages
+  }
+  if (unpairedDeliveries > 0) {
+    notes.push(
+      `${unpairedDeliveries} team message delivery(ies) had no queued twin in the readable window; those spans carry no sender (the journal does not name one)`,
+    )
+  }
+  if (injectedUserMessages > 0) {
+    notes.push(
+      `${injectedUserMessages} user/message event(s) were runtime injections (time-context, tool-jobs, subagent-settled, team-message, …), not the human, and are not drawn as prompts`,
+    )
+  }
 
   // ---- 8. task → lane assignment ------------------------------------------
   /** The lane a task belongs to: board owner, else its last actor, else unassigned. */
@@ -656,6 +918,11 @@ async function deriveTimeline(ctx: Context, sessionId: string, generatedAt: numb
       role: 'unknown',
       hasHistory: false,
       spans: [],
+      // No session owns this row, so it can carry no turn, no navigation, and
+      // the palette's neutral colour rather than borrowing a teammate's.
+      messages: [],
+      // The sentinel row never participates in the positional cycle.
+      color: laneColorTokens('unassigned', lanes.length),
       tasks: unassignedDrafts.map((draft) => toTimelineTask(draft, 'unassigned')),
     }
     lanes.push(lane)
@@ -663,12 +930,20 @@ async function deriveTimeline(ctx: Context, sessionId: string, generatedAt: numb
   }
   tasks.sort(byFirstTime)
 
-  // ---- 9. range, source, notes --------------------------------------------
+  // ---- 9. range, liveness, source, notes ----------------------------------
   const observed: number[] = []
+  /** Whether any lane still has an unfinished span / open turn. */
+  let hasOpenSpan = false
   for (const lane of lanes) {
     for (const span of lane.spans) {
       observed.push(span.start)
       if (span.end !== null) observed.push(span.end)
+      else hasOpenSpan = true
+    }
+    for (const message of lane.messages) {
+      observed.push(message.time)
+      if (message.end !== null) observed.push(message.end)
+      else if (message.kind === 'turn') hasOpenSpan = true
     }
     if (lane.createdAt !== undefined) observed.push(lane.createdAt)
   }
@@ -677,8 +952,50 @@ async function deriveTimeline(ctx: Context, sessionId: string, generatedAt: numb
   }
   if (rootFold.team.sessionCreatedAt !== undefined) observed.push(rootFold.team.sessionCreatedAt)
   const start = observed.length > 0 ? Math.min(...observed) : (rootFold.team.sessionCreatedAt ?? generatedAt)
+  const lastObserved = observed.length > 0 ? Math.max(...observed) : undefined
   if (observed.length === 0) {
     notes.push('no dated session event was readable; the chart has no activity to place and starts at the root session creation time')
+  }
+
+  // Liveness is decided from EVENT EVIDENCE + the runtime's own view, never
+  // from the moment this request happened to run and never from a client clock:
+  //
+  //   * `ctx.agents.get(id)?.status === 'running'` is authoritative when the
+  //     session IS registered — the runtime knows whether it is executing;
+  //   * an unclosed span (a `turn/start` / `step/start` with no end) is the
+  //     primary evidence for a session that is NOT registered: it means the log
+  //     stopped mid-flight, which is exactly "the team is still going" for the
+  //     panel's own session or a session right after a teammate finished;
+  //   * a log with no open span and no live agent is *stopped* for good, so the
+  //     right edge freezes at the last observed instant. That frozen edge is a
+  //     real event time, so no timestamp ever has to be invented for it.
+  //
+  // The split matters in practice: every finished teammate's log ends with an
+  // unclosed step, so counting "any open span anywhere" as live would leave a
+  // dead team's chart creeping forward forever (observed on the real 9-lane log
+  // — 4 cold teammate logs carried open spans).
+  const anyAgentRunning = lanes.some((lane) => {
+    const navigation = lane.navigation
+    if (navigation === undefined) return false
+    // `type: 'session'` is the only form this half emits today; the address
+    // form carries the same conversation and is still a real session.
+    const sessionId = navigation.type === 'session' ? navigation.value : navigation.value.sessionId
+    return sessionId !== undefined && liveAgentRunning(ctx, sessionId) === true
+  })
+  const ownSessionStillOpen = lanes.some((lane) => {
+    const navigation = lane.navigation
+    if (navigation === undefined || navigation.type !== 'session') return false
+    if (navigation.value !== sessionId) return false
+    return (
+      lane.spans.some((span) => span.end === null) ||
+      lane.messages.some((message) => message.kind === 'turn' && message.end === null)
+    )
+  })
+  const live = anyAgentRunning || ownSessionStillOpen
+  if (!live) {
+    notes.push(
+      'no live agent is running and the requested session has no open span, so the timeline is frozen at the last observed event; the chart no longer advances with the wall clock',
+    )
   }
 
   const merged = mergeDiagnostics(diagnostics)
@@ -700,7 +1017,11 @@ async function deriveTimeline(ctx: Context, sessionId: string, generatedAt: numb
     sessionId,
     rootSessionId,
     generatedAt,
-    range: { start, end: null },
+    // `end: null` means "still growing"; a real instant means "stopped here".
+    // The frozen value is the last event actually observed, so the chart shows
+    // the work that happened rather than trailing an idle team forever.
+    range: { start, end: live ? null : (lastObserved ?? start) },
+    live,
     lanes,
     tasks,
     source,
