@@ -94,37 +94,24 @@ const LANE_COLOR_FALLBACKS: readonly LaneColorTokens[] = [
   { bar: '--dsw-alias-state-idle-primary', on: '--dsw-alias-label-primary-inverted' },
 ]
 /**
- * The human's own prompts: a HOLE plus a two-tone ring, not a hue.
+ * The human's own prompts: a punched-out dot ringed by BOTH ends of the ink pair.
  *
- * A single semantic token cannot work here, and that is measurable rather than
- * a matter of taste: every candidate is contrast-adequate in one theme and
- * invisible in the other.
+ * The ring paints two layers, an inner `label-primary` and an outer
+ * `label-primary-inverted`, so whichever skin is active at least one of them has
+ * contrast against the surface — no theme detection, and no reliance on either
+ * token's value flipping with the skin (a premise nobody has measured). On the
+ * light surface the inner dark ring carries it; on the dark surface the outer
+ * light ring does. The fill is the panel's own surface token, so the dot still
+ * reads as a hole rather than as a coloured blob.
  *
- *   token                        on a light panel   on a dark panel
- *   --dsw-alias-markdown-citation   1.16:1 (invisible)     13.83:1
- *   --dsw-alias-label-primary      18.90:1                 1.17:1 (invisible)
- *
- * (Ratios measured from the tokens' resolved values, see
- * {@link UR_MARKER_FILL_TOKEN} / {@link UR_MARKER_RING_TOKENS} below.)
- *
- * So the marker is drawn as a punched-out dot: the FILL is the panel's own
- * surface token (so it reads as a hole), and the RING is painted twice — once
- * in `label-primary` and once in `label-primary-inverted`, in that order. On a
- * light panel the dark inner ring carries the contrast (≈6.6:1) and on a dark
- * panel the light outer ring does (≈13.8:1); neither theme needs to be
- * detected, which matters because this app switches themes WITHOUT changing
- * `data-theme`, a class, or any attribute we could read. Do not "fix" this by
- * swapping in another single token: re-measure first, because a token that is
- * legal and present can still paint the panel's own colour.
- *
- * The shape stays redundant as well: `✎` inside the dot, plus the dashed
- * outline, versus a plain filled square for a teammate's delivery.
+ * A single mid-luminance token was tried and rejected: `label-secondary` measures
+ * below the 3:1 graphical minimum on the dark surface, so a one-layer ring bets
+ * on an unverified assumption, while two layers do not.
  */
 const USER_COLOR: LaneColorTokens = {
   bar: '--dsw-alias-bg-layer-1',
   on: '--dsw-alias-label-primary',
 }
-/** Speaker kinds that are not a lane of their own. */
 const SYSTEM_COLOR: LaneColorTokens = {
   bar: '--dsw-alias-label-dimmed',
   on: '--dsw-alias-label-primary',
@@ -136,11 +123,14 @@ const SYSTEM_COLOR: LaneColorTokens = {
  */
 export const UR_MARKER_FILL_TOKEN = '--dsw-alias-bg-layer-1'
 /**
- * The user marker's ring layers, INNER FIRST. Both are required: each one is
- * contrast-adequate on exactly one of the two themes, so dropping either makes
- * the marker invisible for half the users. Exported so a guard can assert the
- * pair is still there (the failure mode is silent: a legal token that paints
- * a colour almost identical to the surface).
+ * The user marker's ring layers, INNER FIRST.
+ *
+ * Both are required and neither may be "simplified" away: they are the two ends
+ * of the ink pair, and the whole point is that at least ONE of them has contrast
+ * on whichever skin is active, without the component knowing which that is.
+ *
+ * Exported so a guard can hold the line: the failure mode is silent (a legal,
+ * present token painting almost exactly the surface colour).
  */
 export const UR_MARKER_RING_TOKENS = [
   '--dsw-alias-label-primary',
@@ -784,8 +774,10 @@ function MessageMarker({
     width: marker.w,
     height: marker.h,
     ...(color === undefined ? {} : { background: color.bar }),
-    // The two-tone ring is what makes the human's dot legible on BOTH themes;
-    // it is a class-level rule too, so this only has to survive culling.
+    // Two layers are what make the human's dot legible on BOTH skins (the fill is
+    // deliberately the surface colour): whichever skin is active, one of the two
+    // rings contrasts with the surface. Also a class-level rule; this inline copy
+    // exists so a culled render still carries it.
     ...(isUser
       ? { boxShadow: `0 0 0 2px var(${UR_MARKER_RING_TOKENS[0]}), 0 0 0 3.5px var(${UR_MARKER_RING_TOKENS[1]})` }
       : {}),

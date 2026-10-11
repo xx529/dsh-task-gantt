@@ -105,11 +105,23 @@ const hex = (value: string): [number, number, number] => [
 /** The two skins, resolved from the definition source (see the file header). */
 const LIGHT_PANEL: [number, number, number] = [255, 255, 255] // Lead's measurement
 const DARK_PANEL: [number, number, number] = [32, 33, 36] // Lead's measurement
-const RING_RESOLVED = {
-  // `--dsw-alias-label-primary` flips with the skin: bluish-1000 / bluish-50.
+const RING_RESOLVED: Record<'light' | 'dark', Record<string, [number, number, number]>> = {
+  // Both ring tokens are DEFINED TWICE in the host theme file, i.e. they flip
+  // with the skin (first block = light, second = dark):
+  //   --dsw-alias-label-primary           -> bluish-1000 #0f1115 | bluish-50  #f9fafb
+  //   --dsw-alias-label-primary-inverted  -> bluish-00   #ffffff | bluish-800 #353638
   light: { '--dsw-alias-label-primary': hex('#0f1115'), '--dsw-alias-label-primary-inverted': hex('#ffffff') },
   dark: { '--dsw-alias-label-primary': hex('#f9fafb'), '--dsw-alias-label-primary-inverted': hex('#353638') },
-} as const
+}
+
+/** Resolve a ring token per skin, failing loudly if its value was never recorded. */
+function resolved(token: string, skin: 'light' | 'dark'): [number, number, number] {
+  const value = RING_RESOLVED[skin][token]
+  if (value === undefined) {
+    throw new Error(`no ${skin}-skin value recorded for ${token}; read it out of @deepseek-ai/dsh-client-ui-theme and record it here`)
+  }
+  return value
+}
 
 describe('every referenced token is defined by the host theme', () => {
   it('scans a non-empty surface (a no-op scan cannot pass)', () => {
@@ -156,7 +168,13 @@ describe('every referenced token is defined by the host theme', () => {
 })
 
 describe('the user-prompt marker stays readable on both skins', () => {
-  it('is a two-layer ring filled with the panel surface, all real tokens', () => {
+  it('is a two-layer ring (inner first) filled with the panel surface, all real tokens', () => {
+    // Lead's ruling (2026-10-12), made after this assertion caught ui-2
+    // collapsing the ring to a single `--dsw-alias-label-secondary`: keep TWO
+    // layers. The reason is not that one layer is mathematically impossible; it
+    // is that a single-layer scheme is only safe IF its token flips with the
+    // skin, while two layers do not depend on that behaviour. See the rationale
+    // test below.
     const known = knownTokens()
     expect(UR_MARKER_RING_TOKENS).toHaveLength(2)
     for (const token of UR_MARKER_RING_TOKENS) expect(known.has(token), token).toBe(true)
@@ -167,7 +185,7 @@ describe('the user-prompt marker stays readable on both skins', () => {
 
   it('has at least one ring layer ≥ 3:1 on each skin', () => {
     for (const [skin, panel] of [['light', LIGHT_PANEL], ['dark', DARK_PANEL]] as const) {
-      const ratios = UR_MARKER_RING_TOKENS.map((token) => contrast(RING_RESOLVED[skin][token], panel))
+      const ratios = UR_MARKER_RING_TOKENS.map((token) => contrast(resolved(token, skin), panel))
       expect(
         Math.max(...ratios),
         `${skin} panel: ring ratios ${ratios.map((ratio) => ratio.toFixed(2)).join(', ')}`,
@@ -175,18 +193,39 @@ describe('the user-prompt marker stays readable on both skins', () => {
     }
   })
 
-  it('CORRECTION: a single ring layer is enough *because the ring tokens flip with the skin*', () => {
-    // ui-2 asked for "no single layer is ≥3:1 on both skins" as the anti-
-    // monochrome lock. Measured against the resolved chains, that is FALSE for
-    // the tokens actually used: `--dsw-alias-label-primary` resolves to
-    // `#0f1115` on light (18.90:1) and `#f9fafb` on dark (15.41:1), i.e. the
-    // SAME ring layer is readable on both skins precisely because the token is
-    // skin-aware. Encoding their version would have made the suite red on
-    // correct code. The property that actually distinguishes this design from
-    // the one it replaced is below.
-    const label = UR_MARKER_RING_TOKENS[0] as '--dsw-alias-label-primary' | '--dsw-alias-label-primary-inverted'
-    expect(contrast(RING_RESOLVED.light[label], LIGHT_PANEL)).toBeGreaterThanOrEqual(3)
-    expect(contrast(RING_RESOLVED.dark[label], DARK_PANEL)).toBeGreaterThanOrEqual(3)
+  it('single-layer schemes rest on an unverified premise; two layers do not', () => {
+    // WHAT IS MEASURED (light skin): `--dsw-alias-label-secondary` =
+    // rgb(97,102,107) -> 5.80:1 on the light panel. That is Lead's live
+    // measurement, and my definition-source value `#61666b` agrees exactly.
+    //
+    // WHAT IS NOT MEASURED: the LIVE dark-skin value of that token. Lead's
+    // control figure — "if it does not flip" — is 2.78:1, i.e. below the 3:1
+    // floor. For completeness: the token IS defined twice in the theme file
+    // (bluish-700 | bluish-300), so by the same evidence used for every other
+    // chain here it would resolve to `#cfd3d6` and reach 10.42:1 on the dark
+    // panel — but that is a derivation, not an observation, and the whole point
+    // of the ruling is that correctness must not hang on it.
+    //
+    // WHERE MY EARLIER "label-primary is 15.41:1 on dark" CAME FROM (Lead asked
+    // for the provenance): it is a DEFINITION-SOURCE DERIVATION, not a live
+    // measurement — `--dsw-alias-label-primary` -> `--dsw-static-neutral-bluish-50`
+    // = `#f9fafb` (grep-verified in the theme bundle: `bluish-50:#f9fafb`), against
+    // the dark panel Lead measured as rgb(32,33,36). With the theme's own dark
+    // surface (`bluish-875` = `#232324`) the same pair gives 15.03:1. The
+    // extraction path is cross-validated by `--dsw-alias-markdown-citation` ->
+    // `bluish-100` = `#ebeef2`, which equals Lead's live rgb(235,238,242) exactly.
+    // It is therefore evidence of the same KIND as the "label-secondary flips"
+    // claim — which is precisely why the ruling keeps the structurally safe
+    // design instead of adjudicating between two derivations.
+    const secondaryLight = hex('#61666b')
+    expect(contrast(secondaryLight, LIGHT_PANEL)).toBeCloseTo(5.8, 0)
+    // Only verifiable properties are asserted: the floor holds on both skins for
+    // the tokens actually exported, and a non-flipping token is shown to fail.
+    for (const skin of ['light', 'dark'] as const) {
+      const panel = skin === 'light' ? LIGHT_PANEL : DARK_PANEL
+      const best = Math.max(...UR_MARKER_RING_TOKENS.map((token) => contrast(resolved(token, skin), panel)))
+      expect(best, `${skin} skin`).toBeGreaterThanOrEqual(3)
+    }
   })
 
   it('the rejected alternative was a token that does NOT flip with the skin', () => {

@@ -214,6 +214,11 @@ export const MAX_TICKS = 400
  * 50+ messages, so markers must not be allowed to pile into an unreadable
  * smear. {@link decimateMarkers} walks the markers in time order and drops any
  * that would land closer than this to the previously kept one.
+ *
+ * KNOWN (open, tracked rather than fixed): this is smaller than
+ * {@link MESSAGE_MARKER_WIDTH}, so two kept markers may still overlap by a
+ * couple of pixels. Raising it to >= the width is a one-token change, held back
+ * because it is a visual-tuning decision for the real-device pass.
  */
 export const MESSAGE_MARKER_MIN_GAP_PX = 9
 /** Rendered width of one message marker (px) — a dot that fits its glyph. */

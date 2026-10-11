@@ -928,3 +928,34 @@ while (off < raw.byteLength) {
 **逐日志验证**：本工作区全部 **15 个**真实日志，该写法与 `zstd -d -c` 得到**完全相同的行数**
 （107 / 1207 / 1063 / 994 / 4193 / 563 / 88 / 49 / 749 / 4075 / 2621 / 4 / 280 / 3960 / 4），
 mismatches = 0。自检脚本因此不再依赖本机是否装了 `zstd`。
+
+## 17. `src/host/**` 的对外稳定面（重构前必读）
+
+本文件记录的是**事实**，这一节记录的是**接口契约的稳定性**：`tests/**` 直接 import 了
+`src/host/**` 的这些符号（清单由 verify 实测 grep 得出，非推测）。改动前请对照本表。
+
+| spec | 依赖的 src/host 符号 | 钉住的语义 |
+|---|---|---|
+| `host-integration.spec.ts` | `buildTimeline`、`LANE_COLOR_TOKENS`、`UNASSIGNED_COLOR_TOKENS`、`laneColorTokens`、`clearSessionLogCache` | 端到端形状（过契约校验）+ **位置配色语义**（lead 恒 slot 0、`(palette-1)` 个 teammate 填满剩余槽且不含 lead 色、`index == length` 回绕、unassigned 不占槽）+ 令牌存在性 + **空 live 读回退** + **两通道皆空 = 成功空读** |
+| `host-messages.spec.ts` | `foldMessageRecords`、`RawSessionEvent` | 按 `messageId` 配对（交错顺序）、孤儿 delivery 不编 sender、重复 queued 取首个 / delivered 取末个、queue 缺 target 由 delivery 补、`source.kind === 'user'` 才算人类、preview 折叠裁剪、排列不变性、垃圾输入不抛 |
+| `host-fold.spec.ts` | `foldActivitySpans`、`foldTeamEvents`、`foldToolCallTransitions`、`foldSessionEvents`、`mergeDiagnostics`、`deriveTaskAction`、`attributeTransitions`、`dateTaskFromToolCalls`、`TeamTaskSnapshot` | spans 容错（缺 open、缺 close、乱序、time 相等按 seq、孤儿 close、**end 永不为负**）、队日志回放、CAS 归因、level-2 补日期、diagnostics 守恒 |
+| `host-timeline.spec.ts` | `buildTimeline` | 8 种恶意 ctx 不抛 + 响应过契约 + 降级态 `source ∈ {live, partial}` 且 notes 非空 + **冻结成对语义 `live ⇔ (range.end === null)`** |
+| `host-route.spec.ts` | `buildTimelineHandler` | 200/400/403/404/405 与判定顺序、分块 body、`ctx.get` 抛错不外抛 |
+| `host-mount.spec.ts` | `apply` / `inject` / `name` | 路由注册到 `ROUTE_PREFIX`、`webServer` 已在→同步注册 / 未在→`ctx.inject` 延迟注册 / 无动态 inject→仅告警、register 抛错不被吞 |
+| `helpers/session-fixtures.ts` | `RawSessionEvent`（类型） | 各事件真实形状（`team/task` 七键、`team/member` 的 id = 子会话 id、`subagent/catalog`、tool/call 的 `arguments` 是 JSON 字符串） |
+
+### 安全 / 需通知的改动边界
+
+| 改动 | 后果 |
+|---|---|
+| 改 `LANE_COLOR_TOKENS` **长度或名字** | ✅ 安全。断言用 `LANE_COLOR_TOKENS.length`，不写死 5/6；名字仅做存在性检查 |
+| 改**位置分配语义**（lead 占 slot 0、回绕、unassigned 独立） | ❌ 会打红 `host-integration.spec.ts`，且报错明确 |
+| 改 `foldMessageRecords().diagnostics` 的**五个字段名**（`queued`/`delivered`/`unpairedDeliveries`/`userPrompts`/`injectedUserMessages`） | ❌ 逐字段断言，改名需先通知 verify |
+| **改名或移动文件**（例如把 `lane-color.ts` 并进 `timeline.ts`） | ❌ 直接打红 import；这类重构需先通知 verify 改 import，**不要为了迁就测试而保持错误结构** |
+| 删掉 `clearSessionLogCache` 这个 no-op 导出 | ❌ 会在 import 处报错；届时删除 spec 里的调用与注释即可，**功能不受影响** |
+| 给 `SessionLogFailure` 加字段（如本轮新增的 `empty?`） | ✅ 安全，纯新增；spec 不构造该类型 |
+| 内部新增（`liveAgentList`、`readSessionLog`、`readLive` 的改动） | ✅ 安全，spec 只经 `buildTimeline` 间接覆盖 |
+
+**一条方法论**：本轮那个「空 live 遮蔽磁盘」缺陷之所以逃过 400+ 用例，是因为**所有 fake ctx
+都让两条通道返回同一份数据**，于是分支不可达。判断一个 fake 是否够真，可以问一句：
+**「我有没有让它的两条独立来源故意不一致过？」**

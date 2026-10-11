@@ -337,9 +337,12 @@ export const BOARD_CSS = `
 /* The human's own prompt: a punched-out dot with a TWO-TONE ring, never a hue.
    Single tokens are invisible on one theme or the other (measured: the
    previously-used markdown-citation token scored 1.16:1 on a light panel), and
-   app switches themes without any attribute we could read. Inner ring carries
-   the light panel, outer ring the dark one; the fill is the panel surface so
-   the dot still reads as a hole. */
+   app switches themes without any attribute we could read. So the ring paints
+   BOTH ends of the ink pair: whichever skin is active, one of the two layers
+   contrasts with the surface. Do not collapse this to one token — a single
+   candidate measures below the 3:1 graphical minimum on one skin or the other,
+   and "it flips with the skin" is an assumption, not a measurement. The fill
+   stays the panel surface so the dot reads as a punched-out hole. */
 .dtg-msg-user {
   background: var(--dsw-alias-bg-layer-1);
   border: 0;
