@@ -948,14 +948,38 @@ mismatches = 0。自检脚本因此不再依赖本机是否装了 `zstd`。
 
 | 改动 | 后果 |
 |---|---|
-| 改 `LANE_COLOR_TOKENS` **长度或名字** | ✅ 安全。断言用 `LANE_COLOR_TOKENS.length`，不写死 5/6；名字仅做存在性检查 |
+| 改 `LANE_COLOR_TOKENS` 的**长度** | ✅ 安全。断言用 `LANE_COLOR_TOKENS.length`，不写死 5/6（`host-integration.spec.ts:463-465`、`:483`） |
+| 替换/删除这五个**具体 token 名**（business/success/warn/error/idle） | ❌ 会打红：`host-integration.spec.ts:507-513` 有 `toContain` 断言，五个 `state-*-primary` 必须仍在调色板里 |
+| 在这五个**之外**新增或替换 token | ✅ 安全（只要新 token 真实存在于定义表） |
+| 改 `UNASSIGNED_COLOR_TOKENS` 的导出名或分支 | ❌ 会打红：import 处 + `:490` 断言 `laneColorTokens('unassigned', 7)` **等于**它 |
 | 改**位置分配语义**（lead 占 slot 0、回绕、unassigned 独立） | ❌ 会打红 `host-integration.spec.ts`，且报错明确 |
+| 改 `readLive` / `readSessionLog` / `liveAgentList` 的**内部实现** | ✅ 安全；但三条可观察语义被用例钉住（见下），改语义**应当**红 |
 | 改 `foldMessageRecords().diagnostics` 的**五个字段名**（`queued`/`delivered`/`unpairedDeliveries`/`userPrompts`/`injectedUserMessages`） | ❌ 逐字段断言，改名需先通知 verify |
 | **改名或移动文件**（例如把 `lane-color.ts` 并进 `timeline.ts`） | ❌ 直接打红 import；这类重构需先通知 verify 改 import，**不要为了迁就测试而保持错误结构** |
-| 删掉 `clearSessionLogCache` 这个 no-op 导出 | ❌ 会在 import 处报错；届时删除 spec 里的调用与注释即可，**功能不受影响** |
+| 删掉 `clearSessionLogCache` 这个 no-op 导出 | ❌ 会打红 import。**当前决定是保留**（见下「测试接缝」）；若将来真要删，先通知 verify 去掉 spec 里的调用与注释即可，功能零影响 |
 | 给 `SessionLogFailure` 加字段（如本轮新增的 `empty?`） | ✅ 安全，纯新增；spec 不构造该类型 |
-| 内部新增（`liveAgentList`、`readSessionLog`、`readLive` 的改动） | ✅ 安全，spec 只经 `buildTimeline` 间接覆盖 |
 
-**一条方法论**：本轮那个「空 live 遮蔽磁盘」缺陷之所以逃过 400+ 用例，是因为**所有 fake ctx
-都让两条通道返回同一份数据**，于是分支不可达。判断一个 fake 是否够真，可以问一句：
-**「我有没有让它的两条独立来源故意不一致过？」**
+### 三条被用例钉住的可观察语义（属 `readSessionLog` 家族）
+
+改这几个函数的**内部**结构是安全的，但下面三条语义是**刻意的**测试面，改它们应当红：
+
+1. live 读到**空数组**必须**回退磁盘**（`host-integration.spec.ts` 的 `liveEmpty` 用例）；
+2. 两条通道**都可读但为空** = **成功空读**（`source: 'log'`、0 span、`hasHistory: false`），
+   **不报 `partial`**；
+3. 读取**失败** = `partial` + `notes` 非空 + **绝不抛异常**。
+
+### `clearSessionLogCache`：保留（决定已定）
+
+它是**测试接缝**，不是产品 API。保留的理由：它是"将来有人重新引入跨请求日志缓存"这类回归
+（正是本轮 1.5s 缓存那个 bug 类）每次测试都会经过的挂钩；删掉的收益只是对外面少一行 no-op，
+代价是缓存泄漏到测试间会更晚被发现。**故保留，不精简。**
+
+### 两条方法论（本轮实践得出，出处见 §15.3 与 §16.4）
+
+1. **fake 要故意制造分歧**：本轮那个「空 live 遮蔽磁盘」缺陷之所以逃过 400+ 用例，是因为
+   **所有 fake ctx 都让两条通道返回同一份数据**，于是 `if (live.ok) return live` 那条分支
+   不可达。判断一个 fake 是否够真，问一句：**「我有没有让它的两条独立来源故意不一致过？」**
+2. **测量不齐时先找通道差异，而不是先判谁错**：当两条独立测量相差 50 倍
+   （18.7 ms vs 1.0 s），先假设**两者都测对了不同的对象** —— 本轮正是这个假设把差异变成了
+   一条真缺陷；若当时归因成"谁量错了"，只会互相复测一轮，然后各自保留数字、
+   缺陷留在代码里。
