@@ -180,14 +180,17 @@ describe('tick ladder', () => {
     })
     expect(stepMs).toBe(5_000)
     expect(ticks.map((tick) => tick.time)).toEqual([5_000, 10_000])
-    // Tick labels go through `formatClock`, which now defaults to SECONDS
-    // (ui-2's change, 2026-10-12). This tick is at t=5_000 with tzOffset 0, so the
-    // label is `00:00:05` — the seconds genuinely reach the AXIS, which is why I
-    // raised the question of whether axis labels should ask for the coarse arm
-    // (`{ seconds: false }`, as the NOW/ENDED markers do). Pinned as-is so a
-    // decision shows up as a deliberate change.
-    expect(ticks[0]).toMatchObject({ x: 40, viewX: 40, labelKind: 'time', label: '00:00:05', major: false })
+    // SECONDS ARE A CALL-SITE DECISION, not a default: `formatClock` defaults to
+    // seconds (the detail view needs them) while the AXIS asks for the coarse arm
+    // explicitly. This regressed for one round — changing the default silently
+    // leaked seconds onto every tick — so the boundary itself is pinned here and in
+    // the `formatTickLabel` case below. This tick is t=5_000 at tzOffset 0 ⇒ 00:00.
+    expect(ticks[0]).toMatchObject({ x: 40, viewX: 40, labelKind: 'time', label: '00:00', major: false })
     expect(truncated).toBe(false)
+    // The whole ladder, not just the first tick: no axis label carries seconds.
+    for (const tick of ticks) {
+      if (tick.labelKind === 'time') expect(tick.label, JSON.stringify(tick)).not.toMatch(/\d{2}:\d{2}:\d{2}/)
+    }
     for (let index = 1; index < ticks.length; index += 1) {
       expect((ticks[index] as { time: number }).time).toBeGreaterThan((ticks[index - 1] as { time: number }).time)
     }
@@ -250,10 +253,18 @@ describe('time formatting (pure, offset-driven)', () => {
     expect(formatClock(0, 480, { seconds: false })).toBe('08:00')
   })
 
-  it('formats date+time and the tick labels', () => {
+  it('formats date+time with seconds, but the AXIS without them', () => {
+    // 01-01 00:00:00 —— the detail view carries seconds
     expect(formatDateTime(0, 0)).toBe('01-01 00:00:00')
-    expect(formatTickLabel(0, 'time', 0)).toBe('00:00:00')
+    // The axis does not: a second digit on a coordinate read-out is noise.
+    expect(formatTickLabel(0, 'time', 0)).toBe('00:00')
+    expect(formatTickLabel(0, 'time', 480)).toBe('08:00')
     expect(formatTickLabel(0, 'date', 0)).toBe('01-01')
+    // Explicit boundary: no axis label may ever carry seconds, while the default
+    // arm must. A future change to either side shows up here.
+    expect(formatTickLabel(61_000, 'time', 0)).toBe('00:01')
+    expect(formatClock(61_000, 0)).toBe('00:01:01')
+    expect(formatTickLabel(61_000, 'time', 0)).not.toMatch(/\d{2}:\d{2}:\d{2}/)
   })
 
   it('never throws on a non-finite time', () => {
