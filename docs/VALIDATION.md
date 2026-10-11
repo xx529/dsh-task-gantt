@@ -56,14 +56,14 @@ $ wc -c lib/index.js lib/client.js → 40502 B（39.6 KiB）/ 71996 B（70.3 KiB
 | # | 数据 | 判定 |
 |---|---|---|
 | 1 | `[data-build]` = `"build 2026-10-12 · tracks+peer-color"` | ✅ 确认部署的是含本轮修复的产物 |
-| 2 | `data-msg-direction` 分布 = `{ incoming: 8 }`（**outgoing 0**） | ❓ **未通过** —— 见下"真机发现" |
-| 3 | `.dtg-msg-out` / `.dtg-msg-in` = `0 / 8` | ❓ **未通过**（与第 2 项同一现象） |
-| 4 | `.dtg-msg` 总数 = `8` == `0 + 8` | ✅ 计数自洽（**这正说明问题不是"没画"，而是"只画了一个方向"**） |
+| 2 | `data-msg-direction` 分布：修复前 `{incoming: 8}` → **修复后 `{outgoing: 5, incoming: 8}`** | ✅ **修复后通过**（Lead 复验） |
+| 3 | `.dtg-msg-out` / `.dtg-msg-in`：修复前 `0 / 8` → **修复后 `5 / 8`**；`.dtg-msg` 总数 `8 → 13`（`5 + 8 == 13` ✅ 对账一致） | ✅ **修复后通过** |
+| 4 | `.dtg-msg` 总数与方向分布对账（修复前 `8 == 0+8`；修复后 `13 == 5+8`） | ✅ **两轮都自洽**（修复前那轮计数自洽恰恰说明问题不是"没画"，而是"只画了一个方向"） |
 | 5 | 样例 `title`：`10-11 23:10 · received from you` / `10-11 23:19 · received from demo-gamma · 1 more here, not drawn`；**user marker 方向 = incoming** | ✅ 与规则 4 一致（人类发言在承载泳道上读作"收到"） |
 | 6 | 泳道几何（矩形实测，泳道内局部坐标）：`lane-bg h=84`；`activity dy=4 h=8`；`message dy=16 h=11`；`task chip dy=114 h=36`；`task bar dy=127 h=10` ⇒ **activity 4–12 / message 16–27 / task 30–66 两两不相交**，chip 不越界；`114 − 84 = 30 = TASK_CARD_TOP` | ✅ 与我的**结构断言**交叉验证（我断言"三轨不相交 + 不写死 84 + `TASK_CARD_TOP === task 轨 y`"，真机数字逐条吻合） |
 | 7 | 同一 `msPerPx=6.0` 下任务条宽 `2.2 / 4.1 / 5.3 / 7.3 px`（**不再是等长**）；chip 宽恒 148 且全部 `placement='right'`；无 history 的 live 标记 = `2px × 10px`（不再是 36px 柱子） | ✅ "条长=时长" 与"live 标记是点不是条"两项真机通过；与我的**单调性/下限**断言一致（2.2px 说明下限 2px 只是兜底，不是常态） |
 
-### 真机发现（**离线全绿、真机仍错** —— 与两次 fixture 缺口同类）
+### 真机发现（**离线全绿、真机仍错** —— 已定位并修复，见下）
 
 第 2/3 项是**已知未过项**，但 **host 数据是正确的**：Lead 直接打路由拿到的会话（`session-48a50328-…`、`source:"log"`、4 泳道）里
 ```
@@ -75,7 +75,18 @@ demo-beta  laneId = 24fa5a9e-…，一条 marker: from = { kind:'teammate', id:'
 **我的独立取证（离线，先于 ui-2 的定位）**：我用**同一份真实 board** 按 `GanttChart.tsx:217-227` 的**真实构造**（`laneIds` + 由 `lane.navigation` 建的 `bySessionId` 两跳）重算方向，得到 **141 条 marker → outgoing 74 / incoming 67**，且 9 条泳道**全部带 `navigation`**。⇒ **数据与方向判定都是对的，丢失发生在"选哪些 marker 画"这一步**，从而**否证了"客户端手里的 data 与 host 不一致"这一候选解释**。（这条独立缩小了范围：不是数据、不是 `laneIdOf`，而是抽稀。）
 
 **根因（ui-2 定位并修复）**：`decimateMarkers` 原先把**一个像素间距游标**与**一个占用集合**共用给所有方向。真实数据里"回复"天然落在它所回答的消息之后几像素，于是整条泳道的 outgoing 全部撞在已保留的 incoming 的 9px 窗口内被**系统性丢弃** —— 现象是"计数与时间都对，只有**方向层静默消失**"。修法：①间距游标与占用集合**按方向分开**（同方向仍 ≥9px，不同方向允许更近 —— 刻意取舍：宁可重叠 2px，也不能整方向消失）；②**backfill**：某方向"有数据但一条未留"时放开间距补一条；③非有限 `time` 的 span **不进候选，backfill 也不复活**。
-**ui-2 的修复前后实测**（同一真实 payload）：4 泳道 `OUT 0→5 / IN 8→8`（`rendered 8→13`）；9 泳道 `OUT 5→21 / IN 21→24`（`rendered 26→45`）。**Lead 将重新部署复验第 2/3 项**，届时本节 ❓ 换 ✅。
+**ui-2 的修复前后实测**（同一真实 payload）：4 泳道 `OUT 0→5 / IN 8→8`（`rendered 8→13`）；9 泳道 `OUT 5→21 / IN 21→24`（`rendered 26→45`）。
+
+**Lead 复验（同一实例 19501，重启后）**：`data-build` 未变（`build 2026-10-12 · tracks+peer-color`）、`.dtg-msg` = **13**、`data-msg-direction` = **`{outgoing: 5, incoming: 8}`**、`.dtg-msg-out/.dtg-msg-in = 5/8` —— **第 2/3 项 ✅ 通过**。tooltip 实样进一步证明**语义**（不只是计数）成立：
+```
+"10-11 23:11 · sent to demo-beta"          ← lead 泳道上的「发出」
+"10-11 23:11 · sent to lead"               ← teammate 泳道上的「发出」
+"10-11 23:19 · received from demo-gamma"   ← 「收到」
+"10-11 23:10 · received from you"          ← 规则 4：人类提示在承载泳道是 incoming
+```
+即"同一 A→B 在 A 行显示 `sent to B`、在 B 行显示 `received from A`"**在真机上成立**。
+
+**一条方法论（来自 Lead 的自省，我留档）**：他最初把"方向 bug"判成"数据不一致"，部分原因是**看到的是打开瞬间的 8 条快照**。⇒ **对"活体"面板的单次快照不能当作稳态证据**；与"两条独立测量要故意不一致""fixture 要与真实分布同形"并列。
 
 **我的回归锁（3 条，已绿）**：`tests/layout.spec.ts`
 1. **整个 cluster 落在最小间距内**（6 条 marker 挤在 6px 内）→ 两个方向都必须有保留；
@@ -552,6 +563,8 @@ host-data-2 在 `docs/FINDINGS-host.md` §18.8 发布了 **13 条 host 侧不变
 19. ❓（**已知上限，Lead 裁定本轮不改**）`MESSAGE_MARKER_MIN_GAP_PX`(9) < `MESSAGE_MARKER_WIDTH`(11)：抽稀只保证标记**位置**间距 ≥9px，保留的两个标记仍可重叠 2px。我在 `tests/layout.spec.ts` 中只断言 gap 下限、**不**断言 `gap >= width`（那会刻意为红）；若后续把它改成 ≥12，把那条断言补上即可。
 20. ❓（**已知启发式 + 显式保留项，Lead 裁定本轮不改**，ui-2 要求记档以免收尾时被当成新 bug）chip 的 `inside` 阈值 `TASK_CHIP_INSIDE_MIN_WIDTH = 148px`：`labelPlacement === 'inside'` 仅当**条宽 ≥ chip 宽**，语义是"条装得下完整文字才内嵌，否则右侧挂靠"。148 是**与 chip 等宽的启发式**而非实测最优值——任何更窄的条一律右侧挂靠（例如 100px 的条不内嵌文字）。`tests/layout.spec.ts` 因此只断言结构（两条轨道不相交、`TASK_CARD_TOP === task 轨 y`、`TASK_CARD_HEIGHT <= TASK_TRACK_HEIGHT`）与 `labelPlacement` 的**两端情形**，**不**断言 148 这个魔数；若日后改为自适应，请同步更新 `labelPlacement` 的断言口径。（同批显式保留项还有 ❓19：`MESSAGE_MARKER_MIN_GAP_PX(9) < WIDTH(11)` 可重叠 2px；以及真机目视项：条高 10 / chip 36 / `dtg-msg-out` 命中数 / `data-build`，归 Lead。）
 21. ✅（**已裁决：不做**，Lead 2026-10-12）是否给 `user-prompt` 补 `to` —— **不做**。理由：用户只要求"我本人发起的对话用固定颜色"，而当前"prompt 挂在其承载泳道上"的语义已经正确（读作 `incoming`，即"我收到了你的话"，符合 §18.7 规则 4）；补 `to` 属于**行为变更**，且会让人类发言在视觉上**翻倍**（同一句话出现在两条泳道上）。我的守护两种形态都已覆盖，因此这条裁决不产生任何断言改动。
+22. ❓（**已知缺口：不刷新，未实现；Lead 2026-10-12 明确本轮不派活**）`BoardView` 只在 `visible` 翻转时取数，**没有任何刷新机制**，所以"面板开着不动 → 看不到新消息"。这条也是 Lead 最初误判方向 bug 的诱因之一（他看的是打开瞬间的快照）。host-data-2 给的三个选项 + Lead 的倾向：**①手动刷新按钮 + ②仅在 `live === true` 时低频轮询**（`live` 是现成且语义可靠的字段；`live === false` 时确实没有新事件，轮询纯浪费）；③未记录。**状态：不影响数据正确性，只影响新鲜度；未实现，未经 Lead 派活不得改。**
+    关于"要不要现在加回归锁"我的评估：**不建议在实现前加**。原因是可以落的那条断言在现有测试环境里必然是假绿 —— `tests/stubs/react.ts` 的 `useEffect` 是 no-op（我们刻意不装 renderer），所以"live 为真时取数函数被调用 > 1 次"这类断言**根本跑不到任何 effect**，只会给出一个通过但无意义的绿灯。将来若实现，正确的锁是**把"该不该轮询/该不该刷新"抽成纯函数**（例如 `shouldPoll(data)`：`live === true → true`、否则 `false`），在 `tests/**` 里断言这个纯函数的真值表；真实节奏（间隔、停止条件）留给真机冒烟（可并入 §1.2 增加一项"开着面板 30s，`data-msg-direction` 计数是否增长"）。
 
 ---
 
