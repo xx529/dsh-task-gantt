@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.2.22 — 2026-10-12
+
+**Follow mode: the old content finally stays still — the scale was re-fitting every tick**
+
+"现在还是时间推移向右时候，时间线一直停留在3/4 的位置，就是现在感觉的越新时间的内容覆盖了旧内容，但是我想要
+的效果是，旧内容在时间线未去到最右边时候是不动的，时间线往右走".
+
+0.2.20 fixed the SCROLL policy but the symptom persisted, and the running app was confirmed to be on
+the new build (plugin installed 21:45:19, app started 21:46:46, hysteresis code present in the
+installed client) — so the cause was elsewhere. The Lead's hypothesis, confirmed by measurement:
+
+`effectiveMsPerPx = msPerPx ?? fitMsPerPx(win.durationMs, viewportWidth)` is recomputed on EVERY
+render, and the window is `[earliest datum, now]`, so `durationMs` grows with the clock. In AUTO-FIT
+mode the time scale therefore drifted upward on every tick and the whole drawing was RESCALED —
+already-drawn content compressed leftwards while new time squeezed in. That is the "越新时间的内容
+覆盖了旧内容" the user was describing.
+
+MEASURED before, driving the clock forward 3 minutes per step, follow on, auto-fit:
+`firstBarX 3.28 -> 3.16 -> 3.03 -> 3.03 -> 62.33 -> 60.25` (the old bar MOVED), `nowViewX` pinned at
+186 with `scrollLeft` frozen at 62 — both symptoms reproduced. The same sweep with a MANUAL zoom
+showed `firstBarX 75.30` constant and `nowViewX` advancing 186 -> 235 then snapping: manual zoom was
+already correct, which is why the defect only ever appeared in the state the panel loads in.
+
+FIX: latch the fitted scale while follow is on (`fitLatch`, keyed by viewport width + range filter).
+The clock no longer re-fits; only turning follow on, resizing the viewport or changing the range
+re-fits, and follow off clears the latch and restores per-render fitting.
+
+MEASURED after, auto-fit, follow on: over 6 steps `firstBarX` stayed at **115.72 (drift 0.00px)**,
+`nowViewX` advanced monotonically 186.09 -> 227.97, `scrollLeft` stayed at **435 with zero movement**,
+and the canvas width grew linearly 683 -> 725. Run on to the edge, `scrollLeft` moved exactly once
+(437 -> 504, i.e. **0.270 viewport**, the ~1/4 snap) and the bar never moved. Follow OFF still fits
+every render (canvas width constant at 248 over five sample points), and a viewport-width change
+re-fits as before.
+
+TEST GAP, stated rather than hidden: the latch is React state + an effect, and the repository's locks
+are pure-function locks (`layoutTimeline` / `shouldFollowScroll`), which cannot observe it — so this
+correction is backed by browser measurement only, with no regression lock in the repo. Adding one
+needs component-render test facilities the project does not currently have; worth deciding separately.
+
+The footer build identity is now `v0.2.22 · follow-latch`.
+
 ## 0.2.21 — 2026-10-12
 
 **The footer diagnostics block is gone from the UI**

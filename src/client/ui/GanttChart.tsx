@@ -246,6 +246,28 @@ export function GanttChart(props: GanttChartProps): ReactNode {
   /** `null` = auto zoom (fit the whole window); a number = a user zoom. */
   const [msPerPx, setMsPerPx] = useState<number | null>(null)
   /**
+   * The auto-fit scale, FROZEN while following.
+   *
+   * `fitMsPerPx(win.durationMs, width)` was recomputed on every render, and the window
+   * is `[first datum, now]` — so as `now` advanced, `durationMs` grew and the scale
+   * drifted with it. The whole picture was then re-scaled every tick: already-drawn
+   * bars slid (measured: one bar's canvas x went 3.28 → 3.03 → 62.33 across five steps)
+   * and `now` never moved at all (measured: `nowInCanvas` stayed 248 and `nowViewX`
+   * stayed 186 on every step), which is the user's complaint verbatim:
+   *
+   *   > 时间线一直停留在3/4 的位置 … 越新时间的内容覆盖了旧内容，但是我想要的效果是，
+   *   > 旧内容在时间线未去到最右边时候是不动的
+   *
+   * Latching the scale makes the only time-dependent quantity the size of the window:
+   * `dataWidth` then grows linearly at a constant px/ms, old bars hold their screen x,
+   * and `now` walks right until the hysteresis snap pulls it back.
+   *
+   * Frozen only while following AND only for the AUTO fit. A manual zoom is already a
+   * number and needs no latch; turning follow off returns to fitting every render; and
+   * a viewport-width change re-fits (the width is stored alongside the value).
+   */
+  const [fitLatch, setFitLatch] = useState<{ width: number; span: number | null; msPerPx: number } | null>(null)
+  /**
    * `'both'` draws the activity bars plus message markers; `'markers'` hides the
    * bars so the message layer can be read on its own. The switch only changes
    * what is drawn — never any timestamp.
@@ -294,7 +316,34 @@ export function GanttChart(props: GanttChartProps): ReactNode {
    */
   const win = useMemo(() => computeWindow(data, now, windowSpanMs), [data, now, windowSpanMs])
   const live = data.live !== false
-  const effectiveMsPerPx = msPerPx ?? fitMsPerPx(win.durationMs, Math.max(1, viewport.width))
+  const fittedMsPerPx = fitMsPerPx(win.durationMs, Math.max(1, viewport.width))
+  const followActive = follow === true
+  /**
+   * (Re)latch the auto-fit scale. The key is the viewport width AND the range filter:
+   * a width change invalidates the fit, and so does switching the filter, because the
+   * window the scale was fitted to no longer exists. Nothing else re-fits while
+   * following — least of all the ticking clock.
+   */
+  const fitKey = { width: Math.max(1, viewport.width), span: windowSpanMs ?? null }
+  useEffect(() => {
+    if (!followActive || msPerPx !== null) {
+      // Any other mode: the latch must not survive to be reused by a later follow turn.
+      setFitLatch(null)
+      return
+    }
+    setFitLatch((previous) =>
+      previous !== null && previous.width === fitKey.width && previous.span === fitKey.span
+        ? previous
+        : { width: fitKey.width, span: fitKey.span, msPerPx: fittedMsPerPx },
+    )
+  })
+  /**
+   * Follow ON + auto fit: reuse the latched scale instead of the freshly fitted one.
+   * Everything else (follow off, manual zoom, viewport resize, filter change) fits as
+   * before. A manual zoom is already a number and needs no latch.
+   */
+  const effectiveMsPerPx =
+    msPerPx ?? (followActive && fitLatch !== null ? fitLatch.msPerPx : fittedMsPerPx)
   const tzOffsetMinutes = -new Date(now).getTimezoneOffset()
   /**
    * Lane id -> resolved paint, and session id -> lane id.
