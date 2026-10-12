@@ -45,6 +45,7 @@ import type {
 } from '../../shared/contract.ts'
 import { format, t } from '../i18n.ts'
 import { clipBounds } from './overlay-position.ts'
+import { taskRunTimes } from './task-times.ts'
 import { uiLabel } from './labels.ts'
 import {
   STATUS_GLYPH,
@@ -65,6 +66,7 @@ import {
   dataExtent,
   effectiveWindowStart,
   fitMsPerPx,
+  formatDuration,
   formatClock,
   formatDateTime,
   isLiveBoard,
@@ -199,8 +201,61 @@ export interface GanttChartProps {
   onSelectMessage?: (key: string | null) => void
 }
 
-/** A lane's identity colour, with a stable fallback when the host omits it. */
-function laneColor(lane: TimelineResponse['lanes'][number], index: number): LaneColorTokens {
+/**
+ * The fallback colour for the `unassigned` bucket.
+ *
+ * NOT a roster slot: a task nobody owns must not borrow a teammate's identity. The
+ * host reserves `--dsw-static-blue-800` for it (`UNASSIGNED_COLOR_TOKENS` in
+ * `src/host/lane-color.ts`), and this mirrors that token so the fallback and the
+ * real payload agree. It used to take the palette's LAST entry, which — once the
+ * palette grew past the roster — handed the bucket a teammate's colour.
+ */
+const UNASSIGNED_FALLBACK: LaneColorTokens = {
+  bar: '--dsw-static-blue-800',
+  on: '--dsw-static-neutral-bluish-00',
+  onLight: '--dsw-alias-label-primary',
+}
+
+/**
+ * A lane's identity colour, with a fallback when the host payload predates `lane.color`.
+ *
+ * ## Why this is positional and not a hash
+ *
+ * This used to hash the lane id: `pick(1 + (hash(id) % (len - 2)))`. A hash is stable
+ * per id, but it is the reason the user saw several agents in ONE colour, and the
+ * measurement is unambiguous. Over the real roster (lead + 12 teammates, real session
+ * ids from `tests/fixtures/lead-team-journal.json` plus four synthetic ones):
+ *
+ * | path | distinct teammate colours | collisions |
+ * |---|---|---|
+ * | hash, palette 7 | **4** of 12 | slot 4 = packaging, verify, docs, bbb-2; slot 3 = host-data, shell, host-data-2, ui-2, ddd-4; slot 1 = ui, ccc-3 |
+ * | hash, palette 17 | **8** of 12 | slot 9 = packaging, bbb-2; slot 3 = shell, ddd-4; slot 4 = verify, docs; slot 13 = host-data-2, ui-2 |
+ * | positional, palette 17 | **12** of 12 | none |
+ *
+ * Two structural reasons the hash cannot be repaired by a bigger palette:
+ *
+ * 1. it only reaches slots `1 .. len-2`, so **the last roster slot is unreachable**
+ *    (and with the 7-entry table, anything past slot 5 was unreachable);
+ * 2. by the pigeonhole principle, 16 teammates in 15 hash slots must collide, and in
+ *    practice they collide long before that — the hash is not a permutation.
+ *
+ * The host decides lane colours positionally (`laneColorTokens`: `lead` → slot 0, a
+ * teammate → `1 + ((index - 1) % 16)`), so this follows the SAME rule over the SAME
+ * table. The roster order is what the user asked for ("依次使用，超过了才能循环使用"),
+ * and it guarantees the first seventeen lanes are seventeen different colours.
+ *
+ * The hash is not kept for any degradation path: `index` is always supplied by the
+ * caller (`data.lanes.forEach((lane, index) => …)`), so there is no case where a
+ * lane reaches here without a position.
+ *
+ * Exported so the positional guarantee is locked by a test rather than by reading the
+ * code (see `tests/lane-color.spec.ts`), the same way `lanePaint` is.
+ *
+ * @param lane - the host lane (its `color` wins when present).
+ * @param index - the lane's index in `data.lanes`; the Lead is 0.
+ * @returns the paint for the lane.
+ */
+export function laneColor(lane: TimelineResponse['lanes'][number], index: number): LaneColorTokens {
   const given = lane.color
   if (given !== undefined && typeof given.bar === 'string' && given.bar !== '') {
     const on = lanePaint(given.on ?? '--dsw-alias-label-primary-inverted')
@@ -208,8 +263,8 @@ function laneColor(lane: TimelineResponse['lanes'][number], index: number): Lane
     // is precisely the previous behaviour — never an invented second token.
     return { bar: lanePaint(given.bar), on, onLight: given.onLight === undefined ? on : lanePaint(given.onLight) }
   }
-  const pick = (index0: number): LaneColorTokens => {
-    const entry = LANE_COLOR_FALLBACKS[index0 % LANE_COLOR_FALLBACKS.length]!
+  const pick = (slot: number): LaneColorTokens => {
+    const entry = LANE_COLOR_FALLBACKS[slot % LANE_COLOR_FALLBACKS.length]!
     return {
       bar: lanePaint(entry.bar),
       on: lanePaint(entry.on),
@@ -217,13 +272,18 @@ function laneColor(lane: TimelineResponse['lanes'][number], index: number): Lane
     }
   }
   if (lane.role === 'lead') return pick(0)
-  if (lane.id === 'unassigned' || lane.role === 'unknown') return pick(LANE_COLOR_FALLBACKS.length - 1)
-  // Only the NAME-bearing tail of the palette is hashed into: slot 0 belongs to
-  // the Lead and the last slot to `unassigned`, so a teammate never silently
-  // takes either identity.
-  let hash = 0
-  for (let i = 0; i < lane.id.length; i += 1) hash = (hash * 31 + lane.id.charCodeAt(i)) >>> 0
-  return pick(1 + (hash % (LANE_COLOR_FALLBACKS.length - 2)))
+  if (lane.id === 'unassigned' || lane.role === 'unknown') {
+    return {
+      bar: lanePaint(UNASSIGNED_FALLBACK.bar),
+      on: lanePaint(UNASSIGNED_FALLBACK.on),
+      onLight: lanePaint(UNASSIGNED_FALLBACK.onLight ?? UNASSIGNED_FALLBACK.on),
+    }
+  }
+  // `slot = 1 + ((index - 1) % 16)`: entry 0 is the Lead's and is never recycled, and
+  // the cycle is 16 wide (the teammate entries), so lane 17 is the first repeat.
+  // A non-finite or non-positive index falls back to the first teammate slot.
+  const position = Number.isFinite(index) && index > 0 ? Math.floor(index) : 1
+  return pick(1 + ((position - 1) % (LANE_COLOR_FALLBACKS.length - 1)))
 }
 
 export function GanttChart(props: GanttChartProps): ReactNode {
@@ -299,7 +359,19 @@ export function GanttChart(props: GanttChartProps): ReactNode {
    * the chain of ancestors above it, because `position: fixed` does not escape an
    * ancestor's overflow clipping (see `clipBounds`).
    */
-  const [hoveredPopover, setHoveredPopover] = useState<{ anchor: HTMLElement; body: ReactNode } | null>(null)
+  /**
+   * The hovered anchor plus WHAT to show, as data rather than as a built element.
+   *
+   * Storing a rendered body froze it: a running task's duration was computed once at
+   * hover time and never advanced, so a task still in progress showed a fixed "9s". The
+   * descriptor is resolved on every render instead, which is what lets
+   * `duration = now - started` tick with the clock.
+   */
+  const [hoveredPopover, setHoveredPopover] = useState<
+    | { anchor: HTMLElement; kind: 'task'; taskId: string }
+    | { anchor: HTMLElement; kind: 'message'; message: ReactNode }
+    | null
+  >(null)
 
   /**
    * A fixed-positioned popover would be stranded if the chart scrolled under it, so
@@ -757,7 +829,8 @@ export function GanttChart(props: GanttChartProps): ReactNode {
                     const resolved = markerPaint(marker, laneColors, laneIdOf, userPaint, systemPaint)
                     setHoveredPopover({
                       anchor: element,
-                      body: (
+                      kind: 'message',
+                      message: (
                         <MessagePopoverBody
                           kind={marker.kind}
                           route={
@@ -791,9 +864,7 @@ export function GanttChart(props: GanttChartProps): ReactNode {
                 msPerPx={layout.msPerPx}
                 color={laneColors.get(rect.laneId)}
                 onHoverChange={(element) => {
-                  setHoveredPopover(
-                    element === null ? null : { anchor: element, body: <TaskPopoverBody task={rect.task} tzOffsetMinutes={tzOffsetMinutes} /> },
-                  )
+                  setHoveredPopover(element === null ? null : { anchor: element, kind: 'task', taskId: rect.task.id })
                 }}
                 isPopoverAnchor={isPopoverAnchor}
               />
@@ -832,7 +903,22 @@ export function GanttChart(props: GanttChartProps): ReactNode {
         it in viewport coordinates, where neither container can clip it.
       */}
       {hoveredPopover === null ? null : (
-        <HoverPopover anchor={hoveredPopover.anchor}>{hoveredPopover.body}</HoverPopover>
+        <HoverPopover anchor={hoveredPopover.anchor}>
+          {hoveredPopover.kind === 'message'
+            ? hoveredPopover.message
+            : (() => {
+                /**
+                 * Resolved HERE, on every render, so `now` is current. A task that is
+                 * still running therefore shows a duration that grows with the clock,
+                 * which is the whole point of the descriptor above.
+                 */
+                const live = layout.tasks.find((rect) => rect.task.id === hoveredPopover.taskId)?.task
+                const task = live ?? data.tasks.find((candidate) => candidate.id === hoveredPopover.taskId)
+                return task === undefined ? null : (
+                  <TaskPopoverBody task={task} tzOffsetMinutes={tzOffsetMinutes} now={now} />
+                )
+              })()}
+        </HoverPopover>
       )}
 
       <div className="dtg-legend">
@@ -1748,56 +1834,43 @@ function HoverPopover({
  * Kept as its own small component so `HoverPopover` stays generic and the host can
  * choose the body per anchor kind (task vs message marker).
  */
+
 function TaskPopoverBody({
   task,
   tzOffsetMinutes,
+  now,
 }: {
   task: TimelineTask
   tzOffsetMinutes: number
-}): ReactNode {
   /**
-   * Start, end, duration and label, from the SAME helper the card's `title` attribute
-   * uses. Not a second formatting: the user pointed at that exact format
-   * (`… → 完成 10-12 14:04:17 (20m 0s)`), and two formatters would drift apart.
+   * The live clock, passed IN rather than read here, so a running task's duration can be
+   * recomputed on every render. This is why the hover host stores a task ID + `now`
+   * instead of a pre-built body: a cached body froze the duration (the defect the user
+   * saw as "duration 9s" on a task that was still running).
    */
-  const elapsed = taskDurationLine(task, (time) => formatDateTime(time, tzOffsetMinutes), {
-    created: uiLabel('taskCreatedAt'),
-    finished: uiLabel('taskFinishedAt'),
-    lastTransition: uiLabel('taskLastTransitionAt'),
-    duration: uiLabel('taskDuration'),
-    unknown: uiLabel('taskDurationUnknown'),
-    line: uiLabel('taskDurationLine'),
-  })
-  const status = statusText(task.status)
+  now: number
+}): ReactNode {
+  const times = taskRunTimes(task, now)
   const format = (time: number): string => formatDateTime(time, tzOffsetMinutes)
   return (
     <>
       {/*
-        The FULL subject, wrapping. The user, after 0.2.15's single-line ellipsis:
-        "就要完整显示标题，不能缩略了，显示完整标题" — so no nowrap and no ellipsis here.
-        The description stays OUT: they asked for title + the four run facts, and the
-        description has its own home in the TaskDetails panel.
+        The FULL subject, wrapping (0.2.17): "就要完整显示标题，不能缩略了". The description
+        stays OUT — it has its own home in the TaskDetails panel.
       */}
       <div className="dtg-popover-title">{task.subject === '' ? '—' : task.subject}</div>
       <div className="dtg-popover-meta">
-        {elapsed.known ? (
-          <>
-            {/* 开始时间 / 结束时间 / 运行状态 / 运行用时 — all four, each one
-                labelled so a reader (and a test) can tell them apart. The times come
-                from the task's own history endpoints, so "开始" is its first recorded
-                event and "结束" its last. */}
-            <span>{`${uiLabel('taskCreatedAt')} ${elapsed.from}`}</span>
-            <span>{`${uiLabel('taskFinishedAt')} ${elapsed.to}`}</span>
-            <span>{status}</span>
-            <span>{`${uiLabel('taskDuration')} ${elapsed.duration}`}</span>
-          </>
-        ) : (
-          <>
-            <span>{status}</span>
-            {/* A live task has no end yet: say so rather than invent one. */}
-            <span>{elapsed.text}</span>
-          </>
-        )}
+        {/* created / started / ended, one per line, plus the run duration. */}
+        <span>{`${uiLabel('taskCreatedAt')} ${format(times.created)}`}</span>
+        <span>{`${uiLabel('taskStartedAt')} ${format(times.started)}`}</span>
+        {/*
+          An unfinished task says so. The old body labelled this line "finished" and fed
+          it the LAST transition, which is how a running task came to show a fake end
+          time — the user caught exactly that: "finished 10-12 22:50:21 进行中".
+        */}
+        <span>{times.ended === null ? `${uiLabel('taskEndedAt')} — ${uiLabel('taskNotEnded')}` : `${uiLabel('taskEndedAt')} ${format(times.ended)}`}</span>
+        <span>{`${uiLabel('taskDuration')} ${formatDuration(times.durationMs)}`}</span>
+        <span>{`${statusText(task.status)}${times.startedIsFallback ? ` · ${uiLabel('taskStartedFromCreated')}` : ''}`}</span>
       </div>
     </>
   )

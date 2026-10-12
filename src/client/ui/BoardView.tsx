@@ -136,16 +136,50 @@ function LaneFilterMenu({
   }, [anchor, onClose])
 
   const rect = anchor.getBoundingClientRect()
-  const bounds = clipBounds(anchor, 120)
+  /**
+   * The PANEL, not the toolbar.
+   *
+   * `scope: 'outer'` is essential here. The nearest clipping ancestor is the toolbar
+   * itself (`overflow-x: auto`, 29px tall), and clamping a 240px menu into a 29px box
+   * produced nonsense: measured on a 420px panel the menu was placed at top 672 and cut
+   * off by the panel's bottom edge — the reported bug. The outermost clipper is the
+   * panel, which is the box the menu actually has to live in.
+   */
+  const bounds = clipBounds(anchor, { minWidth: 120, scope: 'outer' })
   const MARGIN = 6
-  const width = Math.min(240, Math.max(140, bounds.width - 2 * MARGIN))
+  const width = Math.min(240, Math.max(120, bounds.width - 2 * MARGIN))
+  // Space actually available on each side of the trigger.
+  // Room is limited by BOTH the panel and the window: a panel can extend past the
+  // bottom of the window, and clamping only to the panel would let the menu be cut off
+  // by the window edge instead.
+  const limitBottom = Math.min(bounds.bottom, window.innerHeight)
+  const limitTop = Math.max(bounds.top, 0)
+  const roomBelow = limitBottom - rect.bottom - MARGIN
+  const roomAbove = rect.top - limitTop - MARGIN
   const MAX_H = 240
-  const top = rect.bottom + MARGIN
-  const flipAbove = top + MAX_H > bounds.bottom
+  /**
+   * Flip to the side with room, preferring BELOW.
+   *
+   * The old test compared `rect.bottom + margin + MAX_H` against the bound and then, on
+   * flipping, anchored the menu's bottom to the PANEL's bottom (`bounds.bottom - rect.top
+   * + MARGIN`) instead of to the TRIGGER's top — which dropped the menu far down the
+   * panel instead of just above the button. Both halves are fixed here: flip when the
+   * space below cannot hold the menu, then pin it `MARGIN` above the trigger.
+   */
+  const flipAbove = roomBelow < MAX_H && roomAbove > roomBelow
+  /**
+   * Always positioned with `top`, never with `bottom`: a `bottom` offset is measured
+   * from the VIEWPORT, so on a panel that does not reach the window's bottom edge the
+   * menu would be dragged below the panel. `top` from the panel's own box keeps it
+   * inside whatever container it was clamped to.
+   */
   const left = Math.min(Math.max(bounds.left + MARGIN, rect.left), Math.max(bounds.left + MARGIN, bounds.right - width - MARGIN))
-  const style: CSSProperties = flipAbove
-    ? { left, bottom: Math.max(MARGIN, bounds.bottom - rect.top + MARGIN), width }
-    : { left, top, width }
+  const style: CSSProperties = {
+    left,
+    top: flipAbove ? rect.top - MARGIN - Math.min(MAX_H, roomAbove) : rect.bottom + MARGIN,
+    maxHeight: Math.max(80, flipAbove ? roomAbove : roomBelow),
+    width,
+  }
 
   // Pinned first, then the filterable lanes in board order.
   const pinned = lanes.filter((lane) => isPinnedLane(lane))

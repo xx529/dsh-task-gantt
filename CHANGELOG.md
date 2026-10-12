@@ -1,5 +1,82 @@
 # Changelog
 
+## 0.2.25 — 2026-10-13
+
+**Sixteen distinct agent colours, the filter menu clamped inside the panel, and honest task times**
+
+**1 — palette: the Lead plus SIXTEEN teammate colours, cycling only after 16**
+
+"现在 agent 的颜色有相同的，你起码要给出16种与 lead 不同颜色的预设色，超过了才能循环使用".
+The palette was 7 composed hues, so the 8th lane repeated. Two independent sources of duplication were
+found and both are fixed:
+- the HOST palette was 7 entries (the cycle itself);
+- the CLIENT had its own assignment rule — `1 + (hash(id) % (len - 2))` — which is not the host's rule
+  at all. MEASURED before the fix on the real roster ids: **12 teammate lanes used only 4 distinct
+  colours**, with collision groups `slot 3 = {host-data, shell, host-data-2, ui-2, synthetic-4}`,
+  `slot 4 = {packaging, verify, docs, synthetic-2}`, `slot 1 = {ui, synthetic-3}` — and the structure,
+  not luck, guaranteed it: the hash only ever covered `1..len-2`, so the LAST entry of the table was
+  unreachable (a 17-entry table would have left `slot 16` spinning empty and only 15 colours for 16
+  teammates). The client now uses the host's positional rule `slot = 1 + ((index - 1) % 16)`, measured
+  after: lanes 0..16 are **17 distinct colours**, lane 17 == lane 1, and no lane 1..64 ever equals the
+  Lead's colour.
+
+The 16 teammate colours are composed with nested TWO-colour `color-mix` (never three: three-colour
+mixes resolve incorrectly in the app's Chromium) over 8 deliberately UNEVENLY spaced hue anchors
+(7.0 / 44.3 / 86.5 / 133.1 / 179.4 / 233.8 / 293.6 / 334.0 deg) because sRGB chroma collapses to
+~0.09 in the yellow-green/cyan region and reaches ~0.22 in red, so an even 45-deg wheel cannot give
+even perceptual spacing. Distinctness is established on three measured axes, not on "16 different
+hexes": minimum pairwise OKLab dE **0.0714** (~3.5 JND), minimum adjacent dE in lane order **0.1832**
+(~9 JND), minimum anchor hue gap **33.0 deg**, minimum within-anchor lightness step **0.0705**, and
+every colour at least **27.2 deg / 0.147 dE** from the Lead. Contrast against the lane ink (static
+white, which does not flip with the skin) is **>= 4.5:1 for all 17 in both skins**, worst **4.51** —
+asserted 17 x 2 times, which is also what keeps the ink from regressing into a flipping alias (that
+alias once measured 2.34:1).
+
+The old `tests/host-integration.spec.ts` assertion `min(hue gaps) >= 25` was DELETED with an in-place
+explanation rather than lowered: 17 entries cannot fit into 360 deg with a 25-deg gap (the ceiling is
+~21.2 deg), and because the palette is 8 anchors x 2 lightness steps, two entries share a hue and the
+measured gap is 0. Lowering it to 0 would have been a vacuous assertion; the distinctness claims now
+live in tests/lane-color.spec.ts, which also permanently compares the client's fallback table against
+the host palette element-by-element (order included) and asserts the two agreement on the same token
+for indices 0..20.
+
+Also fixed while there: `unassigned` used to pick `palette[length - 1]`, which in a 17-entry palette
+is a TEAMMATE's colour; it now uses the reserved `--dsw-static-blue-800`, with a lock asserting it
+matches no roster entry.
+
+**2 — the Filter teammates menu is clamped inside the panel**
+
+Screenshot showed the menu opened BELOW the toolbar and cut off by the panel's bottom edge. Root
+cause measured: `clipBounds` walks up to the first clipping ancestor, and for the menu that is the
+29px-tall toolbar, while the old positioning wrote the menu's `bottom` from the PANEL's bottom rather
+than the TRIGGER's top (before: `menu top 672 / bottom 782`, `withinHost: false` on a 420px panel).
+`clipBounds` gained a `scope: 'inner' | 'outer'` option (the menu takes the outermost clipping
+ancestor = the panel; the popovers keep `inner`, and their behaviour was re-verified), flipping is
+decided by real available space, and everything is positioned from `top` (a viewport-relative `bottom`
+is what dragged the menu out of the panel). Measured at 900 / 600 / 420px panel heights: menu
+`30/140/110`, `fullyVisibleInPanel: true` at all three, `.dtg-scroll` 311/248 unchanged while open.
+Stated plainly: the menu can NEVER actually flip in this layout because the toolbar is the panel's
+first row (above it there is no space); the correct behaviour there is clamping the height, which is
+what ships. The flip branch was exercised only by injection and is NOT claimed as end-to-end verified.
+
+**3 — the popover now shows created / started / ended and a LIVE duration**
+
+"应该有创建，开始，结束三个时间，durations 如果不是在结束状态应该是开始时间到此时的时长，
+如果是结束了，就是开始到结束的时长". The old popover labelled the last transition "finished" and
+reported a fixed duration. Now, measured in the browser:
+```
+running : 创建 23:43:41 | 开始 23:48:41 | 结束 — 进行中（尚未结束） | 时长 11m 28s
+finished: 创建 23:30:41 | 开始 23:32:41 | 结束 23:50:41 | 时长 18m 0s
+```
+with the end taken from the last `completed` (23:50:41, NOT the 23:38:21 `updated`), a duration that
+genuinely grows with the clock (`11m 36s -> 11m 40s -> 11m 44s` over 8 real seconds), and a documented
+fallback: a task that was never claimed uses `created` as its start and SAYS SO ("开始时间按创建计
+（从未认领）") instead of silently picking a value or showing a dash that would leave it with no
+duration at all. Ten new locks in tests/task-times.spec.ts; calibrated for teeth by re-installing the
+old "last transition as the end, ignore status" defect, which turns five of them red.
+
+The footer build identity is now `v0.2.25 · sixteen-hues`.
+
 ## 0.2.24 — 2026-10-12
 
 **Regression fix: the time range was collapsing to 全部 — one clamp direction was reversed**

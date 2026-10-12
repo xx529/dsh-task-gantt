@@ -22,7 +22,7 @@
 
 | | |
 |---|---|
-| 版本 | `0.2.24` |
+| 版本 | `0.2.25` |
 | 冻结契约（`src/shared/contract.ts`） | 已完成 |
 | host 数据层（`src/host/**`） | 进行中 |
 | 页签注册（`src/client/index.ts`） | 已完成 |

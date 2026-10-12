@@ -1588,21 +1588,56 @@ const ON_LIGHT_FILL = '--dsw-alias-label-primary'
 /**
  * Fallback lane tokens for a payload that predates `lane.color`.
  *
- * These MIRROR `LANE_COLOR_TOKENS` in `src/host/lane-color.ts` — the same seven wheel
- * hues, composed from the same theme tokens the same way — because a fallback that
- * drifts from the real palette is a palette with two meanings. Exported so the chart
- * uses THIS table instead of keeping a second copy: there were two, and one of them
- * still named `--dsw-alias-state-idle-primary` (a chroma-0 grey) after the other was
- * fixed, which is exactly how "no grey lanes" quietly stops being true.
+ * These MIRROR `LANE_COLOR_TOKENS` in `src/host/lane-color.ts` — the same SEVENTEEN
+ * entries in the same order (`[0]` the Lead's blue, `[1..16]` the sixteen teammate
+ * colours), composed from the same theme tokens by the same nested two-colour mixes —
+ * because a fallback that drifts from the real palette is a palette with two meanings.
+ * Exported so the chart uses THIS table instead of keeping a second copy: there were
+ * two, and one of them still named `--dsw-alias-state-idle-primary` (a chroma-0 grey)
+ * after the other was fixed, which is exactly how "no grey lanes" quietly stops being
+ * true.
+ *
+ * ORDER IS THE CONTRACT, not decoration: the roster cycle addresses this array by
+ * lane index (`slot = 1 + ((index - 1) % 16)`, `laneColor` in `GanttChart.tsx`), so a
+ * reordering here silently recolours every teammate. `tests/lane-color.spec.ts` pins
+ * the guarantees; a test also compares this array's `bar` strings to the host's
+ * element by element.
  */
 export const LANE_COLOR_FALLBACKS: readonly LaneColorTokens[] = [
+  // 0 — blue: the Lead. Never handed to a teammate.
   { bar: '--dsw-static-blue-600', on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
-  { bar: 'color-mix(in srgb, var(--dsw-static-blue-600) 50%, var(--dsw-static-red-600) 50%)', on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
-  { bar: 'color-mix(in srgb, var(--dsw-static-red-600) 99%, var(--dsw-static-neutral-bluish-1000) 1%)', on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
-  { bar: 'color-mix(in srgb, var(--dsw-static-amber-600) 74%, var(--dsw-static-neutral-bluish-1000) 26%)', on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
-  { bar: 'color-mix(in srgb, color-mix(in srgb, var(--dsw-static-amber-500) 65%, var(--dsw-static-green-500) 35%) 68%, var(--dsw-static-neutral-bluish-1000) 32%)', on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
-  { bar: 'color-mix(in srgb, var(--dsw-static-green-500) 66%, var(--dsw-static-neutral-bluish-1000) 34%)', on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
-  { bar: 'color-mix(in srgb, color-mix(in srgb, var(--dsw-static-green-500) 55%, var(--dsw-static-blue-600) 45%) 84%, var(--dsw-static-neutral-bluish-1000) 16%)', on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
+  // 1 — crimson deep
+  { bar: 'color-mix(in srgb, color-mix(in srgb, var(--dsw-static-red-600) 70%, var(--dsw-static-blue-600) 30%) 92%, var(--dsw-static-neutral-bluish-1000) 8%)', on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
+  // 2 — green light
+  { bar: 'color-mix(in srgb, color-mix(in srgb, var(--dsw-static-green-500) 60%, var(--dsw-static-amber-500) 40%) 68%, var(--dsw-static-neutral-bluish-1000) 32%)', on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
+  // 3 — violet light
+  { bar: 'color-mix(in srgb, color-mix(in srgb, var(--dsw-static-red-500) 35%, var(--dsw-static-blue-450) 65%) 88%, var(--dsw-static-neutral-bluish-1000) 12%)', on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
+  // 4 — olive deep
+  { bar: 'color-mix(in srgb, color-mix(in srgb, var(--dsw-static-green-400) 15%, var(--dsw-static-amber-500) 85%) 50%, var(--dsw-static-neutral-bluish-1000) 50%)', on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
+  // 5 — magenta light
+  { bar: 'color-mix(in srgb, color-mix(in srgb, var(--dsw-static-blue-600) 40%, var(--dsw-static-red-400) 60%) 98%, var(--dsw-static-neutral-bluish-1000) 2%)', on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
+  // 6 — teal light
+  { bar: 'color-mix(in srgb, color-mix(in srgb, var(--dsw-static-blue-500) 30%, var(--dsw-static-green-400) 70%) 68%, var(--dsw-static-neutral-bluish-1000) 32%)', on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
+  // 7 — magenta deep
+  { bar: 'color-mix(in srgb, var(--dsw-static-red-500) 50%, var(--dsw-static-blue-800) 50%)', on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
+  // 8 — green deep
+  { bar: 'color-mix(in srgb, color-mix(in srgb, var(--dsw-static-green-500) 60%, var(--dsw-static-amber-500) 40%) 54%, var(--dsw-static-neutral-bluish-1000) 46%)', on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
+  // 9 — rose light
+  { bar: 'color-mix(in srgb, color-mix(in srgb, var(--dsw-static-red-500) 75%, var(--dsw-static-blue-600) 25%) 98%, var(--dsw-static-neutral-bluish-1000) 2%)', on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
+  // 10 — teal deep
+  { bar: 'color-mix(in srgb, color-mix(in srgb, var(--dsw-static-green-500) 50%, var(--dsw-static-blue-900) 50%) 88%, var(--dsw-static-neutral-bluish-1000) 12%)', on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
+  // 11 — orange deep
+  { bar: 'color-mix(in srgb, color-mix(in srgb, var(--dsw-static-red-600) 45%, var(--dsw-static-amber-500) 55%) 60%, var(--dsw-static-neutral-bluish-1000) 40%)', on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
+  // 12 — azure deep
+  { bar: 'color-mix(in srgb, color-mix(in srgb, var(--dsw-static-green-400) 35%, var(--dsw-static-blue-500) 65%) 60%, var(--dsw-static-neutral-bluish-1000) 40%)', on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
+  // 13 — orange light
+  { bar: 'color-mix(in srgb, color-mix(in srgb, var(--dsw-static-red-600) 40%, var(--dsw-static-amber-500) 60%) 76%, var(--dsw-static-neutral-bluish-1000) 24%)', on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
+  // 14 — violet deep
+  { bar: 'color-mix(in srgb, color-mix(in srgb, var(--dsw-static-blue-450) 70%, var(--dsw-static-red-600) 30%) 74%, var(--dsw-static-neutral-bluish-1000) 26%)', on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
+  // 15 — olive light
+  { bar: 'color-mix(in srgb, color-mix(in srgb, var(--dsw-static-green-500) 15%, var(--dsw-static-amber-500) 85%) 66%, var(--dsw-static-neutral-bluish-1000) 34%)', on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
+  // 16 — azure light
+  { bar: 'color-mix(in srgb, color-mix(in srgb, var(--dsw-static-green-500) 20%, var(--dsw-static-blue-400) 80%) 70%, var(--dsw-static-neutral-bluish-1000) 30%)', on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
 ]
 
 

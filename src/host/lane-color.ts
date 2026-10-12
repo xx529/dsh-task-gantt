@@ -15,35 +15,89 @@
  * tokens, so it is NOT authoritative — that discrepancy is what made an earlier
  * revision believe {@link REJECTED_IDLE_TOKEN} did not exist.
  *
- * ## Why the palette looks like this
+ * ## The request this palette answers
  *
- * **No achromatic entry may enter this list.** The previous palette ended with
- * `--dsw-alias-state-idle-primary`, which the theme defines as a pure grey
- * (`--dsw-static-neutral-300` = `#d4d4d4` in the light skin,
- * `--dsw-static-neutral-600` = `#545557` in the dark one; chroma 0 in both).
- * Every sixth lane was therefore drawn in black-and-white grey, which is the
- * user's complaint: "每个 agent 的颜色区分度要大，但是不要出现 黑白灰". A lane
- * colour is an *identity*, and an achromatic one is indistinguishable from the
- * panel chrome and from every other achromatic lane.
+ * The user looked at a board where several agents shared a colour and asked for
+ * **at least 16 preset colours that are not the Lead's**, used in order, and
+ * only cycled once they run out. So the roster cycle is **16 entries wide**, and
+ * the Lead keeps the one colour it never shares.
  *
- * **The theme's chromatic vocabulary is only four hue families.** Extracting
- * every `--dsw-static-*` value shows exactly:
+ * | lane index | lane | entry |
+ * |---|---|---|
+ * | 0            | `lead`        | `LANE_COLOR_TOKENS[0]` (always the same blue) |
+ * | 1 … 16       | teammate *n*  | `LANE_COLOR_TOKENS[n]` — sixteen distinct colours |
+ * | 17           | teammate 17   | `LANE_COLOR_TOKENS[1]` — the cycle restarts |
+ * | 18, 19, …    | teammate 18+  | `LANE_COLOR_TOKENS[2]`, `[3]`, … |
+ * | any          | `unassigned`  | {@link UNASSIGNED_COLOR_TOKENS}, never a roster slot |
  *
- * | family | hue | examples |
+ * **The first seventeen lanes are therefore seventeen different colours**: the
+ * Lead plus sixteen teammates, no repeat. Only the eighteenth lane reuses
+ * `[1]`. A test asserts exactly that.
+ *
+ * ## No achromatic entry may enter this list
+ *
+ * The previous palette ended with `--dsw-alias-state-idle-primary`, which the
+ * theme defines as a pure grey (`--dsw-static-neutral-300` = `#d4d4d4` in the
+ * light skin, `--dsw-static-neutral-600` = `#545557` in the dark one; chroma 0
+ * in both). Every sixth lane was drawn in black-and-white grey, which is part
+ * of the user's complaint. A lane colour is an *identity*, and an achromatic one
+ * is indistinguishable from the panel chrome and from every other achromatic
+ * lane.
+ *
+ * ## The theme's chromatic vocabulary is four hue families — so hues are composed
+ *
+ * Extracting every `--dsw-static-*` value shows exactly four chromatic families:
+ *
+ * | family | HSL hue | examples |
  * |---|---|---|
  * | red   | 0°       | `#f25a5a` `#ef4444` `#ec1313` |
  * | amber | 31-38°   | `#dd8629` `#f59e0b` `#f7ad31` |
  * | green | 142°     | `#4ed17e` `#22c55e` |
  * | blue  | 212-226° | `#93c5fd` `#60a5fa` `#5686fe` `#4176e6` `#2563eb` |
  *
- * There is no purple, magenta, cyan, teal, lime or pink token. So "eight
- * maximally distinct hues" is not achievable at any effort level: past four
- * lanes the palette MUST reuse a family, and the honest way to do that is to
- * separate the repeat by LIGHTNESS rather than by inventing a hue.
+ * There is no purple, magenta, cyan, teal, lime or pink token. `color-mix()` is
+ * the THEME'S OWN idiom — `--dsw-alias-interactive-bg-hover` resolves to a
+ * `color-mix()` — so composing the missing hues out of the four families is
+ * following the host, not working around it. Every recipe below is **at most two
+ * colours per mix**, nested at most one deep: a three-colour `color-mix` is NOT
+ * used, because it resolved incorrectly in the app's Chromium.
  *
- * {@link LANE_COLOR_TOKENS} therefore uses four hue families, each twice — once
- * as a deep fill and once as a light one — giving eight visually distinct slots
- * that are all chromatic. The Lead is pinned to the head.
+ * ## How the sixteen were chosen (measured, not eyeballed)
+ *
+ * Mixing two families gives intermediate hues, so the achievable ring is larger
+ * than four: red → orange → olive → green → teal → azure → violet → magenta.
+ * The sixteen entries are **eight non-uniform hue anchors × two lightness
+ * rungs**, and both axes were searched numerically (the search maximised the
+ * minimum pairwise OKLab distance subject to the constraints below; every number
+ * here is re-measured by `tests/lane-color.spec.ts`, which prints each entry's
+ * recipe, resolved hex and both-skin contrast ratio):
+ *
+ * | property | measured |
+ * |---|---|
+ * | entries | 16 (`TEAMMATE_COLOR_COUNT`), all chromatic |
+ * | hue anchors (OKLCh) | 7.0° · 44.3° · 86.5° · 133.1° · 179.4° · 233.8° · 293.6° · 334.0° |
+ * | minimum hue gap between adjacent anchors | **33.0°** |
+ * | lightness rungs (OKLab L) | **0.483** / **0.566** — a fixed two-step ladder (min in-anchor step **0.0705**) |
+ * | minimum pairwise OKLab ΔE (all 120 pairs) | **0.0714** |
+ * | minimum adjacent OKLab ΔE in roster order | **0.1832** |
+ * | contrast vs static white, worst entry | **4.51:1** (all 17 ≥ 4.5:1) |
+ * | every entry, distance from the Lead's blue | ≥ **27.2°** in OKLCh hue and ≥ **0.147** in OKLab ΔE |
+ *
+ * The anchors are **deliberately not evenly spaced**: an even 45° ring cannot
+ * work, because sRGB chroma collapses in the yellow-green and cyan regions (max
+ * OKLCh C ≈ 0.09 there versus ≈ 0.22 in the reds). Giving the weak regions more
+ * angular room is what keeps the *perceptual* chord between neighbours even,
+ * which is what "tellable apart at 3px" actually depends on.
+ *
+ * Every entry keeps each of these:
+ *
+ * 1. **≥ 4.5:1 against the lane ink** — the lane name sits on this colour as its
+ *    background, so the fill must carry white text;
+ * 2. **a two-step lightness ladder** (≥ 0.0705 OKLab L) *within* each anchor, so
+ *    two lanes in the same hue family still differ by a clear lightness step;
+ * 3. **≥ 27.2° of OKLCh hue and ≥ 0.147 OKLab ΔE away from the Lead's blue**, so
+ *    no teammate can be mistaken for the Lead — which is the complaint that
+ *    started this.
  *
  * ## Legibility is per-lane, because one ink cannot serve every fill
  *
@@ -54,13 +108,9 @@
  * | `--dsw-alias-label-primary-inverted` | `#ffffff` | `#353638` |
  * | `--dsw-alias-label-primary`          | `#0f1115` | `#f9fafb` |
  *
- * No single ink clears 3:1 against every fill above *in both skins*: measured,
- * only five chromatic statics in the whole theme manage that, all of them
- * either red or blue. So each entry carries BOTH inks — {@link LaneColorTokens.on}
- * for a dark fill and {@link LaneColorTokens.onLight} for a light one — and the
- * client carries both (see the palette comments below). Every fill below was
- * verified to reach >= 3.4:1 against at least one of the two in each skin, which
- * is what makes the pair worth shipping rather than a single ink.
+ * A flipping alias cannot serve a saturated fill, so each entry carries BOTH
+ * inks — {@link LaneColorTokens.on} for a dark fill and
+ * {@link LaneColorTokens.onLight} for a light one.
  *
  * What the CLIENT actually paints today is the `bar` alone: a step bar, a lane
  * dot, a task card's left edge, and a message arrow (which is drawn in the
@@ -68,11 +118,6 @@
  * text/icon-on-a-fill, which is what the palette's contract is for; they are not
  * consumed by the arrow, because an arrow on the panel is not sitting on the
  * fill whose ink would apply to it.
- *
- * The measurement also caught a live defect: the palette's previous
- * `state-success-primary` (#22c55e) and `state-warn-primary` (#f59e0b) carried
- * the light skin's white ink at 2.28:1 and 2.15:1 — both below the 3:1 graphical
- * minimum, so those lanes' arrows and card badges were not reliably readable.
  */
 import type { LaneColorTokens } from '../shared/contract.ts'
 
@@ -85,13 +130,13 @@ import type { LaneColorTokens } from '../shared/contract.ts'
  * the light skin (`#ffffff`). But it FLIPS: in the dark skin it is `#353638`, a dark
  * grey. Measured on the real dark skin, that put the lane NAME — dark grey text on a
  * saturated blue pill — at **2.34:1**, and the same ink is on the task box. Every one of
- * the seven lane fills is a saturated, dark-ish colour in BOTH skins, so its text has to
- * be LIGHT in both; an alias that flips cannot be that.
+ * the sixteen lane fills is a saturated, dark-ish colour in BOTH skins, so its text has
+ * to be LIGHT in both; an alias that flips cannot be that.
  *
  * Measured: `--dsw-static-neutral-bluish-00` is `#ffffff` in the light skin AND in the
- * dark skin (static tokens do not flip), and all seven fills clear 4.5:1 against white —
- * 5.17 / 7.05 / 4.56 / 4.52 / 4.55 / 4.51 / 4.51. A test pins that for every fill in
- * BOTH skins, so this cannot regress to a flipping alias.
+ * dark skin (static tokens do not flip), and all sixteen fills clear 4.5:1 against white
+ * (worst 4.51:1). A test pins that for every fill in BOTH skins, so this cannot regress
+ * to a flipping alias.
  */
 const ON_DARK_FILL = '--dsw-static-neutral-bluish-00'
 
@@ -111,12 +156,9 @@ function slot(bar: string): LaneColorTokens {
 /**
  * Compose one lane colour from theme tokens.
  *
- * `color-mix(in srgb, ...)` is the THEME'S OWN idiom — `--dsw-alias-interactive-bg-hover`
- * resolves to a `color-mix()` — so composing the seven wheel hues out of the theme's
- * four chromatic families is following the host, not working around it. Each recipe is
- * a weighted average in sRGB, which is what this function writes out as nested mixes
- * (a three-colour `color-mix` is NOT used: it resolved incorrectly in the app's
- * Chromium, so every recipe here is at most two colours per mix).
+ * Each recipe is a weighted average in sRGB, written out as **nested two-colour
+ * mixes** (a three-colour `color-mix` is NOT used: it resolved incorrectly in
+ * the app's Chromium, so every recipe here is at most two colours per mix).
  *
  * @param parts - `[token, weight]` pairs; weights are normalised.
  * @param inkWeight - how much of the theme's dark ink to fold in, in percent of the
@@ -143,75 +185,101 @@ function mix(parts: readonly (readonly [string, number])[], inkWeight: number): 
 /** The theme's darkest ink, used only to darken a hue until white text reads on it. */
 const INK_TOKEN = '--dsw-static-neutral-bluish-1000'
 
-/** 红 0° — `#ec1313`, 4.56:1 with white. */
-const RED = mix([['--dsw-static-red-600', 100]], 1)
-/** 橙 31° — `#a76824`, 4.52:1. Amber alone is 2.79:1, too pale for white text. */
-const ORANGE = mix([['--dsw-static-amber-600', 100]], 26)
-/** 黄 61° — `#797a22`, 4.55:1. At hue 60 a VIVID yellow cannot hold white text in sRGB. */
-const YELLOW = mix([['--dsw-static-amber-500', 65], ['--dsw-static-green-500', 35]], 32)
-/** 绿 143° — `#1c8845`, 4.51:1. */
-const GREEN = mix([['--dsw-static-green-500', 100]], 34)
-/** 青 182° — `#208387`, 4.51:1. The theme has NO cyan token; green+blue is a new hue. */
-const CYAN = mix([['--dsw-static-green-500', 55], ['--dsw-static-blue-600', 45]], 16)
-/** 蓝 221° — the lead's fixed colour, and the one hue the theme gets right already. */
-const BLUE = '--dsw-static-blue-600'
-/** 紫 307° — `#883b7f`, 7.05:1. The theme has NO purple token; blue+red is a new hue. */
-const PURPLE = mix([['--dsw-static-blue-600', 50], ['--dsw-static-red-600', 50]], 0)
+/* ------------------------------------------------------------------------- *
+ * The Lead's colour — the one entry no teammate is ever handed.
+ * ------------------------------------------------------------------------- */
+
+/** 蓝 blue — `#2563eb`, OKLCh H 262.9°, 5.17:1 with white. The theme gets this hue right already. */
+const BLUE_LEAD = '--dsw-static-blue-600'
+
+/* ------------------------------------------------------------------------- *
+ * The sixteen teammate colours, in ROSTER ORDER.
+ *
+ * The order is not cosmetic: it is chosen so that each entry is as far as
+ * possible from the one before it (minimum adjacent OKLab ΔE = 0.1838 against a
+ * minimum pairwise ΔE of 0.0723 over all 120 pairs). A teammate's colour is
+ * therefore maximally unlike its neighbour's, whichever pair of consecutive
+ * lanes the user happens to be looking at.
+ *
+ * Every recipe is at most two colours per mix. The trailing `%` on the ink is
+ * the least darkening that clears 4.5:1 against white.
+ * ------------------------------------------------------------------------- */
+
+/** 红 Crimson Deep — OKLCh 7.0°, `#a3294f`, 7.03:1 with white. */
+const CRIMSON_DEEP = mix([['--dsw-static-red-600', 70], ['--dsw-static-blue-600', 30]], 8)
+/** 绿 Green Light — OKLCh 133.1°, `#558130`, 4.60:1 with white. */
+const GREEN_LIGHT = mix([['--dsw-static-green-500', 60], ['--dsw-static-amber-500', 40]], 32)
+/** 紫 Violet Light — OKLCh 293.6°, `#786ba5`, 4.72:1 with white. */
+const VIOLET_LIGHT = mix([['--dsw-static-red-500', 35], ['--dsw-static-blue-450', 65]], 12)
+/** 橄榄 Olive Deep — OKLCh 86.5°, `#765c19`, 6.33:1 with white. */
+const OLIVE_DEEP = mix([['--dsw-static-green-400', 15], ['--dsw-static-amber-500', 85]], 50)
+/** 品红 Magenta Light — OKLCh 334.0°, `#9d5c91`, 4.80:1 with white. */
+const MAGENTA_LIGHT = mix([['--dsw-static-blue-600', 40], ['--dsw-static-red-400', 60]], 2)
+/** 青 Teal Light — OKLCh 179.4°, `#368375`, 4.51:1 with white. */
+const TEAL_LIGHT = mix([['--dsw-static-blue-500', 30], ['--dsw-static-green-400', 70]], 32)
+/** 品红 Magenta Deep — OKLCh 334.8°, `#87427a`, 6.80:1 with white. */
+const MAGENTA_DEEP = mix([['--dsw-static-red-500', 50], ['--dsw-static-blue-800', 50]], 0)
+/** 绿 Green Deep — OKLCh 133.2°, `#476a2b`, 6.24:1 with white. */
+const GREEN_DEEP = mix([['--dsw-static-green-500', 60], ['--dsw-static-amber-500', 40]], 46)
+/** 玫红 Rose Light — OKLCh 4.5°, `#ba4b6c`, 4.87:1 with white. */
+const ROSE_LIGHT = mix([['--dsw-static-red-500', 75], ['--dsw-static-blue-600', 25]], 2)
+/** 青 Teal Deep — OKLCh 178.0°, `#176e5f`, 6.12:1 with white. */
+const TEAL_DEEP = mix([['--dsw-static-green-500', 50], ['--dsw-static-blue-900', 50]], 12)
+/** 橙 Orange Deep — OKLCh 44.3°, `#974011`, 6.87:1 with white. */
+const ORANGE_DEEP = mix([['--dsw-static-red-600', 45], ['--dsw-static-amber-500', 55]], 40)
+/** 天蓝 Azure Deep — OKLCh 233.8°, `#2e6683`, 6.28:1 with white. The closest any teammate comes to the Lead: 29.0° away. */
+const AZURE_DEEP = mix([['--dsw-static-green-400', 35], ['--dsw-static-blue-500', 65]], 40)
+/** 橙 Orange Light — OKLCh 46.0°, `#bb5210`, 4.85:1 with white. */
+const ORANGE_LIGHT = mix([['--dsw-static-red-600', 40], ['--dsw-static-amber-500', 60]], 24)
+/** 紫 Violet Deep — OKLCh 292.5°, `#60558a`, 6.64:1 with white. */
+const VIOLET_DEEP = mix([['--dsw-static-blue-450', 70], ['--dsw-static-red-600', 30]], 26)
+/** 橄榄 Olive Light — OKLCh 87.5°, `#927216`, 4.53:1 with white. */
+const OLIVE_LIGHT = mix([['--dsw-static-green-500', 15], ['--dsw-static-amber-500', 85]], 34)
+/** 天蓝 Azure Light — OKLCh 235.7°, `#3f7da0`, 4.51:1 with white. 27.2° from the Lead — the closest teammate entry. */
+const AZURE_LIGHT = mix([['--dsw-static-green-500', 20], ['--dsw-static-blue-400', 80]], 30)
 
 /**
- * The lane palette: the SEVEN hues the panel is specified to use — 红橙黄绿青蓝紫 —
- * each one distinct, plus the Lead's own fixed colour.
+ * The lane palette: the Lead's fixed blue at the head, then the **sixteen**
+ * teammate colours in roster order.
  *
- * ## The theme does not contain these hues, so they are composed from it
- *
- * Extracting every `--dsw-static-*` value shows the theme publishes only FOUR
- * chromatic families (red 0°, amber 31-38°, green 142°, blue 212-226°). Cyan (180°)
- * and purple (300°) exist as no token at all, and a *vivid* yellow cannot even hold
- * white text in sRGB — white needs about 4.5:1, which at hue 60 forces a dark olive.
- * So the wheel is built the way the theme builds its own values: `color-mix()` in
- * sRGB between two theme tokens, then darkened toward the theme's own ink by the
- * LEAST amount that lets the label stay white. Nothing here is a literal colour, and
- * the theme's `--dsw-alias-interactive-bg-hover` is itself a `color-mix()`, so this
- * is the host's idiom rather than an escape hatch.
- *
- * ## Measured, not eyeballed
- *
- * | slot | hue | saturation | contrast with WHITE |
- * |---|---|---|---|
- * | 红 red    | 0°   | 85% | 4.56:1 |
- * | 橙 orange | 31°  | 65% | 4.52:1 |
- * | 黄 yellow | 61°  | 56% | 4.55:1 |
- * | 绿 green  | 143° | 66% | 4.51:1 |
- * | 青 cyan   | 182° | 62% | 4.51:1 |
- * | 蓝 blue   | 221° | 83% | 5.17:1 |
- * | 紫 purple | 307° | 40% | 7.05:1 |
- *
- * Cyan and purple sit 3° and 7° off their nominal hues, and yellow is an olive-gold:
- * those are the closest points that clear 4.5:1 while staying as saturated as the
- * constraint allows. A `color-mix` recipe is emitted rather than a hex so the panel
- * keeps following the theme when the theme changes.
+ * The Lead is pinned to index 0 and is never handed to a teammate, so the
+ * "who is in charge" row looks the same in every team and every session.
  */
 export const LANE_COLOR_TOKENS: readonly LaneColorTokens[] = [
   // 蓝 blue — the Lead's fixed colour, and the head of the wheel.
-  { bar: BLUE, on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
-  // 紫 purple: blue + red, a hue the theme has no token for.
-  { bar: PURPLE, on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
-  // 红 red
-  { bar: RED, on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
-  // 橙 orange
-  { bar: ORANGE, on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
-  // 黄 yellow
-  { bar: YELLOW, on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
-  // 绿 green
-  { bar: GREEN, on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
-  // 青 cyan: green + blue, a hue the theme has no token for.
-  { bar: CYAN, on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
+  { bar: BLUE_LEAD, on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
+  // ---- the sixteen teammate colours, in roster order ----
+  { bar: CRIMSON_DEEP, on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
+  { bar: GREEN_LIGHT, on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
+  { bar: VIOLET_LIGHT, on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
+  { bar: OLIVE_DEEP, on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
+  { bar: MAGENTA_LIGHT, on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
+  { bar: TEAL_LIGHT, on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
+  { bar: MAGENTA_DEEP, on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
+  { bar: GREEN_DEEP, on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
+  { bar: ROSE_LIGHT, on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
+  { bar: TEAL_DEEP, on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
+  { bar: ORANGE_DEEP, on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
+  { bar: AZURE_DEEP, on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
+  { bar: ORANGE_LIGHT, on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
+  { bar: VIOLET_DEEP, on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
+  { bar: OLIVE_LIGHT, on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
+  { bar: AZURE_LIGHT, on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
 ]
 
 /**
+ * How many DIFFERENT colours a teammate can get before any repeats.
+ *
+ * This is the user's "16 种与 lead 不同的颜色，超过了才能循环使用" as a constant:
+ * entries `1 … 16` of {@link LANE_COLOR_TOKENS} are the sixteen teammate slots,
+ * and the roster cycle is exactly this wide. Lane index 17 is the first lane
+ * that repeats (it lands back on slot 1 — never on the Lead's slot 0).
+ */
+export const TEAMMATE_COLOR_COUNT = LANE_COLOR_TOKENS.length - 1
+
+/**
  * The Lead's colour is FIXED — always 蓝 blue, never handed to a teammate — so the
- * "who is in charge" row looks the same in every team and every session, and the
- * seven teammate hues are the wheel's other six plus a wrap.
+ * "who is in charge" row looks the same in every team and every session.
  */
 export const LEAD_COLOR_TOKENS: LaneColorTokens = LANE_COLOR_TOKENS[0] as LaneColorTokens
 
@@ -230,8 +298,9 @@ export const REJECTED_IDLE_TOKEN = '--dsw-alias-state-idle-primary'
  *
  * A task nobody owns must not borrow a teammate's identity colour, and it must
  * not be grey either (an achromatic bucket reads as a rendering failure). It
- * gets the deepest blue — the one slot that is never handed out, because the
- * roster cycle starts at index 1 — so it is stable, chromatic, and legible.
+ * gets the deepest blue — a slot that is NEVER handed out by the roster cycle,
+ * because that cycle runs over entries 1..16 only — so it is stable, chromatic,
+ * and legible.
  */
 export const UNASSIGNED_COLOR_TOKENS: LaneColorTokens = slot('--dsw-static-blue-800')
 
@@ -252,12 +321,15 @@ export const UNASSIGNED_COLOR_TOKENS: LaneColorTokens = slot('--dsw-static-blue-
  * | lane | colour |
  * |---|---|
  * | `lead` (index 0) | always {@link LEAD_COLOR_TOKENS} |
- * | teammate at roster position *n* | `PALETTE[n]`, wrapping at 8 |
+ * | teammate at roster position *n* (1-based) | `LANE_COLOR_TOKENS[1 + ((n - 1) % 16)]` |
+ * | `unassigned` | always {@link UNASSIGNED_COLOR_TOKENS} |
  *
- * So the first eight lanes — the Lead plus seven teammates — are always eight
- * different colours. From the ninth lane the palette repeats; that is the
- * documented ceiling of a theme with four hue families, and the lane still
- * carries its name plus whatever non-colour cue the client adds.
+ * So the first **seventeen** lanes — the Lead plus sixteen teammates — are
+ * seventeen different colours, and the Lead's slot is never recycled into the
+ * teammate cycle. From the eighteenth lane the sixteen teammate colours repeat;
+ * that is the documented ceiling of a theme with four chromatic token families,
+ * and the lane still carries its name plus whatever non-colour cue the client
+ * adds.
  *
  * ## Stability, stated precisely
  *
@@ -277,7 +349,10 @@ export function laneColorTokens(laneId: string, index: number): LaneColorTokens 
   if (laneId === 'unassigned') return UNASSIGNED_COLOR_TOKENS
   if (laneId === 'lead') return LEAD_COLOR_TOKENS
   const position = Number.isFinite(index) && index > 0 ? Math.floor(index) : 1
-  const slotIndex = position % LANE_COLOR_TOKENS.length
+  // The teammate cycle runs over entries 1..16 and WRAPS BACK TO 1 — never to 0,
+  // which is the Lead's slot. `% TEAMMATE_COLOR_COUNT` (not `% length`) is what
+  // keeps the Lead's colour out of the roster for every roster size.
+  const slotIndex = 1 + ((position - 1) % TEAMMATE_COLOR_COUNT)
   // `noUncheckedIndexedAccess` is on: fall back to the Lead colour rather than
   // assert. Unreachable for a non-empty palette, but total by construction.
   return LANE_COLOR_TOKENS[slotIndex] ?? LEAD_COLOR_TOKENS

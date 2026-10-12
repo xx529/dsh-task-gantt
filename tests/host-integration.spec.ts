@@ -432,8 +432,8 @@ describe('buildTimeline over the real Lead journal', () => {
     for (const lane of value.lanes) {
       // Token NAMES or a composition OF token names, never values (the validator
       // enforces the shape; this pins that the host actually fills them instead of
-      // sending empty strings). Six of the seven wheel hues are compositions,
-      // because the theme has no cyan and no purple token at all.
+      // sending empty strings). Most of the wheel hues are compositions, because
+      // the theme has no cyan, purple or magenta token at all.
       const TOKEN_OR_COMPOSITION = /^(--(?:dsw|ds)-|color-mix\(\s*in\s+srgb\s*,)/
       expect(lane.color.bar, lane.id).toMatch(TOKEN_OR_COMPOSITION)
       expect(lane.color.on, lane.id).toMatch(/^--(?:dsw|ds)-/)
@@ -498,7 +498,7 @@ describe('buildTimeline over the real Lead journal', () => {
     expect(new Set(rosterLanes.map((lane) => lane.color.bar)).size).toBeLessThanOrEqual(palette.size)
   })
 
-  it('assigns by position, pins the Lead, and wraps at the palette ceiling', () => {
+  it('assigns by position, pins the Lead, and wraps through the sixteen teammate slots', () => {
     // Direct check of the assignment rule (the exported pure function), which
     // is what makes the palette ceiling explicit instead of implied.
     expect(laneColorTokens('lead', 0)).toEqual(LANE_COLOR_TOKENS[0])
@@ -509,13 +509,17 @@ describe('buildTimeline over the real Lead journal', () => {
     const teammateBars = Array.from({ length: teammateCount }, (_, index) => laneColorTokens(`member-${index}`, index + 1).bar)
     expect(new Set(teammateBars).size, teammateBars.join(', ')).toBe(teammateCount)
     expect(teammateBars).not.toContain(LANE_COLOR_TOKENS[0]?.bar)
-    // The documented ceiling: lane index == palette length wraps onto slot 0.
-    expect(laneColorTokens('member-wrap', LANE_COLOR_TOKENS.length)).toEqual(LANE_COLOR_TOKENS[0])
+    // The documented ceiling: lane index == palette length wraps, and it wraps onto
+    // the FIRST TEAMMATE slot — never onto slot 0. Slot 0 is the Lead's identity, and
+    // a teammate painted in the Lead's colour is the defect this palette exists to
+    // prevent, which is why the cycle is `1 + ((index - 1) % 16)` and not `index % 17`.
+    expect(laneColorTokens('member-wrap', LANE_COLOR_TOKENS.length)).toEqual(LANE_COLOR_TOKENS[1])
+    expect(laneColorTokens('member-wrap', LANE_COLOR_TOKENS.length).bar).not.toBe(LANE_COLOR_TOKENS[0]?.bar)
     // The sentinel bucket never borrows a roster slot.
     expect(laneColorTokens('unassigned', 7)).toEqual(UNASSIGNED_COLOR_TOKENS)
   })
 
-  it('the palette is seven distinct chromatic hues that can carry white text', () => {
+  it('the palette is the Lead plus sixteen distinct, legible, chromatic teammate colours', () => {
     // This replaces a check that five `--dsw-alias-state-*` names were present. That
     // assertion could not have caught the defect it was written for: the palette WAS
     // those names, and the fifth (`state-idle-primary`) resolves to a pure grey in
@@ -525,12 +529,18 @@ describe('buildTimeline over the real Lead journal', () => {
     // `resolveLaneColor` exists rather than a regex over the token string.
     //
     // What the user asked for, as measurable facts:
-    //   1. SEVEN hues, all distinct        -> 红橙黄绿青蓝紫, no two lanes alike;
+    //   1. the Lead + SIXTEEN teammates, all distinct -> no two lanes alike, and no
+    //                                                    teammate in the Lead's colour;
     //   2. every one chromatic             -> no black, white or grey lane;
     //   3. >= 4.5:1 against WHITE          -> the lane NAME sits on this colour as its
     //                                         background with white text.
+    //
+    // This spec keeps the PAYLOAD-level facts. The separation locks live in
+    // `tests/lane-color.spec.ts` (min pairwise OKLab dE, anchor hue gaps, the
+    // lightness ladder, and the index→entry table); see the note where the old
+    // "every hue 25 deg apart" check used to be, below.
     const bars = LANE_COLOR_TOKENS.map((entry) => entry.bar)
-    expect(bars.length, 'the palette must carry the seven requested hues').toBe(7)
+    expect(bars.length, 'the palette must carry the Lead plus sixteen teammate colours').toBe(17)
     expect(new Set(bars).size, bars.join(', ')).toBe(bars.length)
 
     const known = new Set(knownThemeTokens())
@@ -575,7 +585,6 @@ describe('buildTimeline over the real Lead journal', () => {
       return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05)
     }
     const white = rgbOf('#ffffff')
-    const hues: number[] = []
     for (const entry of LANE_COLOR_TOKENS) {
       const fill = resolveLaneColor(entry.bar, valueOf)
       expect(fill, `${entry.bar} must resolve to a colour (token name or color-mix of tokens)`).not.toBeNull()
@@ -609,28 +618,23 @@ describe('buildTimeline over the real Lead journal', () => {
         const staticHex = (values.statics as Record<string, string | undefined>)[entry.on] ?? ''
         expect(rgbOf(staticHex), `${entry.on} must be white for a saturated fill`).toEqual(rgbOf('#ffffff'))
       }
-      // Hue, so "seven DISTINCT hues" is checked as a spread rather than as seven
-      // different RGB triples (two blues would pass the latter and fail the request).
-      const [r, g, b] = fill.map((v) => v / 255) as [number, number, number]
-      const max = Math.max(r, g, b)
-      const min = Math.min(r, g, b)
-      const delta = max - min
-      let hue = 0
-      if (delta !== 0) {
-        if (max === r) hue = 60 * (((g - b) / delta) % 6)
-        else if (max === g) hue = 60 * ((b - r) / delta + 2)
-        else hue = 60 * ((r - g) / delta + 4)
-      }
-      hues.push(Math.round((hue + 360) % 360))
     }
-    const sorted = [...hues].sort((a, b) => a - b)
-    // Neighbouring hues must be at least 25 degrees apart, including the wrap from the
-    // last back to the first — otherwise the wheel has two lanes that read alike.
-    const gaps = sorted.map((h, i) => (i === 0 ? h + 360 - (sorted[sorted.length - 1] ?? 0) : h - (sorted[i - 1] ?? 0)))
-    expect(
-      Math.min(...gaps),
-      `hues ${sorted.join(', ')} (gaps ${gaps.join(', ')}) — two lanes are too close in hue`,
-    ).toBeGreaterThanOrEqual(25)
+    // A "every neighbouring hue is >= 25 deg apart, wrap included" check used to sit
+    // here. It was DELETED, not weakened, because it is geometrically impossible for
+    // this palette and would have had to be relaxed to a meaningless number:
+    //
+    //   * 17 entries cannot all be 25 deg apart — n points on a circle cap the
+    //     minimum gap at 360/n, which is ~21.2 deg for 17;
+    //   * the palette is eight hue ANCHORS x two lightness rungs, so two entries
+    //     deliberately SHARE a hue and differ only in lightness. Their hue gap is 0.
+    //     Measured on the current palette: hsl hues 21,23,43,45,93,93,169,170,200,
+    //     202,221,252,253,311,311,341,342 → minimum gap 0.
+    //
+    // Distinctness is not a hue-ring property any more, so it is asserted where it
+    // can actually be measured: `tests/lane-color.spec.ts` locks the minimum pairwise
+    // OKLab dE (0.0714 over all 120 pairs), the minimum gap between the eight hue
+    // ANCHORS (33.0 deg), and the minimum lightness step inside an anchor (0.0705).
+    // Do not reinstate a per-entry hue-gap threshold here.
 
     // The Lead is FIXED: the same colour in every team and session.
     const lead = LANE_COLOR_TOKENS[0]

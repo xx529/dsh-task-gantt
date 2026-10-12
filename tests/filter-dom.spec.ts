@@ -165,12 +165,20 @@ describe('renderer-side facts that only a DOM could otherwise show (PROXIES)', (
     const taskBody = chart.slice(bodyFn, nextFunction === -1 ? taskBodyStart + 1_800 : nextFunction)
     expect(taskBody).toContain('dtg-popover-title')
     expect(taskBody).toContain('dtg-popover-meta')
-    // All four facts, each from the SAME duration helper the card title uses.
+    // RE-BASED 2026-10-12 (task-40). The old assertions here demanded the 0.2.17 shape:
+    // a "finished" line fed by the last transition, plus `taskDurationLine`. The user
+    // rejected that — "应该有创建，开始，结束三个时间 … 不许把最后一次状态迁移当成结束
+    // 时间" — so the guarded property is now the three-instant form:
+    // created / started / ended, with an explicit "not ended yet" and a duration that is
+    // derived from (ended ?? now) - started.
     expect(taskBody).toContain("uiLabel('taskCreatedAt')")
-    expect(taskBody).toContain("uiLabel('taskFinishedAt')")
-    expect(taskBody).toContain('statusText(task.status)')
+    expect(taskBody).toContain("uiLabel('taskStartedAt')")
+    expect(taskBody).toContain("uiLabel('taskEndedAt')")
+    expect(taskBody).toContain("uiLabel('taskNotEnded')")
     expect(taskBody).toContain("uiLabel('taskDuration')")
-    expect(taskBody).toContain('taskDurationLine(')
+    expect(taskBody).toContain('taskRunTimes(')
+    // The last transition must NOT stand in for an end any more.
+    expect(taskBody, 'a last transition must not be presented as an end').not.toContain("uiLabel('taskLastTransitionAt')")
     // The description stays OUT: the user asked for the title plus those four facts,
     // and the description has its own home in the TaskDetails panel.
     expect(taskBody, 'the description must NOT be repeated in the task popover').not.toContain('dtg-popover-desc')
