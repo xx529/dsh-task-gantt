@@ -10,12 +10,14 @@
  * input must always produce a deep-equal layout.
  */
 import { describe, expect, it } from 'vitest'
-import type { MessageSpan, TimelineResponse } from '../src/shared/contract.ts'
+import type { MessageSpan, TimelineLane, TimelineResponse } from '../src/shared/contract.ts'
 import {
   FOLLOW_GUTTER_RATIO,
   ACTIVITY_TRACK_TOP,
   DAY_MS,
   DEFAULT_HEADER_HEIGHT,
+  dataExtent,
+  effectiveWindowStart,
   DEFAULT_LANE_HEIGHT,
   DEFAULT_MS_PER_PX,
   HOUR_MS,
@@ -1642,5 +1644,98 @@ describe('follow mode advances to the edge then snaps back to 3/4', () => {
   it('keeps the ratio a single shared number', () => {
     // The gutter and the snap target must not drift apart: one constant feeds both.
     expect(FOLLOW_GUTTER_RATIO).toBe(1 / 4)
+  })
+})
+
+describe('an anchored range narrows a session that is LONGER than the span', () => {
+  /**
+   * THE COVERAGE GAP THAT LET A REGRESSION SHIP.
+   *
+   * Every pre-existing range test used a fixture only a few SECONDS long, so a span of
+   * 1h was always wider than the whole log and the clamp at the earliest datum made the
+   * result identical to `全部`. That is correct behaviour for a short session — which is
+   * exactly why it proved nothing: the NARROWING path was never exercised.
+   *
+   * The user's real session is ~47 hours, and they reported "筛选 tim range 页面没有任何
+   * 变化". The cause was `Math.min(anchorStartMs, start)` in `computeWindow`: it was meant
+   * to stop the anchor exceeding the earliest datum, but on a long session it dragged the
+   * anchor from "1 hour ago" back to the session start, so every range collapsed to
+   * `全部`. Measured on a 6-hour session BEFORE the fix:
+   *
+   *   span 1h  -> start 360min ago, duration 361min   (filter gone)
+   *   span 30m -> start 360min ago, duration 361min   (filter gone)
+   *   span 15m -> start 360min ago, duration 361min   (filter gone)
+   *
+   * AFTER: 1h -> 60min, 30m -> 30min, 15m -> 15min, 全部 -> the whole session.
+   *
+   * The fixture below is therefore HOURS long on purpose. Do not shrink it: with a
+   * fixture shorter than the span every assertion here passes for the wrong reason.
+   */
+  const MIN = 60_000
+  const HOUR = 60 * MIN
+  const now = 6 * HOUR + 1_000            // a 6-hour session, `range.start` at 1000
+  function longSession(): TimelineResponse {
+    const base = liveResponse()
+    const lead = base.lanes[0]
+    if (lead === undefined) throw new Error('liveResponse must contain a lead lane')
+    const spans: TimelineLane['spans'] = []
+    for (let t = 1_000; t <= now; t += 5 * MIN) spans.push({ kind: 'step', start: t, end: t + MIN })
+    return { ...base, range: { start: 1_000, end: null }, lanes: [{ ...lead, spans }] }
+  }
+
+  it('narrows to the span instead of collapsing to the whole session', () => {
+    const data = longSession()
+    const extent = dataExtent(data, now)
+    expect(extent.start, 'the fixture must span hours, not seconds').toBe(1_000)
+    const anchored = (span: number | null): ReturnType<typeof layoutTimeline> =>
+      layoutTimeline(data, VIEWPORT, {
+        now,
+        msPerPx: 1_000,
+        tzOffsetMinutes: 0,
+        windowSpanMs: span,
+        anchorStartMs: effectiveWindowStart(now, span, extent.start),
+        follow: true,
+      })
+
+    const spanOf = (span: number | null): number => anchored(span).window.durationMs
+    const all = spanOf(null)
+    const oneHour = spanOf(HOUR)
+    const halfHour = spanOf(30 * MIN)
+    const quarter = spanOf(15 * MIN)
+
+    // Measured with this fixture: all 361min, 1h 61min, 30m 31min, 15m 16min. The
+    // extra minute is real and bounded: `end` is `max(now, last datum end)` and the
+    // span grid here is 5 minutes, so the right edge can sit up to one grid step past
+    // `now`. Hence a two-minute tolerance rather than one.
+    expect(all, '全部 must be the whole session').toBeGreaterThan(5 * HOUR)
+    // The load-bearing assertions: each range is NARROWER than the session, is close to
+    // its own span, and a narrower span gives a narrower window.
+    expect(oneHour, '1h must be about an hour, not the session').toBeGreaterThan(HOUR - 2 * MIN)
+    expect(oneHour).toBeLessThan(HOUR + 2 * MIN)
+    expect(halfHour).toBeGreaterThan(30 * MIN - 2 * MIN)
+    expect(halfHour).toBeLessThan(30 * MIN + 2 * MIN)
+    expect(quarter).toBeGreaterThan(15 * MIN - 2 * MIN)
+    expect(quarter).toBeLessThan(15 * MIN + 2 * MIN)
+    expect(oneHour).toBeLessThan(all)
+    expect(halfHour).toBeLessThan(oneHour)
+    expect(quarter).toBeLessThan(halfHour)
+  })
+
+  it('keeps the anchor pinned while the clock advances', () => {
+    const data = longSession()
+    const extent = dataExtent(data, now)
+    const anchor = effectiveWindowStart(now, HOUR, extent.start)
+    expect(anchor, 'anchor is one hour before the clock').toBe(now - HOUR)
+    const later = layoutTimeline(data, VIEWPORT, {
+      now: now + 10 * MIN,
+      msPerPx: 1_000,
+      tzOffsetMinutes: 0,
+      windowSpanMs: HOUR,
+      anchorStartMs: anchor,
+      follow: true,
+    })
+    // The start does not move with the clock; only the end grows.
+    expect(later.window.start).toBe(anchor)
+    expect(later.window.end).toBeGreaterThan(now)
   })
 })

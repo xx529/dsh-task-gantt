@@ -1,5 +1,51 @@
 # Changelog
 
+## 0.2.24 — 2026-10-12
+
+**Regression fix: the time range was collapsing to 全部 — one clamp direction was reversed**
+
+User report, right after 0.2.23: "现在筛选 tim range 页面没有任何变化". Reproduced with a SIX-HOUR
+fixture (a session must be longer than the span for the range to be able to narrow anything — the
+previous acceptance fixture was 30 minutes with a 1h span, so every range assertion passed for the
+wrong reason):
+
+| range | anchorMinAgo (0.2.23) | winStartMinAgo | durationMin |
+|---|---|---|---|
+| 1h | 60 | 360 | 361 |
+| 30m | 30 | 360 | 361 |
+| 15m | 15 | 360 | 361 |
+| 全部 | null | 360 | 361 |
+
+The anchor was computed correctly (60/30/15 minutes back) and then thrown away: 0.2.23 clamped it
+with `Math.min(anchorStartMs, start)` — intended as "never later than the earliest datum", it
+actually means "never LATER than the session start", so for any session longer than the span the
+anchor was dragged back to the beginning and every range collapsed to 全部. The correct clamp is
+`Math.max(anchorStartMs, start)`, the same direction the sliding-window path already used
+(`Math.max(start, end - span)`).
+
+After the fix, same 6h fixture: 1h -> 65min, 30m -> 35min, 15m -> 20min, 全部 -> 365min (each span
+plus the grid allowance on the right). In the browser at range 1h / follow on / manual 1 s/px the
+visible span is ~62min, 30m -> ~31min, 15m -> ~14.5min, 全部 -> ~397min, so the narrowing path is
+genuinely exercised now.
+
+The four criteria were re-measured in the user's state: the old task bar's screen x moves **0.00px**
+across three ticks within a page (-2640.00 three times, then -2713.00 three times), `scrollLeft`
+shows zero movement until the edge and then moves once by 73px = 0.294 viewport, and 全部 is
+unaffected.
+
+Two locks added to tests/layout.spec.ts on a SIX-HOUR fixture, with the fixture's own extent asserted
+first (`dataExtent.start === 1000`) so that shortening it fails loudly rather than silently passing:
+`1h`/`30m`/`15m` must each be narrower than the session and than each other, and the anchor must stay
+pinned while `end` grows. Calibrated for teeth: restoring `Math.min` fails exactly two assertions
+(`expected 21660000 to be less than 3720000`, `expected 1000 to be 18001000`).
+
+The blind spot itself is now written down in the new describe's docblock — the earlier range tests
+used fixtures shorter than any span, "so every assertion here passes for the wrong reason" — with an
+instruction not to shorten it again. That is the process failure worth remembering: new locks were
+added for the anchored window while the fixture that could have caught this was already too short.
+
+The footer build identity is now `v0.2.24 · range-clamp-fix`.
+
 ## 0.2.23 — 2026-10-12
 
 **The time range now anchors its left boundary (option A) — old content stops sliding**

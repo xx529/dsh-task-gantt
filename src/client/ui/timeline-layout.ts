@@ -1131,8 +1131,28 @@ export function computeWindow(
    */
   // `start` IS the earliest datum (`dataExtent(...).start`), so these clamps are the
   // same ones the pre-anchor code applied to `rawStart`.
+  /**
+   * The anchored start, clamped the SAME way the sliding window clamps — and that is
+   * the whole subtlety.
+   *
+   * `Math.min(anchorStartMs, start)` looked harmless ("never later than the earliest
+   * datum, so no on-screen data is dropped") but it silently DESTROYED the range filter
+   * for any session longer than the chosen span. Measured on a 6-hour session:
+   *
+   *   computeWindow(data, now, 1h)        -> start 59min ago, duration 60min   (correct)
+   *   computeWindow(data, now, 1h, anchor)-> start 360min ago, duration 361min (filter GONE)
+   *
+   * because `earliest` is 6 hours back, so the clamp pulled the anchor from "1 hour ago"
+   * all the way to the session start. Every range then looked identical to `全部`, which
+   * is exactly the regression the user reported ("筛选 tim range 页面没有任何变化").
+   *
+   * The clamp must therefore only stop the anchor going EARLIER than the data
+   * (`Math.max(anchor, start)`) — the same `Math.max(start, end - span)` the sliding
+   * path uses. An anchor later than `start` is the normal, working case: it is what
+   * makes the visible window narrower than the session.
+   */
   const anchor =
-    typeof anchorStartMs === 'number' && Number.isFinite(anchorStartMs) ? Math.min(anchorStartMs, start) : null
+    typeof anchorStartMs === 'number' && Number.isFinite(anchorStartMs) ? Math.max(anchorStartMs, start) : null
   const filteredStart = anchor !== null ? anchor : span === null ? start : Math.max(start, end - span)
   // NOTE: the window keeps exactly its four original fields. `endSource` is a
   // layout-level field, so the (verified) window shape stays untouched.
