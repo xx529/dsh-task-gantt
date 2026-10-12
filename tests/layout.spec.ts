@@ -23,7 +23,9 @@ import {
   MAX_TICKS,
   MINUTE_MS,
   MIN_MS_PER_PX,
+  MIN_ZOOM_MS_PER_PX,
   MIN_SPAN_PX,
+  SECOND_MS,
   STEP_BAR_HEIGHT,
   TASK_CARD_HEIGHT,
   TASK_CARD_TOP,
@@ -37,6 +39,7 @@ import {
   buildTicks,
   clamp,
   clampMsPerPx,
+  clampZoomMsPerPx,
   computeWindow,
   fitMsPerPx,
   formatClock,
@@ -153,9 +156,73 @@ describe('zoom helpers', () => {
     expect(fitMsPerPx(DAY_MS, 1)).toBe(MAX_MS_PER_PX)
   })
 
+  it('keeps the SANITY floor at 50ms, separate from the manual zoom floor', () => {
+    // These are deliberately two different objects. `clampMsPerPx` is shared by the fit
+    // path, `layoutTimeline`'s own sanitisation AND (before this change) the manual zoom,
+    // so raising its floor would clamp 适应窗口 too. The user-facing limit lives in
+    // `clampZoomMsPerPx`.
+    expect(MIN_MS_PER_PX).toBe(50)
+    expect(MIN_ZOOM_MS_PER_PX).toBe(5 * SECOND_MS)
+    expect(MIN_ZOOM_MS_PER_PX).toBeGreaterThan(MIN_MS_PER_PX)
+  })
+
+  it('does NOT lift a fitted zoom up to the manual floor (a 5m range still fills the canvas)', () => {
+    // MEASURED in the browser: a 5-minute range on a 248px canvas fits at ~1.2 s/px,
+    // which is FINER than the 5 s/px manual floor. If the floor leaked into the fit or
+    // into `layoutTimeline`'s input sanitisation, the content would be 300s / 5s = 60px
+    // inside a 248px canvas and the chart would be stranded in the left quarter.
+    const FIVE_MIN = 5 * MINUTE_MS
+    const data = { ...liveResponse(), range: { start: 0, end: FIVE_MIN }, lanes: [], tasks: [] }
+    const fitted = fitMsPerPx(FIVE_MIN, 248)
+    expect(fitted).toBeLessThan(MIN_ZOOM_MS_PER_PX)
+    expect(fitted).toBeCloseTo(FIVE_MIN / 248, 6)
+    const layout = layoutTimeline(data, { ...VIEWPORT, width: 248 }, { now: FIVE_MIN, msPerPx: fitted, tzOffsetMinutes: 0 })
+    expect(layout.msPerPx).toBe(fitted)
+    expect(layout.dataWidth).toBeCloseTo(248, 3)
+  })
+
   it('clamp() collapses an inverted range to lo', () => {
     expect(clamp(5, 10, 1)).toBe(10)
     expect(clamp(5, 1, 10)).toBe(5)
+  })
+})
+
+/**
+ * The user's rule: "时间粒度，最少的只需要去到 5 秒就行" — and, when asked which of the
+ * two granularities that meant, they chose the MANUAL ZOOM floor, `只约束手动缩放`
+ * (constrain the manual zoom only). So 适应窗口 must stay free to fit a short range.
+ */
+describe('the manual zoom floor is 5 s/px', () => {
+  it('stops a zoom-in request at the floor', () => {
+    expect(clampZoomMsPerPx(1, 60_000)).toBe(MIN_ZOOM_MS_PER_PX)
+    expect(clampZoomMsPerPx(4_000, 60_000)).toBe(MIN_ZOOM_MS_PER_PX)
+    expect(clampZoomMsPerPx(MIN_ZOOM_MS_PER_PX, 60_000)).toBe(MIN_ZOOM_MS_PER_PX)
+    // …and a request that is already coarser than the floor is untouched.
+    expect(clampZoomMsPerPx(6_000, 60_000)).toBe(6_000)
+  })
+
+  it('lets a zoom-OUT through from the floor', () => {
+    expect(clampZoomMsPerPx(MIN_ZOOM_MS_PER_PX * 1.5, MIN_ZOOM_MS_PER_PX)).toBe(7_500)
+    expect(clampZoomMsPerPx(10_000_000, 60_000)).toBe(MAX_MS_PER_PX)
+  })
+
+  it('turns a zoom-in click from a fitted sub-floor zoom into a no-op, not a 4x jump', () => {
+    // `fitMsPerPx` may already be finer than the manual floor — a 5-minute range on a
+    // 248px canvas fits at ~1.2 s/px. A plain `clamp(requested, 5000, …)` would answer
+    // that click with 5000: the reader asks to move CLOSER and the chart jumps 4x AWAY.
+    // The floor is the finer of the two instead, and `applyZoom`'s
+    // `next === effectiveMsPerPx` guard makes the equal case a no-op.
+    const fitted = 300_000 / 248
+    expect(fitted).toBeLessThan(MIN_ZOOM_MS_PER_PX)
+    expect(clampZoomMsPerPx(fitted / 1.5, fitted)).toBe(fitted)
+    // Zooming OUT from the same place is unaffected by the floor.
+    expect(clampZoomMsPerPx(fitted * 1.5, fitted)).toBeCloseTo(fitted * 1.5, 6)
+  })
+
+  it('falls back to the current zoom for a non-finite or non-positive request', () => {
+    expect(clampZoomMsPerPx(Number.NaN, 60_000)).toBe(60_000)
+    expect(clampZoomMsPerPx(0, 60_000)).toBe(60_000)
+    expect(clampZoomMsPerPx(-5, 60_000)).toBe(60_000)
   })
 })
 

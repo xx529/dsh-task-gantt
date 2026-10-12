@@ -364,13 +364,25 @@ export const TASK_CHIP_MIN_SIDE_WIDTH = 48
 
 /* ---------------------------------------------------------------- zoom */
 
-/** 50 ms per px — the zoom-in floor (a 50ms step is half a percent of a 100px bar). */
-
-/** 50 ms per px — the zoom-in floor (a 50ms step is half a percent of a 100px bar). */
+/** 50 ms per px — the SANITY floor: the finest value the geometry layer will accept. */
 export const MIN_MS_PER_PX = 50
 /** 600 000 ms per px (10 min per px) — the zoom-out ceiling. */
 export const MAX_MS_PER_PX = 600_000
 export const DEFAULT_MS_PER_PX = 1_000
+
+/**
+ * 5 s per px — the finest MANUAL zoom, by user rule ("时间粒度，最少的只需要去到 5 秒就行").
+ *
+ * Deliberately a SEPARATE constant from {@link MIN_MS_PER_PX}, and deliberately not
+ * wired into {@link clampMsPerPx}: that one function is shared by three callers —
+ * this floor's manual-zoom path, {@link fitMsPerPx}, and `layoutTimeline`'s own input
+ * sanitisation — so raising it there would also clamp 适应窗口. Measured consequence
+ * of getting that wrong: a 5-minute range on a 248px canvas fits at ~1.2 s/px, so a
+ * clamped fit would draw 300s ÷ 5s = 60px of content inside a 248px canvas and strand
+ * the chart in the left quarter. The user's choice was explicit: constrain the manual
+ * zoom only.
+ */
+export const MIN_ZOOM_MS_PER_PX = 5 * SECOND_MS
 
 /** Hard cap on generated ticks, so a pathological zoom can never hang a render. */
 export const MAX_TICKS = 400
@@ -836,6 +848,28 @@ function pad2(value: number): string {
 export function clampMsPerPx(value: number): number {
   if (!Number.isFinite(value) || value <= 0) return DEFAULT_MS_PER_PX
   return clamp(value, MIN_MS_PER_PX, MAX_MS_PER_PX)
+}
+
+/**
+ * Clamp a MANUAL zoom request, given the zoom currently on screen.
+ *
+ * Two things, and the second is the one that bites:
+ *
+ * 1. the floor is {@link MIN_ZOOM_MS_PER_PX} (5 s/px), so zooming in stops where the
+ *    user said it should;
+ * 2. the floor is the FINER of that and `current`. {@link fitMsPerPx} is allowed below
+ *    the manual floor (a 5-minute range in a 248px canvas fits at ~1.2 s/px), so a
+ *    plain `clamp(requested, 5000, …)` would make a zoom-IN click from a fitted
+ *    1.2 s/px snap to 5 s/px — the user asks to move closer and the chart jumps 4x
+ *    AWAY. With `min(floor, current)`, that click clamps onto the current value, and
+ *    `applyZoom`'s `next === effectiveMsPerPx` guard turns it into a no-op: the button
+ *    simply stops, which is what "5 s is the finest" means when you are already finer.
+ *    Zooming OUT from there is unaffected.
+ */
+export function clampZoomMsPerPx(value: number, current: number): number {
+  if (!Number.isFinite(value) || value <= 0) return clampMsPerPx(current)
+  const from = clampMsPerPx(current)
+  return clamp(value, Math.min(MIN_ZOOM_MS_PER_PX, from), MAX_MS_PER_PX)
 }
 
 /** The zoom that fits `durationMs` into `widthPx` — the initial (auto) zoom. */

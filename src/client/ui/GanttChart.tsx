@@ -60,7 +60,7 @@ import {
   MESSAGE_MARKER_HEIGHT,
   MESSAGE_MARKER_TOP,
   TASK_CHIP_GAP,
-  clampMsPerPx,
+  clampZoomMsPerPx,
   computeWindow,
   fitMsPerPx,
   formatClock,
@@ -403,7 +403,7 @@ export function GanttChart(props: GanttChartProps): ReactNode {
   const applyZoom = useCallback(
     (requested: number, cursorX: number) => {
       const el = scrollRef.current
-      const next = clampMsPerPx(requested)
+      const next = clampZoomMsPerPx(requested, effectiveMsPerPx)
       if (next === effectiveMsPerPx) return
       if (el !== null) {
         const timeAtCursor = win.start + (el.scrollLeft + cursorX) * effectiveMsPerPx

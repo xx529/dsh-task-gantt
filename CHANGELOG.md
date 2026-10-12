@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.2.10 — 2026-10-12
+
+**The manual zoom stops at 5 s/px, and 适应窗口 is deliberately left free**
+
+The user's rule: "时间粒度，最少的只需要去到 5 秒就行". Asked which of the panel's two
+granularities that meant, they chose the manual zoom floor, and chose that it constrains
+the manual zoom ONLY.
+
+- `MIN_ZOOM_MS_PER_PX = 5 * SECOND_MS` is a new constant, and `clampZoomMsPerPx(value,
+  current)` is the new clamp on the manual-zoom path (`applyZoom`, reached by both zoom
+  buttons and ctrl+wheel). Zooming in now stops at 5 秒/像素; before this it went to
+  `MIN_MS_PER_PX = 50` (0.05 秒/像素).
+- It is a SEPARATE constant from `MIN_MS_PER_PX` on purpose, because `clampMsPerPx` — the
+  function that used to serve the manual zoom — is shared by `fitMsPerPx` AND
+  `layoutTimeline`'s own input sanitisation. Raising that single floor would have clamped
+  适应窗口 as well, and the measured consequence is not subtle: a 5-minute range on a 248px
+  canvas fits at ~1.2 s/px, so a clamped fit would draw 300s ÷ 5s = **60px of content
+  inside a 248px canvas**, stranding the chart in the left quarter. Locked by test:
+  `fitMsPerPx(5 * MINUTE_MS, 248)` must stay below the manual floor and `layoutTimeline`
+  must keep it, with `dataWidth ≈ 248`.
+- The floor is the FINER of the 5 s/px limit and the zoom currently on screen. Without
+  that, a zoom-in click from a fitted 1.2 s/px (a 5m range) would snap to 5 s/px — the
+  reader asks to move closer and the chart jumps 4x AWAY. With it, that click clamps onto
+  the current value and `applyZoom`'s `next === effectiveMsPerPx` guard makes it a no-op;
+  zooming out from there is unaffected.
+
+The footer build identity is now `v0.2.10 · zoom-floor-5s`.
+
 ## 0.2.9 — 2026-10-12
 
 **Four defects the time-range filter exposed — and one it still hides**
