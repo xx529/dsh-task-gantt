@@ -1,5 +1,72 @@
 # Changelog
 
+## 0.2.12 — 2026-10-12
+
+Three requests from a screenshot of a real board, and one bug found while building them.
+
+**1 — a box too narrow for text now shows "…"**
+
+The user, pointing at a task card that rendered NO text at all: "对于这些一个文本都显示不出来的，
+我觉得最少也要显示 「...」这样有内容". `TaskLabelPlacement` gained its third state, and the ladder
+is now decided by one exported pure function, `taskLabelPlacement(anchor, w)`:
+
+| box width | state | what is drawn |
+|---|---|---|
+| `w >= 36` (`TASK_LABEL_MIN_WIDTH`) | `'inside'` | the subject, CSS-truncated |
+| `22 <= w < 36` (`TASK_LABEL_ELLIPSIS_MIN_WIDTH`) | `'ellipsis'` | a bare "…" |
+| `w < 22` | `'none'` | nothing (a hairline cannot hold even the ellipsis) |
+
+All three numbers are DERIVED from the card's padding in `styles.ts` (8px left + 6px right =
+14px), so the text box is `w - 14` measured against an ~8px "…" and ~19px for one 11px glyph
+plus it. Change the padding and the three numbers have to be re-derived; a live anchor (a 9px
+marker with no duration) is always `'none'`.
+
+**2 — the message row moved ABOVE the span row**
+
+"信息收发显示的泳道放在 span 的泳道上面". `laneTracks()` now returns message -> activity -> task
+instead of activity -> message -> task, with `MESSAGE_TRACK_TOP` and `ACTIVITY_TRACK_TOP` named
+constants behind it. `TASK_CARD_TOP` is still 30 and every lane height is unchanged, because the
+same terms are summed either way — the swap moves the two thin rows and nothing else. Measured
+in the browser: message row y=82 < step span y=97 < task box y=109, in one lane.
+
+**3 — sent and received arrows are one icon**
+
+"发送和接收的箭头 icon 样式应该一致，现在发送略粗，接收比较细，统一一下". `ARROW_STROKE_SENT`
+(3.4) and `ARROW_STROKE_RECEIVED` (2) are gone, replaced by a single `ARROW_STROKE = 2`, and
+`ArrowIcon` no longer takes a `filled` prop at all — so the difference cannot be quietly added
+back. Only the diagonal's aim distinguishes the directions now. The lock in
+tests/message-paint.spec.ts was re-based to assert exactly that (it still guards the original
+property: the direction cue does not depend on colour) and now fails if either old constant or
+`filled={outgoing}` reappears. Measured: both arrows report `strokeWidth: 2px`, `fill: none`.
+
+**4 — a hover popover with the whole title**
+
+"鼠标悬停到任务卡时候，可以有个浮窗来完整显示任务的标题". The native `title` attribute is still
+there at rest (it carries the status and the measured time range), but it cannot be styled and
+has an OS delay, so a real popover now opens on hover AND on keyboard focus, showing the full
+subject and description.
+
+It was built wrong first and the measurement caught it: rendered inside `.dtg-canvas`, the
+popover measured `right 618` against a `380` clipper and `elementFromPoint` on the overhang
+returned `BODY` — **`position: fixed` does not escape an ancestor's `overflow: hidden`**. It now
+renders as a SIBLING of `.dtg-scroll` (so it cannot join the scroll box's overflow, the trap that
+once inflated `scrollWidth` from 248 to 399 and broke the follow toggle) and clamps itself into
+the first really-clipping ancestor, found by walking up from the card. Re-measured with it open:
+`scrollWidth 249 / clientWidth 248`, unchanged from closed; `clippedByClipper: 0`.
+
+The native tooltip and the popover then overlapped each other, so while the popover is open the
+`title` is temporarily removed and restored on every close path (mouseleave, blur, unmount),
+while `aria-label` — which already carries subject and description — is present throughout.
+
+**Recorded, still open**
+
+- ❓25(a): a history task card that crosses the viewport's right edge disappeared entirely at a
+  finer-than-fit zoom; unattributed, no code change, needs `scrollLeft` recorded alongside.
+- ❓25(b): the axis tick labels DO create a ~24px horizontal scroll range at fit zoom, which
+  contradicts two older claims in the ledger that they are clipped harmlessly.
+
+The footer build identity is now `v0.2.12 · popover-ellipsis`.
+
 ## 0.2.11 — 2026-10-12
 
 Four more real-screen requests, and the label finally stops leaving the box.

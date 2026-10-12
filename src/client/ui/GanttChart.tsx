@@ -250,6 +250,32 @@ export function GanttChart(props: GanttChartProps): ReactNode {
    */
   const [messageMode, setMessageMode] = useState<'both' | 'markers'>('both')
 
+  /**
+   * The task card under the pointer or keyboard focus. The ELEMENT is kept rather
+   * than a frozen rect: the popover needs both the card's current viewport rect and
+   * the chain of ancestors above it, because `position: fixed` does not escape an
+   * ancestor's overflow clipping (see `clipBounds`).
+   */
+  const [hoveredTask, setHoveredTask] = useState<{ task: TimelineTask; anchor: HTMLElement } | null>(null)
+
+  /**
+   * A fixed-positioned popover would be stranded if the chart scrolled under it, so
+   * re-measure on scroll and drop it when its card is culled.
+   */
+  useEffect(() => {
+    const el = scrollRef.current
+    if (el === null) return
+    const onScroll = (): void => {
+      setHoveredTask((previous) => {
+        if (previous === null) return null
+        const card = el.querySelector<HTMLElement>(`[data-task-id="${previous.task.id}"] .dtg-task`)
+        return card === null ? null : { task: previous.task, anchor: card }
+      })
+    }
+    el.addEventListener('scroll', onScroll, { passive: true })
+    return () => el.removeEventListener('scroll', onScroll)
+  }, [])
+
   // The trailing window is the LAYOUT's business (`options.windowSpanMs`): it
   // already clamps to the log's own start, ignores null/0/negative/NaN, and keeps
   // `end` untouched so a filtered live board still follows NOW. Re-deriving it
@@ -487,6 +513,16 @@ export function GanttChart(props: GanttChartProps): ReactNode {
     return out
   }, [data, layout.window.start, layout.window.end, layout.msPerPx, viewport.width, scroll.left])
 
+  /**
+   * Does this element own the currently open popover? Stable across renders so it can
+   * be handed to every card without invalidating them: the card that owns it derives
+   * `true` from its own ref, which is what suspends its native `title`.
+   */
+  const isPopoverAnchor = useCallback(
+    (element: HTMLElement | null): boolean => element !== null && element === hoveredTask?.anchor,
+    [hoveredTask],
+  )
+
   const endMarker = layout.endMarker
   const chartAria = `${uiLabel('chartAria', {
     lanes: layout.lanes.length,
@@ -622,6 +658,8 @@ export function GanttChart(props: GanttChartProps): ReactNode {
                 tzOffsetMinutes={tzOffsetMinutes}
                 msPerPx={layout.msPerPx}
                 color={laneColors.get(rect.laneId)}
+                onHoverChange={setHoveredTask}
+                isPopoverAnchor={isPopoverAnchor}
               />
             ))}
             {layout.lanes.map((lane) =>
@@ -640,6 +678,26 @@ export function GanttChart(props: GanttChartProps): ReactNode {
           </div>
         </div>
       </div>
+
+      {/*
+        The hover popover lives here, a SIBLING of `.dtg-scroll` and outside
+        `.dtg-canvas`. Two separate traps made that mandatory, both measured:
+
+        1. an absolutely-positioned descendant adds to its ancestor's scrollable
+           overflow — a 148px caption once inflated `.dtg-scroll` from 248 to 399
+           and broke the follow toggle;
+        2. `.dtg-scroll` is `overflow: auto` and `.dtg-canvas` is `overflow: hidden`,
+           so a fixed popover rendered inside either is CLIPPED. Measured while it
+           was inside: the box was 280px wide at x=338 while the scroller ended at
+           x=380, and `elementFromPoint` beyond that returned BODY — 238px of the
+           popover, including all of its text, was invisible.
+
+        `position: fixed` from the card's own `getBoundingClientRect()` then places
+        it in viewport coordinates, where neither container can clip it.
+      */}
+      {hoveredTask === null ? null : (
+        <TaskPopover task={hoveredTask.task} anchor={hoveredTask.anchor} tzOffsetMinutes={tzOffsetMinutes} />
+      )}
 
       <div className="dtg-legend">
         <button type="button" className="dtg-btn" onClick={() => zoomByButton(1 / ZOOM_STEP)} title={uiLabel('zoomOut')}>
@@ -687,13 +745,13 @@ export function GanttChart(props: GanttChartProps): ReactNode {
                 than approximating it. */}
             <span className="dtg-legend-item" title={uiLabel('messageLegendHint')}>
               <span className="dtg-legend-arrow" aria-hidden="true">
-                <ArrowIcon className="dtg-msg-arrow" direction="out" filled ink="currentColor" />
+                <ArrowIcon className="dtg-msg-arrow" direction="out" ink="currentColor" />
               </span>
               {uiLabel('messageLegendSent')}
             </span>
             <span className="dtg-legend-item" title={uiLabel('messageLegendHint')}>
               <span className="dtg-legend-arrow" aria-hidden="true">
-                <ArrowIcon className="dtg-msg-arrow" direction="in" filled={false} ink="currentColor" />
+                <ArrowIcon className="dtg-msg-arrow" direction="in" ink="currentColor" />
               </span>
               {uiLabel('messageLegendReceived')}
             </span>
@@ -1339,10 +1397,109 @@ function MessageMarker({
         // typed this", and it is unmistakable next to the arrows.
         <BubbleIcon className="dtg-msg-bubble" ink={`var(${UR_MARKER_RING_TOKENS[0]})`} />
       ) : (
-        <ArrowIcon className="dtg-msg-arrow" direction={outgoing ? 'out' : 'in'} filled={outgoing} ink={arrowInk} />
+        <ArrowIcon className="dtg-msg-arrow" direction={outgoing ? 'out' : 'in'} ink={arrowInk} />
       )}
       {marker.droppedBefore > 0 ? <span className="dtg-msg-count" aria-hidden="true">{`+${marker.droppedBefore}`}</span> : null}
     </Tag>
+  )
+}
+
+/**
+ * The box a popover anchored at `anchor` must stay inside.
+ *
+ * Starts from the viewport and then narrows to the nearest ancestor that actually
+ * clips (`overflow` other than `visible`), because `position: fixed` does NOT escape
+ * an ancestor's overflow clipping. Without this the popover is silently cut off by a
+ * narrow host panel, which is exactly what happened in the demo: an ancestor 381px
+ * wide removed 239px of a 280px popover.
+ *
+ * @param anchor - the card element to walk up from.
+ */
+function clipBounds(anchor: HTMLElement): { left: number; right: number; top: number; bottom: number; width: number } {
+  const viewport = {
+    left: 0,
+    right: typeof window === 'undefined' ? 1024 : window.innerWidth,
+    top: 0,
+    bottom: typeof window === 'undefined' ? 768 : window.innerHeight,
+    width: typeof window === 'undefined' ? 1024 : window.innerWidth,
+  }
+  if (typeof document === 'undefined') return viewport
+  let el: Element | null = anchor.parentElement
+  while (el !== null && el !== document.documentElement) {
+    const cs = getComputedStyle(el)
+    if (cs.overflow !== 'visible' || cs.overflowX !== 'visible' || cs.overflowY !== 'visible') {
+      const r = el.getBoundingClientRect()
+      // A box that is not wider than the popover cannot host it; keep looking outward.
+      if (r.width >= 160) {
+        return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width }
+      }
+    }
+    el = el.parentElement
+  }
+  return viewport
+}
+
+/**
+ * The full title, on hover or keyboard focus.
+ *
+ * Why a real element instead of the `title` attribute: the native tooltip has an
+ * OS-controlled delay, cannot be styled, and truncates long text. The user asked for
+ * a popover: "鼠标悬停到任务卡时候，可以有个浮窗来完整显示任务的标题".
+ *
+ * Positioning rules, all measured rather than assumed:
+ * - `position: fixed` from the card's own `getBoundingClientRect()`, and rendered as a
+ *   SIBLING of the scroll container. An absolutely-positioned descendant contributes
+ *   to its ancestor's scrollable overflow — a 148px caption once inflated
+ *   `.dtg-scroll` from 248 to 399 and broke the follow toggle — so the popover is kept
+ *   out of that container entirely rather than merely fixed inside it;
+ * - flipped above the card when there is not enough room below;
+ * - clamped horizontally so it cannot leave the viewport;
+ * - `pointer-events: none`, so it can never swallow the pointer that opened it.
+ */
+function TaskPopover({
+  task,
+  anchor,
+  tzOffsetMinutes,
+}: {
+  task: TimelineTask
+  /** The card element itself; its rect is re-read here so it is never stale. */
+  anchor: HTMLElement
+  tzOffsetMinutes: number
+}): ReactNode {
+  const rect = anchor.getBoundingClientRect()
+  const GAP = 6
+  const MARGIN = 8
+  const MAX_W = 280
+  /**
+   * The rectangle the popover has to stay inside.
+   *
+   * The viewport is NOT enough. The panel that hosts this chart can itself be
+   * `overflow: hidden` and much narrower than the window — measured in the demo, an
+   * ancestor was 381px wide while the popover wanted 280px at x=339, so 239px of it
+   * (including every line of text) was clipped away. Walking up to the nearest
+   * clipping ancestor and clamping to ITS box is what actually keeps the popover
+   * on screen; the viewport is only the fallback when nothing clips.
+   */
+  const bounds = clipBounds(anchor)
+  const width = Math.min(MAX_W, Math.max(120, bounds.width - 2 * MARGIN))
+  const flipAbove = rect.bottom + GAP + 120 > bounds.bottom
+  const maxLeft = Math.max(bounds.left + MARGIN, bounds.right - width - MARGIN)
+  const left = Math.min(Math.max(bounds.left + MARGIN, rect.left), maxLeft)
+  const style: CSSProperties = flipAbove
+    ? { left, bottom: Math.max(0, bounds.bottom - rect.top + GAP), width }
+    : { left, top: rect.bottom + GAP, width }
+  const first = task.history[0]?.time
+  const last = task.history[task.history.length - 1]?.time
+  return (
+    <div className="dtg-popover" style={style} role="tooltip">
+      <div className="dtg-popover-title">{task.subject === '' ? '—' : task.subject}</div>
+      {task.description === '' ? null : <div className="dtg-popover-desc">{task.description}</div>}
+      {first === undefined || last === undefined ? null : (
+        <div className="dtg-popover-meta">
+          {`${formatDateTime(first, tzOffsetMinutes)} -> ${formatDateTime(last, tzOffsetMinutes)}`}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -1356,16 +1513,16 @@ function MessageMarker({
  * rounded head — and the earlier revisions' problem was a plate around the glyph
  * competing with its tip.
  *
- * Both directions describe the SAME arrow, so only the aim and the weight differ —
- * never the silhouette:
+ * Both directions describe the SAME arrow, and now share the SAME weight and fill —
+ * only the aim differs:
  *
- * | | aim | weight |
- * |---|---|---|
- * | outgoing | up-right  | stroke 3.4px, which fills the head's barbs |
- * | incoming | down-left | stroke 2px |
+ * | | aim | stroke | fill |
+ * |---|---|---|---|
+ * | outgoing | up-right  | 2px | none |
+ * | incoming | down-left | 2px | none |
  *
- * Same geometry, same size, same position; only the weight and the aim differ, which
- * is what the user asked for ("改成更接收一样的 icon 只是方向变了").
+ * The earlier 3.4px/2px split is what the user reported as two different icon styles
+ * ("发送略粗，接收比较细"); the received treatment is the one they asked to keep.
  *
  * Visibility on the panel is handled OUTSIDE the icon: the marker carries a hairline
  * of the panel surface behind it (see `MessageMarker`), so a pale lane colour still
@@ -1373,19 +1530,26 @@ function MessageMarker({
  *
  * @param props.direction - `'out'` points up-right (this lane sent it), `'in'`
  *   points down-left (this lane received it).
- * @param props.filled - `true` for outgoing, `false` for incoming.
  * @param props.ink - the counterpart's lane FILL, as a CSS colour.
+ */
+/**
+ * The lane arrow. ONE style for both directions.
+ *
+ * The user: "发送和接收的箭头 icon 样式应该一致，现在发送略粗，接收比较细，统一一下",
+ * and then, asked which of the two to keep: "改成更接收一样的 icon 只是方向变了". So
+ * both directions are now the received treatment — a single 2px stroke with no fill —
+ * and the ONLY difference is which way the diagonal points. There is deliberately no
+ * `filled` parameter any more: a style difference that cannot be expressed cannot be
+ * reintroduced by accident.
  */
 function ArrowIcon({
   className,
   direction,
-  filled,
   ink,
   size = 12,
 }: {
   className: string
   direction: 'out' | 'in'
-  filled: boolean
   ink: string
   size?: number
 }): ReactNode {
@@ -1399,7 +1563,7 @@ function ArrowIcon({
       focusable="false"
       fill="none"
       stroke={ink}
-      strokeWidth={filled ? ARROW_STROKE_SENT : ARROW_STROKE_RECEIVED}
+      strokeWidth={ARROW_STROKE}
       strokeLinecap="round"
       strokeLinejoin="round"
       transform={direction === 'out' ? undefined : 'scale(-1,-1)'}
@@ -1444,11 +1608,11 @@ function BubbleIcon({ className, ink }: { className: string; ink: string }): Rea
  * segments (a fill on open lines paints almost nothing, so the sent marker collapsed
  * to "just a small triangle"), then because the replacement polygon had no real
  * arrowhead and its head ran outside the viewBox and was clipped. A stroke gives the
- * head barbs for free, so the only thing that changes between the two directions'
- * weight is the stroke width.
+ * head barbs for free, which is why both directions are strokes now.
  *
- *     sent     3.4px  ->  the head's barbs are solid, so the arrow reads as filled
- *     received 2px    ->  the same shape reads as an outline
+ * Both directions use the SAME weight and no fill (measured in the browser: both read
+ * 2px stroke-width, neither has a fill). The earlier 3.4px/2px split made the sent
+ * arrow visibly heavier, which the user reported as two different icon styles.
  *
  * The centreline is inset one unit from the outer silhouette, because a 2px stroke
  * reaches 1px either side of it; that keeps the painted arrow inside the 12px box
@@ -1456,11 +1620,13 @@ function BubbleIcon({ className, ink }: { className: string; ink: string }): Rea
  */
 const ARROW_PATH = 'M3.3 9.7 L6.6 6.4 M3.7 3 H9.8 V9.1'
 
-/** Stroke width for a SENT message: wide enough to fill the head's barbs. */
-const ARROW_STROKE_SENT = 3.4
-
-/** Stroke width for a RECEIVED message: the same shape, read as an outline. */
-const ARROW_STROKE_RECEIVED = 2
+/**
+ * Stroke width for a lane arrow, in BOTH directions.
+ *
+ * One value on purpose: the sent/received pair is distinguished by the direction of
+ * the diagonal and by the marker's own shape, never by weight. See {@link ArrowIcon}.
+ */
+const ARROW_STROKE = 2
 
 /**
  * One glyph per dated task transition.
@@ -1611,6 +1777,8 @@ function TaskCard({
   tzOffsetMinutes,
   msPerPx,
   color,
+  onHoverChange,
+  isPopoverAnchor,
 }: {
   rect: TaskCardRect
   selected: boolean
@@ -1619,7 +1787,12 @@ function TaskCard({
   /** Scale of the chart, so an event's mark lands at its own real time. */
   msPerPx: number
   color?: LaneColorTokens | undefined
+  /** Reports the hovered card (as a live element) to the popover host. */
+  onHoverChange?: ((value: { task: TimelineTask; anchor: HTMLElement } | null) => void) | undefined
+  /** Tells this card whether it currently owns the open popover. */
+  isPopoverAnchor?: ((element: HTMLElement | null) => boolean) | undefined
 }): ReactNode {
+  const cardRef = useRef<HTMLButtonElement | null>(null)
   const task: TimelineTask = rect.task
   const selection = rect.live
     ? uiLabel('taskAriaLive')
@@ -1674,10 +1847,80 @@ function TaskCard({
     ...(color === undefined ? {} : { borderLeftColor: color.bar }),
   }
   const inside = rect.labelPlacement === 'inside'
+  /**
+   * The middle tier: too narrow for text, wide enough to admit it. The user's rule was
+   * "对于这些一个文本都显示不出来的，我觉得最少也要显示 ... 这样有内容" — a box that shows
+   * NOTHING reads as broken, so a literal ellipsis stands in for the suppressed title.
+   * It is a glyph, not the truncated subject: at this width the subject would render
+   * zero characters, so the ellipsis is the only honest content.
+   */
+  const showEllipsis = rect.labelPlacement === 'ellipsis'
   const subject = task.subject === '' ? '—' : task.subject
+  /**
+   * Whether this card currently owns the open popover.
+   *
+   * The host identifies the owner by element, so this is derived rather than stored:
+   * only one card can match. It drives the `title` suspension below.
+   */
+  const popoverOpen = isPopoverAnchor?.(cardRef.current) ?? false
+  /**
+   * Suspend the native `title` while the popover is open.
+   *
+   * Both are tooltips, and the browser's own appears on top of ours (measured in
+   * task-25: the dark native bubble covered the right half of the popover). So the
+   * attribute is removed while open and the SAME string put back afterwards.
+   *
+   * `aria-label` is untouched and complete throughout, so nothing is lost for
+   * keyboard or screen-reader users — and the title is back at rest, which is what
+   * task-21 requires.
+   *
+   * The restore is written through the DOM rather than by clearing a state flag: it
+   * then runs on EVERY close path — mouseleave, blur, the scroll-driven dismissal,
+   * and unmount — because each of those turns this effect's cleanup, which is the one
+   * place that owns the restore. A card that unmounts while hovered still has the
+   * attribute put back before its node goes away, so no path can leave a card without
+   * its title.
+   */
+  const suspendedTitle = useRef<string | null>(null)
+  useEffect(() => {
+    const el = cardRef.current
+    if (el === null) return
+    if (popoverOpen) {
+      if (suspendedTitle.current === null) {
+        suspendedTitle.current = el.getAttribute('title')
+        el.removeAttribute('title')
+      }
+      return
+    }
+    if (suspendedTitle.current !== null) {
+      const restore = suspendedTitle.current
+      suspendedTitle.current = null
+      el.setAttribute('title', restore)
+    }
+  }, [popoverOpen])
+  useEffect(
+    () => () => {
+      if (suspendedTitle.current === null) return
+      cardRef.current?.setAttribute('title', suspendedTitle.current)
+      suspendedTitle.current = null
+    },
+    [],
+  )
+  /**
+   * Hand the popover host the card element. A ref object is never null, so the element
+   * is read from `.current` and the report is skipped if it is not mounted yet —
+   * reporting a fabricated rect would place the popover at the origin.
+   */
+  const reportHover = (): void => {
+    if (onHoverChange === undefined) return
+    const el = cardRef.current
+    if (el === null) return
+    onHoverChange({ task, anchor: el })
+  }
   return (
     <span className="dtg-task-wrap" data-task-id={task.id}>
       <button
+        ref={cardRef}
         type="button"
         className={`dtg-task dtg-ink-${task.status}${rect.live ? ' dtg-task-live' : ''}`}
         style={boxStyle}
@@ -1686,6 +1929,10 @@ function TaskCard({
         aria-pressed={selected}
         onClick={() => onSelectTask(selected ? null : task.id)}
         onKeyDown={onKeyDown}
+        onMouseEnter={reportHover}
+        onMouseLeave={() => onHoverChange?.(null)}
+        onFocus={reportHover}
+        onBlur={() => onHoverChange?.(null)}
         data-task-anchor={rect.anchor}
         data-label-placement={rect.labelPlacement}
       >
@@ -1698,6 +1945,7 @@ function TaskCard({
           makes them the only text affordance in that state.
         */}
         {inside ? <span className="dtg-task-subject">{subject}</span> : null}
+        {showEllipsis ? <span className="dtg-task-ellipsis" aria-hidden="true">…</span> : null}
       </button>
       {/* Every dated transition, at its own real time, on a rail under the box. */}
       <TaskEventMarks

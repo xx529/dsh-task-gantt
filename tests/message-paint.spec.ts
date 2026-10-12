@@ -404,15 +404,22 @@ describe('speakerLaneMapper is the single mapping implementation', () => {
 })
 
 describe('the direction cue does not depend on colour', () => {
-  it('outgoing and incoming map to an arrow that differs in BOTH aim and weight', () => {
-    // The cue replaced a circle-plus-glyph: "外面还有个正方形的框会让里面的尖头显示
-    // 不清晰" (the user). A text glyph at 9px was a hairline whose weight depended on
-    // the font, and the plate around it competed with the arrow's own tip. What has
-    // to hold now is that the two directions differ by SHAPE, not only by colour:
-    // the arrow points the other way AND one is filled while the other is outlined.
+  it('outgoing and incoming share one arrow, differing ONLY in aim', () => {
+    // Re-pinned in the round where the user said "发送和接收的箭头 icon 样式应该一致，
+    // 现在发送略粗，接收比较细，统一一下" and then, asked which to keep, "改成更接收一样
+    // 的 icon 只是方向变了". The property this lock protects is unchanged: the two
+    // directions must differ by SHAPE, never by colour alone. What changed is the
+    // shape vocabulary — previously "different aim AND different weight", now a
+    // single weight and fill with only the diagonal's direction flipped.
     const source = readFileSync(resolve(ROOT, 'src/client/ui/GanttChart.tsx'), 'utf8')
     expect(source).toContain("direction={outgoing ? 'out' : 'in'}")
-    expect(source).toContain("filled={outgoing}")
+    // The weight difference is GONE, and cannot come back by accident: there is one
+    // constant and ArrowIcon accepts no fill/stroke parameter at all.
+    expect(source).not.toContain('ARROW_STROKE_SENT')
+    expect(source).not.toContain('ARROW_STROKE_RECEIVED')
+    expect(source).not.toContain('filled={outgoing}')
+    expect(source).toContain('strokeWidth={ARROW_STROKE}')
+    expect(source).toMatch(/const ARROW_STROKE = ([\d.]+)/)
     // The human's own prompt is a BUBBLE, not an arrow: an arrow in the punched-out disc
     // read as "一个白色框黑心的东西" and said nothing about who spoke.
     expect(source).toContain('function BubbleIcon')
@@ -420,33 +427,27 @@ describe('the direction cue does not depend on colour', () => {
     expect(source).toContain('function ArrowIcon')
     // The aim: one path, mirrored for the incoming direction.
     expect(source).toContain("transform={direction === 'out' ? undefined : 'scale(-1,-1)'}")
-    // The weight: the body and the outline SWAP between the two directions, so
-    // both stay equally bold and neither can vanish against the surface.
-    // The weight must come from STROKE WIDTH on ONE closed-capable centreline, not
-    // from filling a path. Both earlier attempts at a separate filled path were
-    // wrong in ways only rendering showed: open segments enclose no area (the sent
-    // marker collapsed to "just a small triangle"), and the replacement polygon's
-    // head ran outside the viewBox and was clipped. A stroke draws the head's barbs
-    // for free.
-    expect(source).toContain("strokeWidth={filled ? ARROW_STROKE_SENT : ARROW_STROKE_RECEIVED}")
-    expect(source).toContain("fill=\"none\"")
+    // Both directions are strokes with no fill, so neither is heavier than the other.
+    expect(source).toContain('fill="none"')
     const path = /const ARROW_PATH = '([^']+)'/.exec(source)
     expect(path, 'there must be ONE arrow centreline').not.toBeNull()
     // One centreline means no second path constant to drift from it.
     expect(source).not.toContain('ARROW_FILL_PATH')
     expect(source).not.toContain('ARROW_STROKE_PATH')
-    const sent = Number(/const ARROW_STROKE_SENT = ([\d.]+)/.exec(source)?.[1])
-    const received = Number(/const ARROW_STROKE_RECEIVED = ([\d.]+)/.exec(source)?.[1])
-    expect(sent, 'the sent weight must be the heavier one').toBeGreaterThan(received)
-    // The centreline must stay inside the 12x12 box even after a 3.4px stroke adds
-    // ~1.7 units either side: the polygon that clipped reached 10.8.
+    // One weight, shared. There is no second value to compare it against any more, so
+    // the lock asserts the single value is in range rather than ranking two of them.
+    const stroke = Number(/const ARROW_STROKE = ([\d.]+)/.exec(source)?.[1])
+    expect(stroke, 'a single stroke weight must be a real number').toBeGreaterThan(0)
+    expect(stroke, 'the stroke must stay thin enough to read as an outline').toBeLessThanOrEqual(2.5)
+    // The centreline must stay inside the 12x12 box even after the 2px stroke adds
+    // ~1 unit either side.
     const nums = [...(path?.[1] ?? '').matchAll(/(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)/g)]
     for (const m of nums) {
       const [x, y] = [Number(m[1]), Number(m[2])]
-      expect(x, `x=${x} would clip with the sent stroke`).toBeLessThanOrEqual(12 - sent / 2)
-      expect(y, `y=${y} would clip with the sent stroke`).toBeLessThanOrEqual(12 - sent / 2)
-      expect(x, `x=${x} would clip`).toBeGreaterThanOrEqual(sent / 2)
-      expect(y, `y=${y} would clip`).toBeGreaterThanOrEqual(sent / 2)
+      expect(x, `x=${x} would clip with the shared stroke`).toBeLessThanOrEqual(12 - stroke / 2)
+      expect(y, `y=${y} would clip with the shared stroke`).toBeLessThanOrEqual(12 - stroke / 2)
+      expect(x, `x=${x} would clip`).toBeGreaterThanOrEqual(stroke / 2)
+      expect(y, `y=${y} would clip`).toBeGreaterThanOrEqual(stroke / 2)
     }
     expect(source).toMatch(/aria-label=\{label\}/)
     expect(source).toContain('messageSentTo')

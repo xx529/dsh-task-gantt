@@ -73,13 +73,18 @@
  *                  : laneY(i) + laneHeight > scrollTop + headerHeight
  *                    && laneY(i) < scrollTop + headerHeight + viewportHeight
  *
- *   turn band     y = laneY(i) + LANE_PAD_Y,               h = TURN_BAND_HEIGHT
- *   step bar      y = laneY(i) + LANE_PAD_Y
+ *   message row   y = laneY(i) + MESSAGE_MARKER_TOP,        h = MESSAGE_MARKER_HEIGHT
+ *   turn band     y = laneY(i) + ACTIVITY_TRACK_TOP,       h = TURN_BAND_HEIGHT
+ *   step bar      y = laneY(i) + ACTIVITY_TRACK_TOP
  *                       + (TURN_BAND_HEIGHT - STEP_BAR_HEIGHT) / 2, h = STEP_BAR_HEIGHT
  *   task card     y = laneY(i) + TASK_CARD_TOP,            h = TASK_CARD_HEIGHT
- *   (TASK_CARD_TOP = LANE_PAD_Y + TURN_BAND_HEIGHT + 4. A lane of
- *    DEFAULT_LANE_HEIGHT = 92 therefore stacks: 3px pad, 10px turn band (the 8px step
- *    bar centred inside it), 11px message-marker track, 36px task card ending at y=66,
+ *   (The MESSAGE track is first and the ACTIVITY track second, at the user's request:
+ *    "信息收发显示的泳道放在 span 的泳道上面". Swapping the two leaves TASK_CARD_TOP at
+ *    the same 30 because both terms are summed either way — the task geometry and every
+ *    lane height are unchanged by the swap, only the two thin rows move.
+ *    A lane of DEFAULT_LANE_HEIGHT = 92 therefore stacks: 3px pad, 11px message-marker
+ *    track, 10px turn band (the 8px step bar centred inside it), 36px task card ending
+ *    at y=66,
  *    then the ~11px task-TRANSITION rail that hangs under the bar, leaving ~15px of
  *    slack. The LEFT head column shares this height and needs 90px of it for its own
  *    rows — a name pill plus four one-per-line facts — which is what set the value:
@@ -217,8 +222,8 @@ export const STEP_BAR_HEIGHT = 8
  * assert the three of them never overlap — the regression lock for the crowded
  * 56px lane, where the message markers sat on top of the task label.
  *
- *   track 1  activity  turn band + step bar
- *   track 2  message   markers (+ the density band along the lane's bottom edge)
+ *   track 1  message   markers (+ the density band along the lane's bottom edge)
+ *   track 2  activity  turn band + step bar
  *   track 3  task      the duration bar + its label chip
  */
 export const ACTIVITY_TRACK_HEIGHT = TURN_BAND_HEIGHT
@@ -245,18 +250,22 @@ export interface LaneTrack {
  */
 export function laneTracks(laneIndex: number, laneHeight: number = DEFAULT_LANE_HEIGHT): LaneTrack[] {
   const base = laneIndex * laneHeight
-  const activity = base + LANE_PAD_Y
-  const message = activity + ACTIVITY_TRACK_HEIGHT + TRACK_GAP
-  const task = message + MESSAGE_TRACK_HEIGHT + TRACK_GAP
+  const message = base + MESSAGE_TRACK_TOP
+  const activity = base + ACTIVITY_TRACK_TOP
+  const task = activity + ACTIVITY_TRACK_HEIGHT + TRACK_GAP
   return [
-    { id: 'activity', y: activity, h: ACTIVITY_TRACK_HEIGHT },
     { id: 'message', y: message, h: MESSAGE_TRACK_HEIGHT },
+    { id: 'activity', y: activity, h: ACTIVITY_TRACK_HEIGHT },
     { id: 'task', y: task, h: TASK_TRACK_HEIGHT },
   ]
 }
 /** Vertical gap between the turn band and the card row. */
 export const TASK_CARD_GAP = 4
-export const TASK_CARD_TOP = LANE_PAD_Y + ACTIVITY_TRACK_HEIGHT + TRACK_GAP + MESSAGE_TRACK_HEIGHT + TRACK_GAP
+/** Top of the FIRST track: the message-marker row. */
+export const MESSAGE_TRACK_TOP = LANE_PAD_Y
+/** Top of the SECOND track: the turn band / step bar. */
+export const ACTIVITY_TRACK_TOP = MESSAGE_TRACK_TOP + MESSAGE_TRACK_HEIGHT + TRACK_GAP
+export const TASK_CARD_TOP = ACTIVITY_TRACK_TOP + ACTIVITY_TRACK_HEIGHT + TRACK_GAP
 /**
  * The card SLOT: the task box plus the transition rail that hangs under it.
  *
@@ -350,6 +359,43 @@ export const TASK_BAR_TOP_OFFSET = 0
  */
 export const TASK_LABEL_MIN_WIDTH = 36
 
+/**
+ * The narrowest task box that still shows a bare "…", in px.
+ *
+ * The user, on a screenshot where a short task rendered NO text at all: "对于这些一个
+ * 文本都显示不出来的，我觉得最少也要显示 「...」这样有内容". A box that cannot hold a
+ * glyph plus an ellipsis should still be visibly a NAMED task, so there is a middle
+ * state between "subject, truncated" and "nothing".
+ *
+ * Derivation, the same shape as {@link TASK_LABEL_MIN_WIDTH}: the text box is `w - 14`
+ * and a "…" is ~8px, so `w >= 22`. Below that the ellipsis would itself be clipped,
+ * which is the unreadable fragment this whole ladder exists to avoid.
+ */
+export const TASK_LABEL_ELLIPSIS_MIN_WIDTH = 22
+
+/**
+ * Which of the three label states a box of this width gets.
+ *
+ * All three thresholds are DERIVED from the card's padding in `styles.ts` (8px left +
+ * 6px right = 14px) and two text widths — a "…" is ~8px, one 11px glyph plus that
+ * ellipsis is ~19px — so the ladder is `w - 14` against {8, 19}:
+ *
+ *   w >= 36   'inside'    at least one glyph and the ellipsis; the renderer draws the
+ *                         subject and CSS truncates it;
+ *   22..35    'ellipsis'  room for the "…" alone, and the renderer draws exactly that;
+ *   < 22      'none'      a hairline — even the ellipsis would be clipped.
+ *
+ * A live anchor has no duration yet (it is a 9px marker), so it never gets a label.
+ *
+ * IF THE PADDING CHANGES, RE-DERIVE ALL THREE NUMBERS.
+ */
+export function taskLabelPlacement(anchor: TaskCardRect['anchor'], w: number): TaskLabelPlacement {
+  if (anchor !== 'history' || !Number.isFinite(w)) return 'none'
+  if (w >= TASK_LABEL_MIN_WIDTH) return 'inside'
+  if (w >= TASK_LABEL_ELLIPSIS_MIN_WIDTH) return 'ellipsis'
+  return 'none'
+}
+
 /* ---------------------------------------------------------------- zoom */
 
 /** 50 ms per px — the SANITY floor: the finest value the geometry layer will accept. */
@@ -400,8 +446,8 @@ export const MESSAGE_MARKER_MIN_GAP_PX = 9
 export const MESSAGE_MARKER_WIDTH = 11
 /** Rendered height of one message marker (px). */
 export const MESSAGE_MARKER_HEIGHT = 11
-/** Top of the marker row: the start of the message track (below the activity track). */
-export const MESSAGE_MARKER_TOP = LANE_PAD_Y + ACTIVITY_TRACK_HEIGHT + TRACK_GAP
+/** Top of the marker row: the start of the message track, which is the FIRST track. */
+export const MESSAGE_MARKER_TOP = MESSAGE_TRACK_TOP
 /**
  * Soft ceiling on rendered markers per lane. Decimation keeps the earliest
  * message of every pixel bucket, so a lane also stops at this count.
@@ -564,7 +610,7 @@ export interface SpanRect {
  * Exported as a named type so the renderer can switch on it exhaustively rather
  * than re-spelling the union and drifting from the layout's own contract.
  */
-export type TaskLabelPlacement = 'inside' | 'none'
+export type TaskLabelPlacement = 'inside' | 'ellipsis' | 'none'
 
 export interface TaskCardRect {
   laneId: string
@@ -608,12 +654,14 @@ export interface TaskCardRect {
   /**
    * The LABEL, and it is INSIDE the box or absent — there is no third answer.
    *
-   * - `'inside'` – `labelX === x`, `labelW === w`. The renderer draws the subject here,
-   *                truncated with CSS ellipsis when `w` is too small for it.
-   * - `'none'`   – `labelW === 0`, `labelX === x`: the box is narrower than
-   *                {@link TASK_LABEL_MIN_WIDTH}, i.e. there is not even room for the
-   *                ellipsis, so nothing is drawn. The box, its `title` and its click
-   *                target are unaffected.
+   * - `'inside'`   – `labelX === x`, `labelW === w`. The subject is drawn here and CSS
+   *                  truncates it when `w` is too small for the whole thing.
+   * - `'ellipsis'` – `labelX === x`, `labelW === w`. The box is too narrow for a glyph
+   *                  plus an ellipsis, so the renderer draws a bare "…": the user's
+   *                  "最少也要显示 「...」这样有内容".
+   * - `'none'`     – `labelW === 0`, `labelX === x`: a hairline, where even the ellipsis
+   *                  would be clipped. The box, its `title` and its click target are
+   *                  unaffected.
    *
    * The label used to move OUTSIDE the box when it did not fit (`'right'`/`'left'`, with
    * the `TASK_CHIP_*` geometry and a clamp-into-the-canvas fallback). The user removed
@@ -1958,7 +2006,7 @@ function spanRect(
     start: startRaw,
     end: endRaw,
     x,
-    y: laneY + (isTurn ? LANE_PAD_Y : LANE_PAD_Y + (TURN_BAND_HEIGHT - STEP_BAR_HEIGHT) / 2),
+    y: laneY + (isTurn ? ACTIVITY_TRACK_TOP : ACTIVITY_TRACK_TOP + (TURN_BAND_HEIGHT - STEP_BAR_HEIGHT) / 2),
     w,
     h: isTurn ? TURN_BAND_HEIGHT : STEP_BAR_HEIGHT,
     viewX,
@@ -2075,10 +2123,9 @@ function taskCardRect(
    * The box, its `title` and its click target are untouched by all of it: the full subject
    * and the description stay reachable even when `labelW` is 0.
    */
-  const labelPlacement: TaskLabelPlacement =
-    anchor === 'history' && w >= TASK_LABEL_MIN_WIDTH ? 'inside' : 'none'
+  const labelPlacement = taskLabelPlacement(anchor, w)
   const labelX = x
-  const labelW = labelPlacement === 'inside' ? w : 0
+  const labelW = labelPlacement === 'none' ? 0 : w
   return {
     laneId,
     laneIndex,

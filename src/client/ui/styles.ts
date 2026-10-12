@@ -338,6 +338,47 @@ export const BOARD_CSS = `
   font: var(--dsw-font-xxxs-strong-11);
 }
 
+/* The middle label tier: wide enough to admit text, too narrow to show any. A literal
+   ellipsis, so the box never reads as empty/broken. */
+.dtg-task-ellipsis {
+  flex: 0 0 auto;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxxs-strong-11);
+  line-height: 1;
+}
+
+/* The hover/focus popover.
+   Fixed positioning, and rendered OUTSIDE the scroll container: an absolutely-positioned
+   descendant contributes to its ancestor's scrollable overflow, which is how a 148px
+   caption once inflated the scroll container from 248 to 399 and broke the follow toggle.
+   A none pointer-events value keeps it from stealing the hover that opened it, and the
+   stacking order puts it above the chart without touching the layout. */
+.dtg-popover {
+  position: fixed;
+  z-index: 40;
+  pointer-events: none;
+  padding: 6px 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
+  box-shadow: var(--dsw-shadow-lv2);
+  font: var(--dsw-font-xxxs-11);
+}
+.dtg-popover-title {
+  overflow-wrap: anywhere;
+  font: var(--dsw-font-xxs-strong-12);
+}
+.dtg-popover-desc {
+  margin-top: 2px;
+  overflow-wrap: anywhere;
+  color: var(--dsw-alias-label-secondary);
+}
+.dtg-popover-meta {
+  margin-top: 4px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
 /* --- lane head navigation (requirement: click a teammate -> their chat) - */
 
 /* The host class carries hover/focus/cursor; this only lays the button out so

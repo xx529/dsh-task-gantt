@@ -12,6 +12,7 @@
 import { describe, expect, it } from 'vitest'
 import type { MessageSpan, TimelineResponse } from '../src/shared/contract.ts'
 import {
+  ACTIVITY_TRACK_TOP,
   DAY_MS,
   DEFAULT_HEADER_HEIGHT,
   DEFAULT_LANE_HEIGHT,
@@ -32,6 +33,7 @@ import {
   TASK_BAR_HEIGHT,
   TASK_BAR_MIN_WIDTH,
   TASK_MARKER_WIDTH,
+  TASK_LABEL_ELLIPSIS_MIN_WIDTH,
   TASK_LABEL_MIN_WIDTH,
   TURN_BAND_HEIGHT,
   buildTicks,
@@ -385,9 +387,11 @@ describe('layoutTimeline — geometry', () => {
     const [step, turn] = layout.spans
     expect(step).toMatchObject({ kind: 'step', open: false, start: 2_000, end: 3_000, x: 10, w: 10 })
     expect(turn).toMatchObject({ kind: 'turn', open: true, start: 2_000, end: 11_000, x: 10, w: 90 })
-    // The 8px step bar is centred inside the 10px turn band.
-    expect(turn?.y).toBe(DEFAULT_HEADER_HEIGHT + LANE_PAD_Y)
-    expect(step?.y).toBe(DEFAULT_HEADER_HEIGHT + LANE_PAD_Y + (TURN_BAND_HEIGHT - STEP_BAR_HEIGHT) / 2)
+    // The 8px step bar is centred inside the 10px turn band. The activity track is the
+    // SECOND one now (the message row moved above it at the user's request), so the
+    // band starts at ACTIVITY_TRACK_TOP rather than at LANE_PAD_Y.
+    expect(turn?.y).toBe(DEFAULT_HEADER_HEIGHT + ACTIVITY_TRACK_TOP)
+    expect(step?.y).toBe(DEFAULT_HEADER_HEIGHT + ACTIVITY_TRACK_TOP + (TURN_BAND_HEIGHT - STEP_BAR_HEIGHT) / 2)
     expect(turn?.h).toBe(TURN_BAND_HEIGHT)
     expect(step?.h).toBe(STEP_BAR_HEIGHT)
   })
@@ -960,7 +964,8 @@ describe('layoutTimeline — sanitization and totality', () => {
     // `laneHeight === 84`. A magic number would fail the next time ui-2 retunes
     // the height on correct code, and would say nothing about the actual claim.
     const tracks = laneTracks(0, DEFAULT_LANE_HEIGHT)
-    expect(tracks.map((track) => track.id)).toEqual(['activity', 'message', 'task'])
+    // MESSAGE first, then activity: the user's "信息收发显示的泳道放在 span 的泳道上面".
+    expect(tracks.map((track) => track.id)).toEqual(['message', 'activity', 'task'])
     for (const track of tracks) expect(track.h, track.id).toBeGreaterThan(0)
     for (let index = 1; index < tracks.length; index += 1) {
       const previous = tracks[index - 1] as LaneTrack
@@ -1453,9 +1458,16 @@ describe('layoutTimeline — a task caption that cannot be read is not drawn', (
       }).tasks[0]
     expect(at(1_000)?.w).toBeCloseTo(36, 5)
     expect(at(1_000)?.labelPlacement).toBe('inside')
+    // 32.7px: too narrow for a glyph plus an ellipsis, but wide enough for the "…"
+    // itself — the user's "最少也要显示 「...」这样有内容".
     expect(at(1_100)?.w).toBeCloseTo(36_000 / 1_100, 5)
-    expect(at(1_100)?.labelPlacement).toBe('none')
+    expect(at(1_100)?.labelPlacement).toBe('ellipsis')
+    // 20px: not even the ellipsis fits, so nothing is drawn.
+    expect(at(1_800)?.w).toBeCloseTo(20, 5)
+    expect(at(1_800)?.labelPlacement).toBe('none')
     expect(TASK_LABEL_MIN_WIDTH).toBe(36)
+    expect(TASK_LABEL_ELLIPSIS_MIN_WIDTH).toBe(22)
+    expect(TASK_LABEL_ELLIPSIS_MIN_WIDTH).toBeLessThan(TASK_LABEL_MIN_WIDTH)
   })
 })
 

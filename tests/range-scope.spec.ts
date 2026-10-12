@@ -24,7 +24,9 @@ import { describe, expect, it } from 'vitest'
 import type { LaneColorTokens, MessageSpan, TimelineLane, TimelineResponse } from '../src/shared/contract.ts'
 import {
   MESSAGE_MARKER_MIN_GAP_PX,
+  TASK_LABEL_ELLIPSIS_MIN_WIDTH,
   TASK_LABEL_MIN_WIDTH,
+  taskLabelPlacement,
   MESSAGE_MARKER_WIDTH,
   computeWindow,
   inWindow,
@@ -187,60 +189,143 @@ describe('defect 2: omissions must count in-range candidates only', () => {
   })
 })
 
-describe("defect 3 re-based: the label is INSIDE the box, or absent (user ruling)", () => {
-  // The user deleted outside-box placement entirely ("只在条内画，装不下就较少显示
-  // 的文本"). New contract, read from the source:
-  //   labelPlacement = anchor === 'history' && w >= TASK_LABEL_MIN_WIDTH ? 'inside' : 'none'
-  //   'inside' -> labelX === x, labelW === w ;  'none' -> labelX === x, labelW === 0
+describe('defect 3 re-based again: THREE label states, both boundaries', () => {
+  // The user added a middle state ("对于这些一个文本都显示不出来的，我觉得最少也要显示
+  // 「...」这样有内容"), so the ladder is now `'inside' | 'ellipsis' | 'none'`:
+  //   taskLabelPlacement(anchor, w) =
+  //     anchor !== 'history' || !isFinite(w) -> 'none'
+  //     w >= TASK_LABEL_MIN_WIDTH (36)        -> 'inside'
+  //     w >= TASK_LABEL_ELLIPSIS_MIN_WIDTH(22)-> 'ellipsis'
+  //     otherwise                             -> 'none'
+  //   and in the layout: labelX === x, labelW = (none ? 0 : w).
+  // Both thresholds derive from the card's own padding (8px + 6px = 14px): the text
+  // box is w - 14 against an ~8px "…" (=> 22) and one glyph plus it, ~19px (=> 33,
+  // rounded up to 36). If the padding ever changes, both must be re-derived — which
+  // the constants' own doc says out loud.
+  //
   // My fixture's completed task spans at(30) -> at(75) = 45 min = 2_700_000 ms, so
-  //   w = 2_700_000 / msPerPx. Every zoom below is inside the sanity range
-  //   [MIN_MS_PER_PX 50, MAX_MS_PER_PX 600_000], so nothing else clamps w.
+  //   w = 2_700_000 / msPerPx. Every zoom below is inside [50, 600_000], and the two
+  //   msPerPx values that must give EXACT widths were chosen so the division is exact
+  //   in binary floating point (2_700_000 / 75_000 = 36, / 50_000 = 54).
   const TASK_MS = 45 * 60_000 // 2_700_000
 
-  function completedTask(msPerPx: number) {
+  function cardsAt(msPerPx: number) {
     const result = layout(msPerPx)
-    const task = result.tasks.find((card) => card.anchor === 'history' && card.durationMs === TASK_MS)
-    expect(task, `the 45-minute task must be laid out (msPerPx=${msPerPx})`).toBeDefined()
-    return task as NonNullable<typeof task>
+    const completed = result.tasks.filter((card) => card.anchor === 'history' && card.durationMs === TASK_MS)
+    expect(completed.length, `the 45-minute task must be laid out on every lane (msPerPx=${msPerPx})`).toBeGreaterThan(0)
+    return completed
   }
 
-  it('draws the label INSIDE when the box is at least TASK_LABEL_MIN_WIDTH wide', () => {
-    // msPerPx = 50_000  =>  w = 2_700_000 / 50_000 = 54 px  >= 36
-    const task = completedTask(50_000)
-    expect(task.w).toBe(54)
-    expect(task.w).toBeGreaterThanOrEqual(TASK_LABEL_MIN_WIDTH)
-    expect(task.labelPlacement, 'w=54 >= 36 must be inside').toBe('inside')
-    expect(task.labelX).toBe(task.x)
-    expect(task.labelW).toBe(task.w)
-    expect(task.labelW).toBe(54)
+  describe('the pure ladder', () => {
+    it('is exhaustively correct at and around both thresholds', () => {
+      expect(taskLabelPlacement('history', 54)).toBe('inside')
+      expect(taskLabelPlacement('history', TASK_LABEL_MIN_WIDTH)).toBe('inside') // 36 inclusive
+      expect(taskLabelPlacement('history', TASK_LABEL_MIN_WIDTH - 0.01)).toBe('ellipsis')
+      expect(taskLabelPlacement('history', TASK_LABEL_ELLIPSIS_MIN_WIDTH)).toBe('ellipsis') // 22 inclusive
+      expect(taskLabelPlacement('history', TASK_LABEL_ELLIPSIS_MIN_WIDTH - 0.01)).toBe('none')
+      expect(taskLabelPlacement('history', 1)).toBe('none')
+    })
+
+    it('refuses a label for anything that is not a history anchor, whatever the width', () => {
+      for (const anchor of ['live', 'none', undefined] as const) {
+        expect(taskLabelPlacement(anchor as Parameters<typeof taskLabelPlacement>[0], 5_000)).toBe('none')
+      }
+    })
+
+    it('refuses a non-finite width instead of inventing a state', () => {
+      expect(taskLabelPlacement('history', Number.NaN)).toBe('none')
+      expect(taskLabelPlacement('history', Number.POSITIVE_INFINITY)).toBe('none')
+    })
+
+    it('orders the thresholds so the ladder has no gap and no overlap', () => {
+      expect(TASK_LABEL_ELLIPSIS_MIN_WIDTH).toBeLessThan(TASK_LABEL_MIN_WIDTH)
+      expect(TASK_LABEL_ELLIPSIS_MIN_WIDTH).toBe(22)
+      expect(TASK_LABEL_MIN_WIDTH).toBe(36)
+    })
   })
 
-  it('is INSIDE exactly AT the boundary (>= is inclusive)', () => {
-    // msPerPx = 2_700_000 / 36 = 75_000  =>  w = exactly 36
-    const task = completedTask(75_000)
-    expect(task.w).toBe(TASK_LABEL_MIN_WIDTH)
-    expect(task.labelPlacement, 'w === 36 is inclusive, so the label must be inside').toBe('inside')
-    expect(task.labelW).toBe(TASK_LABEL_MIN_WIDTH)
+  describe('the layout applies it, with the arithmetic stated', () => {
+    it('INSIDE when w >= 36 (50_000 ms/px => w = 2_700_000/50_000 = 54)', () => {
+      for (const card of cardsAt(50_000)) {
+        expect(card.w).toBe(54)
+        expect(card.labelPlacement).toBe('inside')
+        expect(card.labelX).toBe(card.x)
+        expect(card.labelW).toBe(card.w)
+      }
+    })
+
+    it('INSIDE exactly AT 36 (75_000 ms/px => w = 36)', () => {
+      for (const card of cardsAt(75_000)) {
+        expect(card.w).toBe(TASK_LABEL_MIN_WIDTH)
+        expect(card.labelPlacement, 'w === 36 is inclusive').toBe('inside')
+        expect(card.labelW).toBe(36)
+      }
+    })
+
+    it('ELLIPSIS just below 36 (100_000 ms/px => w = 27)', () => {
+      for (const card of cardsAt(100_000)) {
+        expect(card.w).toBe(27)
+        expect(card.w).toBeLessThan(TASK_LABEL_MIN_WIDTH)
+        expect(card.w).toBeGreaterThanOrEqual(TASK_LABEL_ELLIPSIS_MIN_WIDTH)
+        expect(card.labelPlacement, 'this is the state the old lock got wrong').toBe('ellipsis')
+        expect(card.labelX).toBe(card.x)
+        expect(card.labelW, 'an ellipsis label still occupies the box width').toBe(card.w)
+      }
+    })
+
+    it('ELLIPSIS just above 22 (120_000 ms/px => w = 22.5)', () => {
+      for (const card of cardsAt(120_000)) {
+        expect(card.w).toBe(22.5)
+        expect(card.labelPlacement).toBe('ellipsis')
+        expect(card.labelW).toBe(22.5)
+      }
+    })
+
+    it('NONE just below 22 (125_000 ms/px => w = 21.6)', () => {
+      for (const card of cardsAt(125_000)) {
+        expect(card.w).toBeCloseTo(21.6, 6)
+        expect(card.w).toBeLessThan(TASK_LABEL_ELLIPSIS_MIN_WIDTH)
+        expect(card.labelPlacement, 'below 22 even the ellipsis would be clipped').toBe('none')
+        expect(card.labelW).toBe(0)
+        expect(card.labelX, 'labelX stays the box edge even when nothing is drawn').toBe(card.x)
+      }
+    })
+
+    it('NONE at the coarsest zoom (600_000 ms/px => w = 4.5)', () => {
+      const result = layout(600_000)
+      expect(result.tasks.length).toBeGreaterThan(0)
+      for (const card of result.tasks) {
+        expect(card.labelPlacement, `${card.task.id} at 600 s/px`).toBe('none')
+        expect(card.labelW).toBe(0)
+      }
+    })
   })
 
-  it('drops the label entirely just BELOW the boundary', () => {
-    // msPerPx = 2_700_000 / 35 = 77_142.857…  =>  w = 35 < 36
-    const task = completedTask(2_700_000 / 35)
-    expect(task.w).toBeCloseTo(35, 9)
-    expect(task.w).toBeLessThan(TASK_LABEL_MIN_WIDTH)
-    expect(task.labelPlacement).toBe('none')
-    expect(task.labelW).toBe(0)
-    expect(task.labelX, 'labelX stays the box edge even when nothing is drawn').toBe(task.x)
-  })
+  describe('the two properties the original lock existed to guard', () => {
+    it('never draws a label outside its box, at any zoom', () => {
+      for (const msPerPx of [50_000, 75_000, 100_000, 120_000, 125_000, 600_000]) {
+        const result = layout(msPerPx)
+        for (const card of result.tasks) {
+          expect(card.labelX, `${card.task.id} label starts inside the box`).toBeGreaterThanOrEqual(card.x)
+          expect(card.labelX + card.labelW, `${card.task.id} label ends inside the box`).toBeLessThanOrEqual(card.x + card.w + 1e-9)
+          if (card.labelPlacement === 'none') expect(card.labelW).toBe(0)
+          else expect(card.labelW).toBe(card.w)
+        }
+      }
+    })
 
-  it('hides the label at the coarsest zoom (the browser measured 0 .dtg-task-caption)', () => {
-    // 600_000 ms/px  =>  2_700_000 / 600_000 = 4.5 px  << 36
-    const result = layout(600_000)
-    expect(result.tasks.length, 'the tasks are still laid out').toBeGreaterThan(0)
-    for (const task of result.tasks) {
-      expect(task.labelPlacement, `${task.task.id} at 600 s/px`).toBe('none')
-      expect(task.labelW).toBe(0)
-    }
+    it('depends on the BOX WIDTH only, never on the text', () => {
+      // My fixture gives all four lanes the same 45-minute duration but very
+      // different subjects: lane 0 is a long Chinese sentence, lanes 1-3 are short.
+      // Same duration => same w => the state must be identical on every lane. This
+      // is the layout-level form of "the state is a function of the box width".
+      for (const msPerPx of [50_000, 100_000, 125_000]) {
+        const placements = cardsAt(msPerPx).map((card) => card.labelPlacement)
+        expect(new Set(placements).size, `msPerPx=${msPerPx}: ${placements.join(',')}`).toBe(1)
+      }
+      // And the pure helper takes no text at all, so equal widths cannot diverge.
+      expect(taskLabelPlacement('history', 30)).toBe(taskLabelPlacement('history', 30))
+    })
   })
 })
 
