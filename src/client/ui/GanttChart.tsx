@@ -62,6 +62,8 @@ import {
   ACTIVITY_TRACK_TOP,
   clampZoomMsPerPx,
   computeWindow,
+  dataExtent,
+  effectiveWindowStart,
   fitMsPerPx,
   formatClock,
   formatDateTime,
@@ -268,6 +270,24 @@ export function GanttChart(props: GanttChartProps): ReactNode {
    */
   const [fitLatch, setFitLatch] = useState<{ width: number; span: number | null; msPerPx: number } | null>(null)
   /**
+   * OPTION A: the FROZEN left boundary of a range-filtered window.
+   *
+   * The range window used to slide (`[now - span, now]`), so its left edge advanced
+   * with the clock and pushed every already-drawn bar leftwards each tick. The user
+   * chose the fix himself ("选 A"): pin the start when the range is chosen, and let
+   * only the end grow.
+   *
+   * `null` means "no anchor": no span selected, or follow is off — both keep the
+   * previous behaviour exactly.
+   *
+   * Re-anchored ONLY when the range selection changes, when follow is switched on, or
+   * when the viewport width changes (a different viewport changes the page step).
+   * Manual zoom does NOT re-anchor: the window is measured in time, not in pixels, so
+   * changing px/ms must not move the boundary the user pinned.
+   */
+  const [anchorStart, setAnchorStart] = useState<number | null>(null)
+  const anchorKey = `${Math.max(1, viewport.width)}|${windowSpanMs ?? 'all'}|${follow === true ? 'on' : 'off'}`
+  /**
    * `'both'` draws the activity bars plus message markers; `'markers'` hides the
    * bars so the message layer can be read on its own. The switch only changes
    * what is drawn — never any timestamp.
@@ -314,10 +334,34 @@ export function GanttChart(props: GanttChartProps): ReactNode {
    * the scale was still fitted to the full 30-minute log. Anything that needs the
    * window must read `layout.window` or this memo, never re-derive it.
    */
-  const win = useMemo(() => computeWindow(data, now, windowSpanMs), [data, now, windowSpanMs])
+  const win = useMemo(
+    () => computeWindow(data, now, windowSpanMs, anchorStart),
+    [data, now, windowSpanMs, anchorStart],
+  )
   const live = data.live !== false
   const fittedMsPerPx = fitMsPerPx(win.durationMs, Math.max(1, viewport.width))
   const followActive = follow === true
+  /**
+   * (Re)anchor on the three invalidation events. The anchor value is `now - span` at
+   * that moment; afterwards it is a constant, which is precisely what stops the old
+   * content sliding. `anchorKey` encodes width + span + follow, so any of those
+   * changing produces a fresh anchor while the ticking clock does not.
+   */
+  const anchorKeyRef = useRef<string | null>(null)
+  useEffect(() => {
+    const span = typeof windowSpanMs === 'number' && windowSpanMs > 0 ? windowSpanMs : null
+    if (!followActive || span === null) {
+      anchorKeyRef.current = anchorKey
+      setAnchorStart(null)
+      return
+    }
+    if (anchorKeyRef.current === anchorKey) return
+    anchorKeyRef.current = anchorKey
+    // The EFFECTIVE start, not `now - span`: with a span wider than the log the latter
+    // sits before any data and the layout's clamp would undo the anchor entirely,
+    // leaving the window sliding (measured: scrollLeft moved 126px every step).
+    setAnchorStart(effectiveWindowStart(now, span, dataExtent(data, win.start).start))
+  }, [anchorKey, followActive, windowSpanMs, now])
   /**
    * (Re)latch the auto-fit scale. The key is the viewport width AND the range filter:
    * a width change invalidates the fit, and so does switching the filter, because the
@@ -394,12 +438,14 @@ export function GanttChart(props: GanttChartProps): ReactNode {
           scrollTop: scroll.top,
           cull: true,
           windowSpanMs,
+          // OPTION A: the pinned left boundary (null when not applicable).
+          anchorStartMs: anchorStart,
           // Only FOLLOW mode gets the trailing gutter; with it off, contentWidth is
           // byte-for-byte the data width, which is what the layout's own locks assume.
           follow: follow === true,
         },
       ),
-    [data, now, effectiveMsPerPx, viewport.width, viewport.height, scroll.left, scroll.top, windowSpanMs, follow],
+    [data, now, effectiveMsPerPx, viewport.width, viewport.height, scroll.left, scroll.top, windowSpanMs, anchorStart, follow],
   )
 
   /* ------------------------------------------------- measurement + scroll */

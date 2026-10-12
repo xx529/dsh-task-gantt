@@ -82,11 +82,35 @@ describe('foldWaitSpans against a real session log', () => {
     for (const wait of waits) {
       if (wait.end === null) continue
       expect(wait.end, 'a wait cannot end before it starts').toBeGreaterThanOrEqual(wait.start)
-      // The compaction re-append is minutes to hours after the real end; anything that
-      // slow is the artifact, not the wait. The real maximum on this machine is 300s,
-      // the largest timeout any caller asked for.
+      // RE-BASED 2026-10-12. This used to be a flat `duration < 600000` with the note
+      // "the real maximum on this machine is 300s". That heuristic has since been
+      // outgrown by real data, measured on this machine's largest real log:
+      //
+      //   waits 48 closed, durations 2399ms .. 630789ms
+      //   12 of them >= 300000ms; the maximum is 630789ms (10.5 min)
+      //   timeoutMs values actually requested: 60000, 180000, 300000, 420000, 600000, 900000
+      //
+      // So a 630789ms wait is not an artifact: it is a call that asked for a 900000ms
+      // (15 min) timeout and waited 10.5 minutes for a peer to arrive. A fixed ceiling
+      // cannot tell those apart from the compaction re-append, and picking a bigger
+      // constant would just move the same mistake later.
+      //
+      // The re-append it guards against pairs a call with a result MINUTES TO HOURS
+      // after its own timeout expired. That is exactly expressible per wait: a real wait
+      // cannot outlive the timeout IT asked for (plus scheduling slack — the three
+      // overruns measured here are 48ms, 166ms and 48ms, i.e. timer jitter).
       const duration = wait.end - wait.start
-      expect(duration, `wait of ${duration}ms looks like a compaction re-append, not a wait`).toBeLessThan(10 * 60 * 1000)
+      const SLACK_MS = 60 * 1000
+      if (typeof wait.timeoutMs === 'number') {
+        expect(
+          duration,
+          `wait of ${duration}ms outlives its own ${wait.timeoutMs}ms timeout by more than ${SLACK_MS}ms — that is a compaction re-append, not a wait`,
+        ).toBeLessThan(wait.timeoutMs + SLACK_MS)
+      } else {
+        // No timeout recorded, so there is nothing to compare against. Keep the old
+        // coarse ceiling purely as a sanity bound, and say why it is only a bound.
+        expect(duration, `wait of ${duration}ms has no timeoutMs to check against`).toBeLessThan(60 * 60 * 1000)
+      }
     }
     // Every real wait had a readable outcome; "unknown" for all of them is the signature
     // of pairing with the pruned re-append.

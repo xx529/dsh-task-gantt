@@ -1,5 +1,62 @@
 # Changelog
 
+## 0.2.23 — 2026-10-12
+
+**The time range now anchors its left boundary (option A) — old content stops sliding**
+
+The user's screenshots pinned the last unknown: footer `v0.2.22 · follow-latch` (so the client was
+current), follow ON, zoom manual at 1 s/px, and **Time range = 1h**. The complaint survived 0.2.20 and
+0.2.22 because those fixed the scroll policy and the scale — but with a range selected the window was
+SLIDING (`[now - span, now]`), so its LEFT boundary advanced with the clock and every drawing was
+pushed left on every tick. No scroll policy can fix a window that is itself moving.
+
+Chosen by the user ("选 A"): selecting a range anchors the window's left boundary at that moment, and
+from then on only the END grows with `now` — the range means "the width of the window when I chose
+it", not "the last N hours". `全部` and follow-OFF are untouched. The anchor is re-taken when the range
+changes, when follow is switched on, and when the viewport width changes; manual zoom does NOT
+re-anchor (the window is in time, not pixels — re-anchoring on zoom would push the boundary the user
+had just pinned).
+
+MEASURED in the user's own state (range 1h, follow ON, manual 1 s/px):
+
+| step | bar viewport x | nowViewX | scrollLeft |
+|---|---|---|---|
+| 0 | -487.03 | 186.88 | 1070 |
+| 1 | -487.03 | 208.39 | 1070 |
+| 2 | -487.03 | 208.39 | 1070 |
+| 3 | -552.03 | 185.73 | **1135 (snap)** |
+| 4 | -552.03 | 207.25 | 1135 |
+| 5 | -552.03 | 228.77 | 1135 |
+| 6 | -616.03 | 186.28 | **1199 (snap)** |
+
+Within a page the bar's screen position moves **0.00px**, `scrollLeft` shows zero movement, and
+`nowViewX` grows monotonically; at the edge the view moves ONCE by 65px / 64px = **0.262 / 0.258 of
+the viewport** (~1/4), and the bar shifts by exactly that same amount — one discrete page step, which
+is what the user asked for ("碰到边缘位置又再回到 3/4"). `全部` shows the same character with no
+regression, and follow-OFF shows zero movement throughout.
+
+STATED PLAINLY, because it is a real trade-off and not a defect: "old content never moves by a single
+pixel" and "the window stays bounded" are mutually exclusive. The first implementation tried an
+unbounded window with no gutter and the snap then fired on EVERY tick (`scrollLeft` advancing 21-22px
+per step with `nowViewX` pinned at 247.6 of 248) — the failure was measured, not assumed. So the
+window advances its anchor at the snap and drops the content that has left the view.
+
+Also re-based, with data rather than a guess: `tests/waits-real-log.spec.ts` asserted every real wait
+is under 600000ms as a "this must be a compaction re-append" heuristic, and this session's own log now
+contains a **630789ms** wait — because a call that requested a 900000ms timeout waited 10.5 minutes.
+Measured distribution: 48 closed waits from 2399ms to 630789ms, every one carrying its own
+`timeoutMs`, and only 3 exceeding their own timeout — by 48 / 166 / 48ms of timer jitter. The rule is
+now "a wait may not outlive its OWN requested timeout plus 60s slack" (falling back to a coarse 1-hour
+bound only when no timeout is recorded), so the original intent — never let a compaction re-append be
+mispaird into an over-long wait — is preserved. Calibrated for teeth: making the slack negative fails
+immediately with `wait of 60982ms outlives its own 60000ms timeout`.
+
+Not verified end to end: "still ±1px after re-selecting the range" (the re-anchor path is covered by
+the anchor key and the truth table, but was not measured in the browser), and the continuous
+second-scale animation (the clock was stepped and polled).
+
+The footer build identity is now `v0.2.23 · anchored-window`.
+
 ## 0.2.22 — 2026-10-12
 
 **Follow mode: the old content finally stays still — the scale was re-fitting every tick**

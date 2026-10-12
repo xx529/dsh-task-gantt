@@ -562,6 +562,19 @@ export interface LayoutOptions {
    */
   windowSpanMs?: number | null
   /**
+   * OPTION A: the window's LEFT boundary, frozen at the moment the range was chosen.
+   *
+   * With a range span the window used to SLIDE (`[now - span, now]`), so its left edge
+   * advanced with the clock and pushed every old bar leftwards every tick — the user's
+   * "越新时间的内容覆盖了旧内容 … 旧内容 … 是不动的". Passing the value here pins the
+   * start at selection time and lets only the end grow, so the range means "the window
+   * width when I chose it" rather than "the last N".
+   *
+   * `null`/absent keeps the previous sliding behaviour, which is also what `全部`
+   * (no span) does — there the start is the earliest datum either way.
+   */
+  anchorStartMs?: number | null
+  /**
    * Whether the view is following the live edge.
    *
    * When `true`, the canvas is widened by {@link FOLLOW_GUTTER_RATIO} of the viewport
@@ -1000,15 +1013,21 @@ export function isLiveBoard(data: TimelineResponse): boolean {
 }
 
 /** See the WINDOW RESOLUTION table in the module doc. */
-export function computeWindow(data: TimelineResponse, now: number, windowSpanMs?: number | null): TimelineWindow {
-  const fallback = num(now, 0)
-  const rangeStart = num(data?.range?.start, fallback)
-  const hasRangeEnd = typeof data?.range?.end === 'number' && Number.isFinite(data.range.end)
-  const rangeEnd = hasRangeEnd ? num(data?.range?.end, fallback) : null
-  const live = isLiveBoard(data)
-
-  let rawStart = rangeStart
-  let rawEnd = rangeStart
+/**
+ * The `[earliest, latest]` times anywhere in the payload, floored at the server's
+ * `range.start`.
+ *
+ * Extracted from `computeWindow` so the anchored-window helper and the window itself
+ * agree on what "the earliest datum" means: two independent scans could disagree, and
+ * then the anchor would be clamped differently from the window it is meant to pin.
+ *
+ * @param data - the payload; hostile or partial entries are ignored, never thrown on.
+ * @param fallback - the server's `range.start`, or the clock.
+ */
+export function dataExtent(data: TimelineResponse, fallback: number): { start: number; end: number } {
+  const seed = num(fallback, 0)
+  let rawStart = seed
+  let rawEnd = seed
   const consider = (value: number | null | undefined): void => {
     if (typeof value !== 'number' || !Number.isFinite(value)) return
     if (value < rawStart) rawStart = value
@@ -1020,8 +1039,8 @@ export function computeWindow(data: TimelineResponse, now: number, windowSpanMs?
       consider(span.end)
     }
     for (const message of lane.messages ?? []) {
-      // Hostile/partial payloads reach this function by contract: a null entry
-      // or a non-finite time must be ignored, never thrown on.
+      // Hostile/partial payloads reach this function by contract: a null entry or a
+      // non-finite time must be ignored, never thrown on.
       if (message === null || typeof message !== 'object') continue
       consider(message.time)
       consider(message.end)
@@ -1033,8 +1052,53 @@ export function computeWindow(data: TimelineResponse, now: number, windowSpanMs?
   for (const task of data?.tasks ?? []) {
     for (const event of task.history ?? []) consider(event.time)
   }
+  return { start: rawStart, end: rawEnd }
+}
 
-  const start = rawStart
+/**
+ * The window start a range selection ACTUALLY produces, for use as a frozen anchor.
+ *
+ * Why this exists instead of the caller computing `now - span`: the window start is
+ * clamped at the earliest datum (a filter wider than the log shows the whole log rather
+ * than empty space to its left). So for the common case — the user picks `1h` but the
+ * session is only 30 minutes old — `now - span` is EARLIER than any data, and anchoring
+ * to it is silently undone by that clamp: the window keeps sliding and old content keeps
+ * being pushed left, which is the very bug this change is about. Measured with the naive
+ * anchor: `scrollLeft` moved 126px on every step and `nowViewX` stayed ~186.
+ *
+ * Anchoring to the clamped value is the only anchor that survives, and it is idempotent
+ * because the layout clamps an anchor to the earliest datum too.
+ *
+ * @param now - the clock at the moment of anchoring.
+ * @param windowSpanMs - the selected span; absent/non-positive means no anchor.
+ * @param earliestDatum - the earliest time anywhere in the payload.
+ * @returns the window start to pin, or `null` when there is nothing to pin.
+ */
+export function effectiveWindowStart(
+  now: number,
+  windowSpanMs: number | null | undefined,
+  earliestDatum: number,
+): number | null {
+  if (typeof windowSpanMs !== 'number' || !Number.isFinite(windowSpanMs) || windowSpanMs <= 0) return null
+  const clockStart = num(now, 0) - windowSpanMs
+  return Math.max(clockStart, num(earliestDatum, clockStart))
+}
+
+export function computeWindow(
+  data: TimelineResponse,
+  now: number,
+  windowSpanMs?: number | null,
+  anchorStartMs?: number | null,
+): TimelineWindow {
+  const fallback = num(now, 0)
+  const rangeStart = num(data?.range?.start, fallback)
+  const hasRangeEnd = typeof data?.range?.end === 'number' && Number.isFinite(data.range.end)
+  const rangeEnd = hasRangeEnd ? num(data?.range?.end, fallback) : null
+  const live = isLiveBoard(data)
+
+  const extent = dataExtent(data, rangeStart)
+  const start = extent.start
+  const rawEnd = extent.end
   // A live window is pinned to `now` (but never hides data newer than `now`).
   // A FROZEN window ignores `now` entirely: its right edge is the server's
   // `range.end` when there is one, and otherwise the last datum — never a
@@ -1059,7 +1123,17 @@ export function computeWindow(data: TimelineResponse, now: number, windowSpanMs?
   // window keeps tracking the clock and the view can follow it; for a frozen board it
   // is still the last datum, so filtering cannot make a stopped chart creep forward.
   const span = typeof windowSpanMs === 'number' && Number.isFinite(windowSpanMs) && windowSpanMs > 0 ? windowSpanMs : null
-  const filteredStart = span === null ? start : Math.max(rawStart, end - span)
+  /**
+   * OPTION A: a frozen left boundary. `start` is PINNED at the value chosen when the
+   * range was selected, and only `end` moves (with `now`), so nothing already drawn is
+   * pushed left. The anchor is clamped to `rawStart` so it can never be LATER than the
+   * earliest datum: the window may not quietly drop data that is still on screen.
+   */
+  // `start` IS the earliest datum (`dataExtent(...).start`), so these clamps are the
+  // same ones the pre-anchor code applied to `rawStart`.
+  const anchor =
+    typeof anchorStartMs === 'number' && Number.isFinite(anchorStartMs) ? Math.min(anchorStartMs, start) : null
+  const filteredStart = anchor !== null ? anchor : span === null ? start : Math.max(start, end - span)
   // NOTE: the window keeps exactly its four original fields. `endSource` is a
   // layout-level field, so the (verified) window shape stays untouched.
   return { start: filteredStart, end, durationMs: end - filteredStart, live }
@@ -1744,7 +1818,7 @@ export function layoutTimeline(
       ? options.tzOffsetMinutes
       : -new Date(now).getTimezoneOffset()
 
-  const win = computeWindow(data, now, options.windowSpanMs)
+  const win = computeWindow(data, now, options.windowSpanMs, options.anchorStartMs)
   const dataWidth = win.durationMs / msPerPx
   /**
    * In FOLLOW mode the canvas is wider than the data: the extra strip sits entirely to
@@ -1755,6 +1829,21 @@ export function layoutTimeline(
    *
    * Follow-off keeps this EXACTLY `dataWidth`, so nothing about the non-follow board
    * changes. `dataWidth` itself is never modified: it stays the data's own edge.
+   */
+  /**
+   * The trailing headroom. Kept for ANCHORED windows too — deliberately.
+   *
+   * Dropping it for anchored windows was tried and measured, and it breaks the follow
+   * cycle: with no gutter the snap target `nowX - viewportWidth * 3/4` is clamped up to
+   * `maxScroll`, so the snap fires on EVERY tick (`scrollLeft` moved 21px per step,
+   * seven steps in a row, and `nowViewX` stayed pinned at 247.6 of a 248px viewport).
+   * The gutter is what leaves room for `now` to sit at 3/4 after a snap and then drift,
+   * so it must stay.
+   *
+   * The cost with an anchored window is that `contentWidth - viewportWidth` grows on its
+   * own, so one snap costs a page-step shift of what is on screen. See the option-A
+   * report for why that is the accepted trade: the window cannot both reframe and hold
+   * every on-screen pixel still.
    */
   const gutterPx = options.follow === true ? width * FOLLOW_GUTTER_RATIO : 0
   const contentWidth = dataWidth + gutterPx
