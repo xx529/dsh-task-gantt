@@ -254,27 +254,58 @@ function checkMessageSpan(span: unknown, path: string, problems: TimelineProblem
   }
 }
 
-/** Validate `LaneColorTokens`: two theme-token NAMES, never literal paint. */
+/**
+ * A lane colour may be a token NAME or a `color-mix()` COMPOSITION OF token names.
+ *
+ * The seven wheel hues the panel is specified to use do not all exist in the theme —
+ * there is no cyan and no purple token, and no vivid yellow that can carry white text —
+ * so the host composes them with `color-mix()`, which is the theme's own idiom
+ * (`--dsw-alias-interactive-bg-hover` is itself a `color-mix()`).
+ *
+ * The composition form is accepted ONLY when every colour in it is a token: strip the
+ * `var(--token)` references and the percentages, and nothing that looks like paint may
+ * remain. That keeps the original guarantee — no literal colour ever reaches the panel
+ * — while allowing the theme to be composed rather than merely referenced.
+ */
+const COLOR_MIX_TOKEN = /^color-mix\(\s*in\s+srgb\s*,[\s\S]*\)$/
+
+function compositionIsTokensOnly(value: string): boolean {
+  // Every var() must be a theme token.
+  const refs = [...value.matchAll(/var\((--[a-z0-9-]+)\)/g)].map((m) => m[1] as string)
+  if (refs.length === 0) return false
+  if (refs.some((ref) => !TOKEN_NAME.test(ref))) return false
+  // Remove the legitimate syntax; whatever is left must not be paint.
+  const residue = value
+    .replace(/var\(--[a-z0-9-]+\)/g, '')
+    .replace(/color-mix\(\s*in\s+srgb\s*,/g, '')
+    .replace(/[\d.]+%/g, '')
+    .replace(/[\s,()]/g, '')
+  return residue === ''
+}
+
+/** Validate `LaneColorTokens`: theme-token NAMES, or a composition of them — never literal paint. */
 function checkColorTokens(color: unknown, path: string, problems: TimelineProblem[]): void {
   if (!isRecord(color)) {
     problems.push({ path, message: 'lane color must be an object of theme-token names', severity: 'error' })
     return
   }
-  for (const key of ['bar', 'on'] as const) {
+  for (const key of ['bar', 'on', 'onLight'] as const) {
     const value = color[key]
+    // `onLight` is optional on the wire (a pre-`onLight` payload omits it).
+    if (value === undefined && key === 'onLight') continue
     if (!isNonEmptyString(value)) {
       problems.push({ path: `${path}.${key}`, message: `${key} must be a non-empty string token name`, severity: 'error' })
       continue
     }
-    if (!TOKEN_NAME.test(value)) {
-      problems.push({
-        path: `${path}.${key}`,
-        message: LITERAL_COLOUR.test(value)
-          ? `${key} is a literal colour (${value}); it must be a theme token NAME like --dsw-alias-brand-primary`
-          : `${key} must match ${String(TOKEN_NAME)} (got ${value})`,
-        severity: 'error',
-      })
-    }
+    if (TOKEN_NAME.test(value)) continue
+    if (COLOR_MIX_TOKEN.test(value) && compositionIsTokensOnly(value)) continue
+    problems.push({
+      path: `${path}.${key}`,
+      message: LITERAL_COLOUR.test(value)
+        ? `${key} is a literal colour (${value}); it must be a theme token NAME like --dsw-alias-brand-primary`
+        : `${key} must match ${String(TOKEN_NAME)} (a theme token NAME, or a color-mix of token names) — got ${value}`,
+      severity: 'error',
+    })
   }
 }
 
@@ -651,4 +682,62 @@ export function validLane(): TimelineLane {
 /** A task fixture. */
 export function validTask(): TimelineTask {
   return validTimeline().tasks[0] as TimelineTask
+}
+
+/**
+ * Resolve a lane colour — a token NAME or a `color-mix()` of token names — into sRGB.
+ *
+ * The palette composes hues the theme has no token for, so a test that wants to check
+ * "is this lane colour chromatic and can white text sit on it" has to be able to
+ * evaluate the composition. This is the ONE resolver: a second, divergent copy in a
+ * spec would let the palette and its guard disagree.
+ *
+ * Only the subset the host emits is supported — `color-mix(in srgb, ...)` with `var()`
+ * references and percentages, nested at most a few levels — and anything else returns
+ * `null` so a caller can report it rather than silently compare garbage.
+ *
+ * @param value - the token name or composition.
+ * @param resolver - maps a token name to its sRGB triple (the test's value fixture).
+ * @returns sRGB bytes, or `null` when the value is outside the supported subset.
+ */
+export function resolveLaneColor(
+  value: string,
+  resolver: (token: string) => readonly [number, number, number] | null,
+): readonly [number, number, number] | null {
+  // A token is written bare when it IS the whole value, and as `var(--token)` when it
+  // is an argument to a mix. Both spellings mean the same token.
+  const token = /^(?:var\(\s*)?(--[a-z0-9-]+)\s*\)?$/.exec(value.trim())
+  if (token?.[1] !== undefined) return resolver(token[1])
+  const inner = /^color-mix\(\s*in\s+srgb\s*,\s*([\s\S]*)\)$/.exec(value.trim())
+  if (!inner || inner[1] === undefined) return null
+  // Split the argument list on commas that are NOT inside a nested parenthesised call.
+  const args: string[] = []
+  let depth = 0
+  let current = ''
+  for (const ch of inner[1]) {
+    if (ch === '(') depth += 1
+    if (ch === ')') depth -= 1
+    if (ch === ',' && depth === 0) {
+      args.push(current)
+      current = ''
+      continue
+    }
+    current += ch
+  }
+  args.push(current)
+  const parts: { color: readonly [number, number, number]; weight: number }[] = []
+  for (const arg of args) {
+    const m = /^\s*(.+?)\s+([\d.]+)%\s*$/.exec(arg)
+    if (m === null || m[1] === undefined || m[2] === undefined) return null
+    const color = resolveLaneColor(m[1], resolver)
+    if (color === null) return null
+    parts.push({ color, weight: Number(m[2]) })
+  }
+  const total = parts.reduce((sum, part) => sum + part.weight, 0)
+  if (parts.length === 0 || total <= 0) return null
+  const mixed = [0, 0, 0]
+  for (const part of parts) {
+    for (let i = 0; i < 3; i += 1) mixed[i] = (mixed[i] ?? 0) + ((part.color[i] ?? 0) * part.weight) / total
+  }
+  return [Math.round(mixed[0] ?? 0), Math.round(mixed[1] ?? 0), Math.round(mixed[2] ?? 0)] as const
 }

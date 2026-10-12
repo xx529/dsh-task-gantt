@@ -96,26 +96,109 @@ function slot(bar: string): LaneColorTokens {
 }
 
 /**
- * The lane palette — eight chromatic slots, ordered deep-then-light per family.
+ * Compose one lane colour from theme tokens.
  *
- * Order matters: index 0 is reserved for the Lead, and the rest are handed out
- * in roster order. The first four lanes get four different hue families; lanes
- * five to eight get the same four families at a clearly different lightness.
+ * `color-mix(in srgb, ...)` is the THEME'S OWN idiom — `--dsw-alias-interactive-bg-hover`
+ * resolves to a `color-mix()` — so composing the seven wheel hues out of the theme's
+ * four chromatic families is following the host, not working around it. Each recipe is
+ * a weighted average in sRGB, which is what this function writes out as nested mixes
+ * (a three-colour `color-mix` is NOT used: it resolved incorrectly in the app's
+ * Chromium, so every recipe here is at most two colours per mix).
+ *
+ * @param parts - `[token, weight]` pairs; weights are normalised.
+ * @param inkWeight - how much of the theme's dark ink to fold in, in percent of the
+ *   whole. This is what buys white text its contrast (see the palette table).
+ */
+function mix(parts: readonly (readonly [string, number])[], inkWeight: number): string {
+  const total = parts.reduce((sum, [, weight]) => sum + weight, 0)
+  // Round the percentages so the emitted string is stable: a raw division produced
+  // values like `55.00000000000001%`, which is noise in a value the host publishes.
+  const pct = (weight: number): string => String(Math.round((weight / total) * 1000) / 10)
+  const weighted = parts.map(([token, weight]) => `var(${token}) ${pct(weight)}%`).join(', ')
+  // A single token with no ink is just the token NAME — `bar` is always a name or a
+  // composition of names, never a bare `var()`, so the validator's rule holds.
+  const base =
+    parts.length === 1 && inkWeight <= 0
+      ? (parts[0]?.[0] ?? '')
+      : parts.length === 1
+        ? `var(${parts[0]?.[0] ?? ''})`
+        : `color-mix(in srgb, ${weighted})`
+  if (inkWeight <= 0) return base
+  return `color-mix(in srgb, ${base} ${100 - inkWeight}%, var(${INK_TOKEN}) ${inkWeight}%)`
+}
+
+/** The theme's darkest ink, used only to darken a hue until white text reads on it. */
+const INK_TOKEN = '--dsw-static-neutral-bluish-1000'
+
+/** 红 0° — `#ec1313`, 4.56:1 with white. */
+const RED = mix([['--dsw-static-red-600', 100]], 1)
+/** 橙 31° — `#a76824`, 4.52:1. Amber alone is 2.79:1, too pale for white text. */
+const ORANGE = mix([['--dsw-static-amber-600', 100]], 26)
+/** 黄 61° — `#797a22`, 4.55:1. At hue 60 a VIVID yellow cannot hold white text in sRGB. */
+const YELLOW = mix([['--dsw-static-amber-500', 65], ['--dsw-static-green-500', 35]], 32)
+/** 绿 143° — `#1c8845`, 4.51:1. */
+const GREEN = mix([['--dsw-static-green-500', 100]], 34)
+/** 青 182° — `#208387`, 4.51:1. The theme has NO cyan token; green+blue is a new hue. */
+const CYAN = mix([['--dsw-static-green-500', 55], ['--dsw-static-blue-600', 45]], 16)
+/** 蓝 221° — the lead's fixed colour, and the one hue the theme gets right already. */
+const BLUE = '--dsw-static-blue-600'
+/** 紫 307° — `#883b7f`, 7.05:1. The theme has NO purple token; blue+red is a new hue. */
+const PURPLE = mix([['--dsw-static-blue-600', 50], ['--dsw-static-red-600', 50]], 0)
+
+/**
+ * The lane palette: the SEVEN hues the panel is specified to use — 红橙黄绿青蓝紫 —
+ * each one distinct, plus the Lead's own fixed colour.
+ *
+ * ## The theme does not contain these hues, so they are composed from it
+ *
+ * Extracting every `--dsw-static-*` value shows the theme publishes only FOUR
+ * chromatic families (red 0°, amber 31-38°, green 142°, blue 212-226°). Cyan (180°)
+ * and purple (300°) exist as no token at all, and a *vivid* yellow cannot even hold
+ * white text in sRGB — white needs about 4.5:1, which at hue 60 forces a dark olive.
+ * So the wheel is built the way the theme builds its own values: `color-mix()` in
+ * sRGB between two theme tokens, then darkened toward the theme's own ink by the
+ * LEAST amount that lets the label stay white. Nothing here is a literal colour, and
+ * the theme's `--dsw-alias-interactive-bg-hover` is itself a `color-mix()`, so this
+ * is the host's idiom rather than an escape hatch.
+ *
+ * ## Measured, not eyeballed
+ *
+ * | slot | hue | saturation | contrast with WHITE |
+ * |---|---|---|---|
+ * | 红 red    | 0°   | 85% | 4.56:1 |
+ * | 橙 orange | 31°  | 65% | 4.52:1 |
+ * | 黄 yellow | 61°  | 56% | 4.55:1 |
+ * | 绿 green  | 143° | 66% | 4.51:1 |
+ * | 青 cyan   | 182° | 62% | 4.51:1 |
+ * | 蓝 blue   | 221° | 83% | 5.17:1 |
+ * | 紫 purple | 307° | 40% | 7.05:1 |
+ *
+ * Cyan and purple sit 3° and 7° off their nominal hues, and yellow is an olive-gold:
+ * those are the closest points that clear 4.5:1 while staying as saturated as the
+ * constraint allows. A `color-mix` recipe is emitted rather than a hex so the panel
+ * keeps following the theme when the theme changes.
  */
 export const LANE_COLOR_TOKENS: readonly LaneColorTokens[] = [
-  slot('--dsw-static-blue-600'), // blue
-  slot('--dsw-static-red-600'), // red
-  slot('--dsw-static-amber-600'), // amber
-  slot('--dsw-static-green-500'), // green
-  slot('--dsw-static-blue-300'), // blue, light
-  slot('--dsw-static-red-400'), // red, light
-  slot('--dsw-static-amber-400'), // amber, light
-  slot('--dsw-static-green-400'), // green, light
+  // 蓝 blue — the Lead's fixed colour, and the head of the wheel.
+  { bar: BLUE, on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
+  // 紫 purple: blue + red, a hue the theme has no token for.
+  { bar: PURPLE, on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
+  // 红 red
+  { bar: RED, on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
+  // 橙 orange
+  { bar: ORANGE, on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
+  // 黄 yellow
+  { bar: YELLOW, on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
+  // 绿 green
+  { bar: GREEN, on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
+  // 青 cyan: green + blue, a hue the theme has no token for.
+  { bar: CYAN, on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
 ]
 
 /**
- * The Lead's colour is pinned to the head of the palette, so the "who is in
- * charge" row looks the same in every team and every session.
+ * The Lead's colour is FIXED — always 蓝 blue, never handed to a teammate — so the
+ * "who is in charge" row looks the same in every team and every session, and the
+ * seven teammate hues are the wheel's other six plus a wrap.
  */
 export const LEAD_COLOR_TOKENS: LaneColorTokens = LANE_COLOR_TOKENS[0] as LaneColorTokens
 

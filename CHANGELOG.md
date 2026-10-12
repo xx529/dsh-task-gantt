@@ -1,5 +1,63 @@
 # Changelog
 
+## 0.2.5 — 2026-10-12
+
+Four requests from using the panel on a real screen: mark each task's state changes,
+give every agent a distinct colour, make the agent NAME carry that colour, and stop
+truncating the lane's facts.
+
+**Each task now marks its own transitions (创建 / 认领 / 完成, and the rest)**
+
+- The task's `history` already carried every dated transition; the chart simply was not
+  drawing them, so this needed no new host data. Each event is drawn at its OWN time
+  scaled by the same `msPerPx` as the bar, so a mark reads against the bar's length —
+  "claimed a third of the way in" is a fact, not an impression.
+- The rail hangs UNDER the bar rather than on it: `TASK_BAR_HEIGHT` is the one
+  measurement on this chart that must stay exactly proportional, and glyphs over a 10px
+  bar would either cover it or force it taller.
+- Glyphs reuse the vocabulary the panel already teaches (`▶` is "in progress", `✓` is
+  "completed"), and the words come from `historyActionText` — the SAME vocabulary the
+  details panel prints, so the legend cannot drift from the marks it explains.
+- Two events at the same instant get a 1px stagger, so a create-then-immediately-claim
+  burst shows as two marks instead of one hiding the other.
+- The marks carry an `aria-label` (through the shared `taskEventAria` template) rather
+  than `aria-hidden`: they are information, not decoration.
+- A task's LAST transition is by definition at the bar's right edge, which is exactly
+  where an outside label chip begins — so the completed mark was painted under the chip
+  and vanished. Lifted above it with a hairline of the chip's own surface behind it.
+
+**Every agent has its own colour: 红橙黄绿青蓝紫, with the Lead fixed to blue**
+
+- The theme publishes only FOUR chromatic families (red 0°, amber 31-38°, green 142°,
+  blue 212-226°) and no cyan or purple token at all — so the seven requested hues are
+  composed from it with `color-mix()`, which is the theme's own idiom
+  (`--dsw-alias-interactive-bg-hover` is itself a `color-mix()`). Nothing here is a
+  literal colour.
+- A vivid yellow cannot carry white text in sRGB (white needs ~4.5:1, which at hue 60
+  forces a dark olive), and neither can the theme's green or amber. Each hue is darkened
+  by the LEAST amount that lets white text clear 4.5:1. Measured result: hues
+  0° / 31° / 61° / 143° / 182° / 221° / 307°, all between 4.51:1 and 7.05:1 with white.
+- The Lead is pinned to blue and is never handed to a teammate; the other six hues plus a
+  wrap cover the roster.
+
+**The agent's NAME carries the colour, not a hairline**
+
+- The identity colour was a 2px border on the row's left edge, which read as a hairline.
+  It is now the name's own background with white text, set inline because the stylesheet
+  must stay free of literal paint (the theme scan enforces that).
+
+**The lane's facts are one per line, and nothing is truncating them**
+
+- They were four items in one flex row, so `text-overflow: ellipsis` ate the tail —
+  the user's "状态显示不完整 … 后面就 ... 省略号了". The meta block is now a column, and
+  the ellipsis is gone: text wraps instead of being silently cut.
+- That needed more vertical room: measured, the head column needs 90px, and at the old
+  `DEFAULT_LANE_HEIGHT = 84` the last row was clipped (`clientHeight 83` vs
+  `scrollHeight 86`). Raised to 92, and the role row's `border` became a non-layout
+  inset ring so its row is 14px instead of 16px. Now 91px of content in 91px of room.
+
+The footer build identity is now `v0.2.5 · seven-hues+event-marks`.
+
 ## 0.2.4 — 2026-10-12
 
 **The sent and received arrows are now the same arrow, differing only in weight**

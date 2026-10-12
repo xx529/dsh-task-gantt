@@ -17,6 +17,20 @@
  * from `zh` and `en` is typed as a full `Record`, so a missing translation is a
  * typecheck error rather than a silent English fallback.
  *
+ * Messages that need runtime values use `{name}` placeholders — the SAME syntax
+ * the board's own catalog uses (`src/client/ui/labels.ts`: `messageAria`,
+ * `taskAria`, …). Fill them with {@link format}; do not hand-roll `.replace()`.
+ * Keys never contain a backtick (they end up inside template literals).
+ *
+ * NOT HERE: task-event NAMES (`created` / `claimed` / `completed` / `reopened` /
+ * `updated` / `observed`). The board already owns them as `hist*` +
+ * `historyLabel` in `src/client/ui/labels.ts`, consumed through
+ * `historyActionText()` (`src/client/ui/status.ts`). Two word tables for one
+ * action is how the same event ends up rendered as both '重开' and '重新打开', so
+ * add action names THERE. What belongs here is only the generic, action-agnostic
+ * template — e.g. {@link MessageKey} `taskEventAria`, which takes the action word
+ * as its `{event}` argument.
+ *
  * Owner: teammate `shell` — request new keys instead of editing this file.
  */
 
@@ -57,6 +71,9 @@ const zh = {
   openSession: '打开该会话',
   you: '你',
   noSession: '无会话可跳转',
+  taskEventAria: '{time} {event}',
+  taskEventHint: '（该任务的状态变化时间）',
+  laneModel: '模型',
 } as const
 
 /** Every message key; both dictionaries must define all of them. */
@@ -97,6 +114,9 @@ const en: Record<MessageKey, string> = {
   openSession: 'Open this session',
   you: 'You',
   noSession: 'No session to open',
+  taskEventAria: '{time} {event}',
+  taskEventHint: '(when this task changed state)',
+  laneModel: 'Model',
 }
 
 const DICTIONARIES: Record<Locale, Record<MessageKey, string>> = { zh, en }
@@ -131,6 +151,33 @@ export function t(key: MessageKey): string {
 /** Translate one key in an explicit locale. */
 export function translate(localeOverride: Locale, key: MessageKey): string {
   return DICTIONARIES[localeOverride][key]
+}
+
+/**
+ * Translate one key and fill its `{name}` placeholders.
+ *
+ * The placeholder syntax is exactly the board's (`src/client/ui/labels.ts`,
+ * `uiLabel`): `{name}` with a `\w+` name, substituted with `String(value)`. An
+ * unknown placeholder — or one whose value was not passed — is left VERBATIM as
+ * `{name}`, so a missing argument renders `{event}` instead of the string
+ * "undefined", and a typo stays visible rather than silent.
+ *
+ * This lives here rather than reusing `uiLabel` because that helper is typed to
+ * the board's own `UiMessageKey` catalog: it cannot resolve a key from this
+ * module, and importing `src/client/ui/**` from here would invert the layering
+ * (labels.ts already imports this file) and make the tab depend on the chart.
+ *
+ * @param key - a declared message key.
+ * @param vars - values for the placeholders in the message.
+ * @returns the message in the page's current locale, placeholders filled.
+ */
+export function format(key: MessageKey, vars?: Record<string, string | number>): string {
+  const template = t(key)
+  if (vars === undefined) return template
+  return template.replace(/\{(\w+)\}/g, (match, name: string) => {
+    const value = vars[name]
+    return value === undefined ? match : String(value)
+  })
 }
 
 /** The full dictionary of the page's current locale (for tests). */

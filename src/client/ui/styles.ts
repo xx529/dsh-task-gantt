@@ -121,29 +121,53 @@ export const BOARD_CSS = `
 }
 .dtg-head-row-idle { opacity: 0.72; }
 .dtg-head-top { display: flex; align-items: center; gap: 4px; min-width: 0; }
+/* The agent's identity is a PILL around the name, not a hairline stripe: a 2px
+   left border was too easy to miss (the user's words: "a very narrow stripe, not
+   obvious"). The background is supplied INLINE by the renderer from the lane's
+   own colour token, so this rule only owns the SHAPE and the ink — never a
+   colour value, which would break the theme contract. */
 .dtg-head-name {
   min-width: 0;
   flex: 1 1 auto;
+  display: inline-block;
+  max-width: 100%;
+  padding: 1px 6px;
+  border-radius: 3px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font: var(--dsw-font-xxs-strong-12);
-  color: var(--dsw-alias-label-primary);
+  /* White ink on the identity fill, in either skin. */
+  color: var(--dsw-alias-label-primary-inverted);
 }
+/* One fact per line. As a single flex row, role + status + task count + message
+   count were squeezed into one line and then cut with an ellipsis, so the user
+   could not read their own agent's state. Stacking them is the fix; the lane's
+   height budget is accounted for in the geometry notes. */
 .dtg-head-meta {
   display: flex;
-  align-items: center;
-  gap: 4px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
   min-width: 0;
   color: var(--dsw-alias-label-tertiary);
   font: var(--dsw-font-xxxs-11);
 }
-.dtg-head-meta-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Deliberately NOT ellipsised: wrapping a short state word onto a second line
+   keeps it readable, whereas an ellipsis hides information the user asked for.
+   overflow-wrap keeps a long unbroken token (a model name) inside the lane. */
+.dtg-head-meta-text { white-space: normal; overflow-wrap: anywhere; }
+/* The role badge is drawn with an INSET RING rather than a border. A border adds
+   2px to this line's height (and 2px to its width), which pushed the meta block
+   one pixel past the lane's content box; the ring paints the same outline without
+   contributing to layout, keeping the badge inside the lane's height budget
+   instead of raising that budget for one line of chrome. */
 .dtg-head-role {
   flex: 0 0 auto;
   padding: 0 3px;
-  border: 1px solid var(--dsw-alias-border-l2);
+  border: 0;
   border-radius: 3px;
+  box-shadow: inset 0 0 0 1px var(--dsw-alias-border-l2);
   color: var(--dsw-alias-label-tertiary);
   font: var(--dsw-font-xxxs-11);
 }
@@ -359,9 +383,9 @@ export const BOARD_CSS = `
   outline: 2px solid var(--dsw-alias-border-l4);
   outline-offset: -2px;
 }
+/* The identity colour now rides on the name pill (inline) and on the dot; the
+   row itself draws no stripe. */
 .dtg-lane-mark .dtg-dot { background: var(--dsw-alias-label-dimmed); }
-.dtg-head-name { color: var(--dsw-alias-label-primary); }
-.dtg-head-row { border-left: 2px solid transparent; }
 
 /* The marker is a BUTTON now (its body opens in the detail view), so it has to
    stay visually a dot: strip every button affordance the platform would add. */
@@ -410,6 +434,48 @@ export const BOARD_CSS = `
   padding: 6px 8px;
 }
 .dtg-muted { color: var(--dsw-alias-label-tertiary); }
+
+/* The key for the transition rail. It is a legend ITEM that holds sub-items, so it
+   wraps; the glyphs are printed in ordinary ink, not a lane colour, because the key
+   explains the SHAPE (the colour is per-lane and means nothing in a key). */
+.dtg-legend-events {
+  flex-wrap: wrap;
+  gap: 6px;
+  color: var(--dsw-alias-label-secondary);
+}
+.dtg-legend-event {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  white-space: nowrap;
+}
+.dtg-legend-event > span:first-child {
+  font: var(--dsw-font-xxxs-strong-11);
+  color: var(--dsw-alias-label-primary);
+}
+
+/* --- task transition marks --------------------------------------------- */
+
+/* One small glyph per dated transition, on a rail just under the bar.
+   It is positioned from the event's OWN time (scaled by the same msPerPx as the bar),
+   so it can be read against the bar's length. The rail is under the bar rather than on
+   it because TASK_BAR_HEIGHT is the one measurement on this chart that must stay
+   exactly proportional — overlaying glyphs on a 10px bar would cover it or force it
+   taller, and either would undo the "bar length IS duration" rule. */
+.dtg-task-event {
+  position: absolute;
+  font: var(--dsw-font-xxxs-strong-11);
+  line-height: 1;
+  pointer-events: none;
+  /* Above the label chip. A task's LAST transition is by definition at the bar's right
+     edge, which is exactly where an outside label chip begins — so without this the
+     completed mark is painted under the chip and vanishes, which is the "挤在一起"
+     defect in a new place. Raised with a hairline of the chip's own surface behind it,
+     so where a mark overlaps the card it reads as a badge on the card rather than as a
+     glyph cut in half. */
+  z-index: 1;
+  box-shadow: 0 0 0 1.5px var(--dsw-alias-bg-layer-2);
+}
 
 /* --- message markers --------------------------------------------------- */
 

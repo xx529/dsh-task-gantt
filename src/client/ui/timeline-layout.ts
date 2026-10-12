@@ -77,9 +77,14 @@
  *   step bar      y = laneY(i) + LANE_PAD_Y
  *                       + (TURN_BAND_HEIGHT - STEP_BAR_HEIGHT) / 2, h = STEP_BAR_HEIGHT
  *   task card     y = laneY(i) + TASK_CARD_TOP,            h = TASK_CARD_HEIGHT
- *   (TASK_CARD_TOP = LANE_PAD_Y + TURN_BAND_HEIGHT + 4, so a lane of
- *    DEFAULT_LANE_HEIGHT = 84 stacks three tracks: 3px pad, 10px turn band (the 8px step bar
- *    centred inside it), 4px gap, 36px card (two token lines), 3px pad.)
+ *   (TASK_CARD_TOP = LANE_PAD_Y + TURN_BAND_HEIGHT + 4. A lane of
+ *    DEFAULT_LANE_HEIGHT = 92 therefore stacks: 3px pad, 10px turn band (the 8px step
+ *    bar centred inside it), 11px message-marker track, 36px task card ending at y=66,
+ *    then the ~11px task-TRANSITION rail that hangs under the bar, leaving ~15px of
+ *    slack. The LEFT head column shares this height and needs 90px of it for its own
+ *    rows — a name pill plus four one-per-line facts — which is what set the value:
+ *    at 84px the last head row was clipped, measured at clientHeight 83 vs
+ *    scrollHeight 86.)
  *
  * ============================== SPAN RECTS =================================
  * For every lane (in `data.lanes` order) and every span (in `lane.spans` order):
@@ -190,7 +195,7 @@ export const LANE_HEAD_WIDTH = 132
  * tracks (see {@link laneTracks}). Do not make this content-adaptive, and do not
  * shrink the 36px task label to win lanes back: 36px is two measured text lines.
  */
-export const DEFAULT_LANE_HEIGHT = 84
+export const DEFAULT_LANE_HEIGHT = 92
 /** Default height of the sticky time-axis header (px). */
 export const DEFAULT_HEADER_HEIGHT = 28
 /** Default number of ticks wanted across the visible width. */
@@ -1135,7 +1140,14 @@ export function resolveMessageDirection(
 export function lanePaint(token: string): string {
   const name = token.trim()
   if (name === '') return 'currentColor'
-  return name.startsWith('var(') ? name : `var(${name})`
+  // Three spellings reach here and only one needs wrapping:
+  //   `--dsw-...`               a token name -> `var(--dsw-...)`
+  //   `color-mix(in srgb, ...)` a composition of tokens -> left as-is
+  //   `var(--dsw-...)`          already wrapped -> left as-is
+  // Wrapping a `color-mix()` in `var()` would turn it into a custom-property LOOKUP
+  // of a name that does not exist, which paints nothing — silently, with no error.
+  if (name.startsWith('var(') || name.startsWith('color-mix(')) return name
+  return `var(${name})`
 }
 
 /**
@@ -1151,7 +1163,7 @@ export function laneColorIndex(
   if (given !== undefined && typeof given.bar === 'string' && given.bar !== '') {
     return { bar: lanePaint(given.bar), on: lanePaint(given.on ?? '--dsw-alias-label-primary-inverted') }
   }
-  const palette: LaneColorTokens[] = LANE_COLOR_FALLBACKS
+  const palette: readonly LaneColorTokens[] = LANE_COLOR_FALLBACKS
   const pick = (slot: number): LaneColorTokens => {
     const entry = palette[slot % palette.length] as LaneColorTokens
     return { bar: lanePaint(entry.bar), on: lanePaint(entry.on) }
@@ -1231,14 +1243,31 @@ export function messageMarkerPaint(
 }
 
 /** Fallback lane tokens, for a payload that predates `lane.color`. */
-const LANE_COLOR_FALLBACKS: LaneColorTokens[] = [
-  { bar: '--dsw-alias-brand-primary', on: '--dsw-alias-label-primary-inverted' },
-  { bar: '--dsw-alias-state-success-primary', on: '--dsw-alias-label-primary-inverted' },
-  { bar: '--dsw-alias-state-warn-primary', on: '--dsw-alias-label-primary-inverted' },
-  { bar: '--dsw-alias-state-error-primary', on: '--dsw-alias-label-primary-inverted' },
-  { bar: '--dsw-alias-state-business-primary', on: '--dsw-alias-label-primary-inverted' },
-  { bar: '--dsw-alias-state-idle-primary', on: '--dsw-alias-label-primary-inverted' },
+/** The ink for a dark fill; see `LaneColorTokens.on`. */
+const ON_DARK_FILL = '--dsw-alias-label-primary-inverted'
+/** The ink for a pale fill; see `LaneColorTokens.onLight`. */
+const ON_LIGHT_FILL = '--dsw-alias-label-primary'
+
+/**
+ * Fallback lane tokens for a payload that predates `lane.color`.
+ *
+ * These MIRROR `LANE_COLOR_TOKENS` in `src/host/lane-color.ts` — the same seven wheel
+ * hues, composed from the same theme tokens the same way — because a fallback that
+ * drifts from the real palette is a palette with two meanings. Exported so the chart
+ * uses THIS table instead of keeping a second copy: there were two, and one of them
+ * still named `--dsw-alias-state-idle-primary` (a chroma-0 grey) after the other was
+ * fixed, which is exactly how "no grey lanes" quietly stops being true.
+ */
+export const LANE_COLOR_FALLBACKS: readonly LaneColorTokens[] = [
+  { bar: '--dsw-static-blue-600', on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
+  { bar: 'color-mix(in srgb, var(--dsw-static-blue-600) 50%, var(--dsw-static-red-600) 50%)', on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
+  { bar: 'color-mix(in srgb, var(--dsw-static-red-600) 99%, var(--dsw-static-neutral-bluish-1000) 1%)', on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
+  { bar: 'color-mix(in srgb, var(--dsw-static-amber-600) 74%, var(--dsw-static-neutral-bluish-1000) 26%)', on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
+  { bar: 'color-mix(in srgb, color-mix(in srgb, var(--dsw-static-amber-500) 65%, var(--dsw-static-green-500) 35%) 68%, var(--dsw-static-neutral-bluish-1000) 32%)', on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
+  { bar: 'color-mix(in srgb, var(--dsw-static-green-500) 66%, var(--dsw-static-neutral-bluish-1000) 34%)', on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
+  { bar: 'color-mix(in srgb, color-mix(in srgb, var(--dsw-static-green-500) 55%, var(--dsw-static-blue-600) 45%) 84%, var(--dsw-static-neutral-bluish-1000) 16%)', on: ON_DARK_FILL, onLight: ON_LIGHT_FILL },
 ]
+
 
 /** A message marker's full detail, assembled without a renderer. */
 export interface MessageDetail {

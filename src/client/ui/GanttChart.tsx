@@ -38,13 +38,15 @@ import type {
   LaneNavigation,
   MemberStatus,
   MessageSpan,
+  TaskEvent,
   TimelineResponse,
   TimelineTask,
 } from '../../shared/contract.ts'
-import { t } from '../i18n.ts'
+import { format, t } from '../i18n.ts'
 import { uiLabel } from './labels.ts'
 import {
   STATUS_GLYPH,
+  historyActionText,
   memberStatusText,
   roleText,
   taskStatusText,
@@ -52,6 +54,7 @@ import {
 import {
   DEFAULT_HEADER_HEIGHT,
   DEFAULT_LANE_HEIGHT,
+  LANE_COLOR_FALLBACKS as LANE_COLOR_FALLBACKS_SHARED,
   LANE_HEAD_WIDTH,
   TASK_CHIP_GAP,
   clampMsPerPx,
@@ -85,33 +88,22 @@ export function lanePaint(token: string): string {
   const name = token.trim()
   if (name === '') return 'currentColor'
   // Tolerate a payload that already wrapped the name: some hosts have shipped
-  // `var(--x)` in string fields, and double-wrapping would paint nothing.
-  return name.startsWith('var(') ? name : `var(${name})`
+  // `var(--x)` in string fields, and double-wrapping would paint nothing. A
+  // `color-mix()` composition of tokens is the third spelling and is left alone for
+  // the same reason — `var(color-mix(...))` is a lookup of a name that never exists.
+  if (name.startsWith('var(') || name.startsWith('color-mix(')) return name
+  return `var(${name})`
 }
 
 /**
- * Fallback lane tokens, for a payload that predates `lane.color`.
+ * The fallback lane palette is IMPORTED, never copied.
  *
- * Kept byte-identical in intent to the host's `LANE_COLOR_TOKENS`
- * (`src/host/lane-color.ts`): eight chromatic slots, four hue families each used
- * twice at a different lightness. Both inks are carried per slot because no
- * single one clears 3:1 against every fill in both skins (see
- * {@link LaneColorTokens.onLight}).
- *
- * The entry that used to sit here — `--dsw-alias-state-idle-primary` — is gone
- * on purpose: it is chroma-0 grey in both skins, and a lane colour is an
- * identity, so an achromatic one cannot identify anything.
+ * There used to be two tables: this one and `LANE_COLOR_FALLBACKS` in
+ * `timeline-layout.ts`. When the palette changed, one was updated and the other
+ * still named `--dsw-alias-state-idle-primary` — a chroma-0 grey — so "no grey
+ * lanes" was true on one code path and false on the other. One table, one meaning.
  */
-const LANE_COLOR_FALLBACKS: readonly LaneColorTokens[] = [
-  { bar: '--dsw-static-blue-600', on: '--dsw-alias-label-primary-inverted', onLight: '--dsw-alias-label-primary' },
-  { bar: '--dsw-static-red-600', on: '--dsw-alias-label-primary-inverted', onLight: '--dsw-alias-label-primary' },
-  { bar: '--dsw-static-amber-600', on: '--dsw-alias-label-primary-inverted', onLight: '--dsw-alias-label-primary' },
-  { bar: '--dsw-static-green-500', on: '--dsw-alias-label-primary-inverted', onLight: '--dsw-alias-label-primary' },
-  { bar: '--dsw-static-blue-300', on: '--dsw-alias-label-primary-inverted', onLight: '--dsw-alias-label-primary' },
-  { bar: '--dsw-static-red-400', on: '--dsw-alias-label-primary-inverted', onLight: '--dsw-alias-label-primary' },
-  { bar: '--dsw-static-amber-400', on: '--dsw-alias-label-primary-inverted', onLight: '--dsw-alias-label-primary' },
-  { bar: '--dsw-static-green-400', on: '--dsw-alias-label-primary-inverted', onLight: '--dsw-alias-label-primary' },
-]
+const LANE_COLOR_FALLBACKS: readonly LaneColorTokens[] = LANE_COLOR_FALLBACKS_SHARED
 
 /**
  * NOTE for a later reader. An ink-selection helper used to live here: it measured
@@ -516,6 +508,7 @@ export function GanttChart(props: GanttChartProps): ReactNode {
                 selected={rect.task.id === selectedTaskId}
                 onSelectTask={onSelectTask}
                 tzOffsetMinutes={tzOffsetMinutes}
+                msPerPx={layout.msPerPx}
                 color={laneColors.get(rect.laneId)}
               />
             ))}
@@ -602,6 +595,20 @@ export function GanttChart(props: GanttChartProps): ReactNode {
             )}
           </>
         )}
+        {/* The task-transition rail's key. Without it the glyphs under a bar are
+            unexplained decoration; with it they say "this task was created, claimed and
+            completed, and here is where". The words come from `historyActionText`, i.e.
+            the SAME vocabulary the details panel prints, so the key cannot drift from
+            the marks it explains. */}
+        <span className="dtg-legend-item dtg-legend-events" title={uiLabel('historyLabel')}>
+          {uiLabel('historyLabel')}
+          {(['created', 'claimed', 'completed'] as const).map((action) => (
+            <span className="dtg-legend-event" key={action} title={historyActionText(action)}>
+              <span aria-hidden="true">{TASK_EVENT_GLYPH[action]}</span>
+              {historyActionText(action)}
+            </span>
+          ))}
+        </span>
         {live ? null : (
           <span className="dtg-legend-item" title={uiLabel('frozenHint')}>
             {uiLabel('endedLabel')}
@@ -691,7 +698,17 @@ function LaneHead({
         <span className={ink} aria-hidden="true">
           <span className="dtg-dot" style={color === undefined ? undefined : { background: color.bar }} />
         </span>
-        <span className="dtg-head-name" title={lane.name}>
+        {/* The identity colour is the NAME's background, with white text — the user's
+            ask: "改成是 agent 名称的背景色，例如 lead 文字是白色，有个背景色是蓝色".
+            It used to be a 2px border on the row's left edge, which read as a hairline
+            rather than as identity. The colour is set inline because the CSS must stay
+            free of literal paint (the theme scan enforces that), and `color.bar` is
+            already resolved by `lanePaint` into `var(...)` or a `color-mix(...)`. */}
+        <span
+          className="dtg-head-name"
+          title={lane.name}
+          style={color === undefined ? undefined : { background: color.bar }}
+        >
           {lane.name}
         </span>
         <span className={ink} aria-hidden="true">
@@ -1090,17 +1107,162 @@ const ARROW_STROKE_SENT = 3.4
 /** Stroke width for a RECEIVED message: the same shape, read as an outline. */
 const ARROW_STROKE_RECEIVED = 2
 
+/**
+ * One glyph per dated task transition.
+ *
+ * The user's ask: "每个任务的创建，认领，完成，也有有标记显示在任务卡的地方". The task's
+ * `history` already carries every dated transition — the chart simply was not drawing
+ * them — so this needs no new host data.
+ *
+ * The glyphs deliberately REUSE the status vocabulary the rest of the panel already
+ * teaches (`▶` is "in progress", `✓` is "completed"), so a reader who has learnt the
+ * status column does not have to learn a second symbol set:
+ *
+ * | action | glyph | reads as |
+ * |---|---|---|
+ * | `created` | `＋` | added |
+ * | `claimed` | `▶` | work started (the in-progress glyph) |
+ * | `completed` | `✓` | done (the completed glyph) |
+ * | `reopened` | `↺` | back to open |
+ * | `updated` | `·` | an edit / dependency change, deliberately quiet |
+ * | `observed` | `◌` | only ever seen, never dated by an event |
+ *
+ * They are painted in the LANE's colour, because they belong to the task and the task
+ * belongs to the lane; the word for each one lives in `title`/`aria-label`
+ * (`historyActionText`) so colour is never the only signal.
+ */
+const TASK_EVENT_GLYPH: Record<TaskEvent['action'], string> = {
+  created: '＋',
+  claimed: '▶',
+  completed: '✓',
+  reopened: '↺',
+  updated: '·',
+  observed: '◌',
+}
+
+/**
+ * The transitions of one task, drawn as a rail UNDER its bar.
+ *
+ * Order and placement come from the data, never from guesswork: each event sits at its
+ * own `time` scaled by the same `msPerPx` as the bar, so an event can be read against
+ * the bar's length — "it was claimed a third of the way in" is a fact, not an
+ * impression. Events are drawn in `history` order and any that share a time get a
+ * one-pixel vertical stagger so a burst is not hidden behind its own first mark.
+ *
+ * The rail sits below the bar rather than on it: the bar's height is the one thing on
+ * this chart that must stay exactly proportional (see `TASK_BAR_HEIGHT`), and overlaying
+ * glyphs on a 10px bar would either cover it or force it taller.
+ */
+/**
+ * One task's transitions, resolved outside JSX so a test can assert them.
+ *
+ * Mirrors the `markerPaint` pattern: the tested function and the painted result cannot
+ * drift, because the component renders exactly this array.
+ */
+export interface TaskEventMark {
+  action: TaskEvent['action']
+  glyph: string
+  /** The word for the action, from the panel's ONE transition vocabulary. */
+  label: string
+  /** Absolute x of the mark: the bar's left edge plus the event's own elapsed time. */
+  x: number
+  /** Top of the glyph. A second event at the same instant is nudged down 1px. */
+  top: number
+  time: number
+}
+
+/**
+ * Where every dated transition of one task belongs, in card-local coordinates.
+ *
+ * Placement is arithmetic on the data, never a guess: `(event.time - rect.at) / msPerPx`
+ * is the same conversion the BAR's width uses, so a mark reads against the bar's own
+ * length — "claimed a third of the way in" is a fact here, not an impression.
+ *
+ * @param rect - the card the marks belong to.
+ * @param msPerPx - the chart's scale. A non-finite or non-positive value yields no
+ *   marks rather than NaN positions: a mark at an infinite x paints nothing and is
+ *   invisible in a way no screenshot review would catch.
+ */
+export function taskEventMarks(rect: TaskCardRect, msPerPx: number): TaskEventMark[] {
+  if (!Number.isFinite(msPerPx) || msPerPx <= 0) return []
+  const seenAt = new Map<number, number>()
+  const marks: TaskEventMark[] = []
+  for (const event of rect.task.history) {
+    const offset = (event.time - rect.at) / msPerPx
+    if (!Number.isFinite(offset)) continue
+    // Events that share an instant get a 1px stagger, so a created+claimed pair shows
+    // as two marks instead of one hiding the other.
+    const repeat = seenAt.get(event.time) ?? 0
+    seenAt.set(event.time, repeat + 1)
+    marks.push({
+      action: event.action,
+      glyph: TASK_EVENT_GLYPH[event.action] ?? '·',
+      label: historyActionText(event.action),
+      x: rect.x + offset,
+      top: rect.barY + rect.barH + 1 + repeat,
+      time: event.time,
+    })
+  }
+  return marks
+}
+
+/**
+ * The transitions of one task, drawn as a rail UNDER its bar.
+ *
+ * The rail sits below the bar rather than on it: the bar's height is the one thing on
+ * this chart that must stay exactly proportional (see `TASK_BAR_HEIGHT`), and overlaying
+ * glyphs on a 10px bar would either cover it or force it taller.
+ */
+function TaskEventMarks({
+  rect,
+  msPerPx,
+  ink,
+  tzOffsetMinutes,
+}: {
+  rect: TaskCardRect
+  msPerPx: number
+  ink: string
+  tzOffsetMinutes: number
+}): ReactNode {
+  return (
+    <>
+      {taskEventMarks(rect, msPerPx).map((mark, index) => (
+        <span
+          key={`${mark.time}-${mark.action}-${index}`}
+          className="dtg-task-event"
+          // NOT `aria-hidden`: this is information, not decoration. A glyph alone is
+          // also unreadable, so the accessible name spells out the time and the action
+          // through the shared `taskEventAria` template.
+          role="img"
+          aria-label={format('taskEventAria', {
+            time: formatDateTime(mark.time, tzOffsetMinutes),
+            event: mark.label,
+          })}
+          data-task-event={mark.action}
+          style={{ left: mark.x, top: mark.top, color: ink }}
+          title={`${mark.label} · ${formatDateTime(mark.time, tzOffsetMinutes)}`}
+        >
+          {mark.glyph}
+        </span>
+      ))}
+    </>
+  )
+}
+
 function TaskCard({
   rect,
   selected,
   onSelectTask,
   tzOffsetMinutes,
+  msPerPx,
   color,
 }: {
   rect: TaskCardRect
   selected: boolean
   onSelectTask: (taskId: string | null) => void
   tzOffsetMinutes: number
+  /** Scale of the chart, so an event's mark lands at its own real time. */
+  msPerPx: number
   color?: LaneColorTokens | undefined
 }): ReactNode {
   const task: TimelineTask = rect.task
@@ -1156,6 +1318,13 @@ function TaskCard({
           ...(color === undefined ? {} : { background: color.bar }),
         }}
         aria-hidden="true"
+      />
+      {/* Every dated transition the task has, at its own real time. */}
+      <TaskEventMarks
+        rect={rect}
+        msPerPx={msPerPx}
+        ink={color === undefined ? 'var(--dsw-alias-label-secondary)' : lanePaint(color.bar)}
+        tzOffsetMinutes={tzOffsetMinutes}
       />
       {/* The LABEL chip, decoupled: inside the bar when it fits, otherwise hung to
           its right with a hairline anchor back to the bar's end. */}

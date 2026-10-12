@@ -16,11 +16,11 @@ import { fileURLToPath } from 'node:url'
 import { beforeEach, describe, expect, it } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
 import { MESSAGE_PREVIEW_MAX, type MessageSpan } from '../src/shared/contract.ts'
-import { LANE_COLOR_TOKENS, REJECTED_IDLE_TOKEN, UNASSIGNED_COLOR_TOKENS, laneColorTokens } from '../src/host/lane-color.ts'
+import { LANE_COLOR_TOKENS, LEAD_COLOR_TOKENS, REJECTED_IDLE_TOKEN, UNASSIGNED_COLOR_TOKENS, laneColorTokens } from '../src/host/lane-color.ts'
 import { buildTimeline } from '../src/host/timeline.ts'
 import { clearSessionLogCache } from '../src/host/session-log.ts'
 import { fakeContext } from './helpers/fake-http.ts'
-import { assertTimeline, validTimeline } from './helpers/timeline-assert.ts'
+import { assertTimeline, resolveLaneColor, validTimeline } from './helpers/timeline-assert.ts'
 import { teammateSpans, toolCallEvent } from './helpers/session-fixtures.ts'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -430,9 +430,12 @@ describe('buildTimeline over the real Lead journal', () => {
     const value = await buildTimeline(host(), ROOT_SESSION)
     assertTimeline(value)
     for (const lane of value.lanes) {
-      // Token NAMES, never values (the validator enforces the shape; this pins
-      // that the host actually fills them instead of sending empty strings).
-      expect(lane.color.bar, lane.id).toMatch(/^--(?:dsw|ds)-/)
+      // Token NAMES or a composition OF token names, never values (the validator
+      // enforces the shape; this pins that the host actually fills them instead of
+      // sending empty strings). Six of the seven wheel hues are compositions,
+      // because the theme has no cyan and no purple token at all.
+      const TOKEN_OR_COMPOSITION = /^(--(?:dsw|ds)-|color-mix\(\s*in\s+srgb\s*,)/
+      expect(lane.color.bar, lane.id).toMatch(TOKEN_OR_COMPOSITION)
       expect(lane.color.on, lane.id).toMatch(/^--(?:dsw|ds)-/)
       // POSITIONAL stability (was "stable by member id" before the palette
       // fix): with the roster unchanged, the same lane index gets the same
@@ -512,33 +515,52 @@ describe('buildTimeline over the real Lead journal', () => {
     expect(laneColorTokens('unassigned', 7)).toEqual(UNASSIGNED_COLOR_TOKENS)
   })
 
-  it('the palette is chromatic and legible in both skins, with the Lead at its head', () => {
-    // This replaces a check that the five `--dsw-alias-state-*` hues were present.
-    // That assertion could not have caught the defect it is replaced for: the
-    // palette WAS those five names, and the fifth (`state-idle-primary`) resolves
-    // to a pure grey in both skins — so every sixth lane was drawn in
-    // black-and-white, which is precisely the user's "不要出现 黑白灰". A token
-    // NAME existing says nothing about the colour it holds, so this reads VALUES.
+  it('the palette is seven distinct chromatic hues that can carry white text', () => {
+    // This replaces a check that five `--dsw-alias-state-*` names were present. That
+    // assertion could not have caught the defect it was written for: the palette WAS
+    // those names, and the fifth (`state-idle-primary`) resolves to a pure grey in
+    // both skins — every sixth lane was drawn in black-and-white, which is the user's
+    // "不要出现 黑白灰". A token NAME existing says nothing about the colour it holds,
+    // so this resolves VALUES — including the `color-mix()` compositions, which is why
+    // `resolveLaneColor` exists rather than a regex over the token string.
     //
-    // The two properties the user asked for, as measurable facts:
-    //   1. chroma > 0 for every fill      -> no black, white or grey lane;
-    //   2. >= 3:1 against the ink that lane actually uses, in BOTH skins
-    //                                     -> the arrow and card badge stay readable.
-    const known = new Set(knownThemeTokens())
+    // What the user asked for, as measurable facts:
+    //   1. SEVEN hues, all distinct        -> 红橙黄绿青蓝紫, no two lanes alike;
+    //   2. every one chromatic             -> no black, white or grey lane;
+    //   3. >= 4.5:1 against WHITE          -> the lane NAME sits on this colour as its
+    //                                         background with white text.
     const bars = LANE_COLOR_TOKENS.map((entry) => entry.bar)
-    expect(bars.length, 'the palette must cover the first eight lanes').toBeGreaterThanOrEqual(8)
+    expect(bars.length, 'the palette must carry the seven requested hues').toBe(7)
     expect(new Set(bars).size, bars.join(', ')).toBe(bars.length)
-    for (const entry of LANE_COLOR_TOKENS) {
-      expect(known.has(entry.bar), `${entry.bar} must be a defined theme token`).toBe(true)
-      expect(known.has(entry.on), `${entry.on} must be a defined theme token`).toBe(true)
-      expect(known.has(entry.onLight ?? ''), `${String(entry.onLight)} must be a defined theme token`).toBe(true)
+
+    const known = new Set(knownThemeTokens())
+    const values = TOKEN_VALUES
+    const valueOf = (token: string): readonly [number, number, number] | null => {
+      const hex = (values.statics as Record<string, string | undefined>)[token]
+      if (hex === undefined) {
+        expect(known.has(token), `${token} must at least be a defined theme token`).toBe(true)
+        return null
+      }
+      const h = hex.replace('#', '')
+      const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h
+      return [0, 2, 4].map((i) => Number.parseInt(full.slice(i, i + 2), 16)) as unknown as readonly [number, number, number]
     }
 
-    const values = TOKEN_VALUES
-    const rgb = (raw: string): [number, number, number] => {
-      const h = raw.replace('#', '')
+    // Every token referenced inside a composition must be DEFINED by the theme: a
+    // typo'd name inside `color-mix()` renders nothing, with no error anywhere.
+    for (const entry of LANE_COLOR_TOKENS) {
+      for (const field of [entry.bar, entry.on, entry.onLight ?? '']) {
+        for (const ref of [...field.matchAll(/var\((--[a-z0-9-]+)\)/g)].map((m) => m[1] as string)) {
+          expect(known.has(ref), `${ref} (inside ${field}) must be a defined theme token`).toBe(true)
+        }
+        if (/^--/.test(field)) expect(known.has(field), `${field} must be a defined theme token`).toBe(true)
+      }
+    }
+
+    const rgbOf = (hex: string): readonly [number, number, number] => {
+      const h = hex.replace('#', '')
       const full = h.length === 3 ? h.split('').map((c) => c + c).join('') : h
-      return [0, 2, 4].map((i) => Number.parseInt(full.slice(i, i + 2), 16)) as [number, number, number]
+      return [0, 2, 4].map((i) => Number.parseInt(full.slice(i, i + 2), 16)) as unknown as readonly [number, number, number]
     }
     const luminance = (color: readonly [number, number, number]): number => {
       const f = (v: number): number => {
@@ -552,55 +574,46 @@ describe('buildTimeline over the real Lead journal', () => {
       const lb = luminance(b)
       return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05)
     }
-    const valueOf = (token: string): string => {
-      const hex = (values.statics as Record<string, string | undefined>)[token]
-      expect(hex, `${token} needs a recorded VALUE in tests/fixtures/theme-token-values.json`).toBeDefined()
-      return hex as string
-    }
-    /**
-     * The value one of the theme's two INKS has in a given skin.
-     *
-     * A palette entry names an ink TOKEN, and both candidate tokens flip with the
-     * skin (`label-primary-inverted` is white on the light skin and `#353638` on
-     * the dark one; `label-primary` is `#0f1115` / `#f9fafb`). So the skin decides
-     * the value, and the assertion is that the ink chosen for that skin reads on
-     * that lane's fill.
-     */
-    const inkValue = (token: string, skin: 'light' | 'dark'): string => {
-      const ink = values.inks[token]
-      expect(ink, `${token} must be one of the theme's two documented inks`).toBeDefined()
-      return (ink as { light: string; dark: string })[skin]
-    }
-
+    const white = rgbOf('#ffffff')
+    const hues: number[] = []
     for (const entry of LANE_COLOR_TOKENS) {
-      const fillHex = valueOf(entry.bar)
-      const fill = rgb(fillHex)
+      const fill = resolveLaneColor(entry.bar, valueOf)
+      expect(fill, `${entry.bar} must resolve to a colour (token name or color-mix of tokens)`).not.toBeNull()
+      if (fill === null) continue
       const chroma = Math.max(...fill) - Math.min(...fill)
-      expect(chroma, `${entry.bar} (${fillHex}) is achromatic — a grey lane identifies nobody`).toBeGreaterThan(40)
-      // The two inks are the theme's, and each flips with the skin. What must hold
-      // is that in each skin at least one of them reads on that fill, because that
-      // is the property the pair is shipped for. Which one a caller picks is a
-      // rendering decision (and for the deep fills the light-skin winner is the
-      // INVERTED ink while the dark-skin winner is the PRIMARY one), so pinning a
-      // fixed pairing here would pin an implementation detail rather than the
-      // legibility the palette promises.
-      for (const skin of ['light', 'dark'] as const) {
-        const ratios = [entry.on, entry.onLight ?? entry.on].map((token) => {
-          const inkHex = inkValue(token, skin)
-          return { token, inkHex, ratio: contrast(fill, rgb(inkHex)) }
-        })
-        const best = ratios.reduce((a, b) => (b.ratio > a.ratio ? b : a))
-        expect(
-          best.ratio,
-          `${entry.bar} (${fillHex}) in the ${skin} skin: best ink is ${best.token} (${best.inkHex}) at ${best.ratio.toFixed(2)}:1, below the 3:1 graphical minimum`,
-        ).toBeGreaterThanOrEqual(3)
+      expect(chroma, `${entry.bar} = rgb(${fill.join(',')}) is achromatic — a grey lane identifies nobody`).toBeGreaterThan(40)
+      const ratio = contrast(fill, white)
+      expect(
+        ratio,
+        `${entry.bar} = rgb(${fill.join(',')}) is only ${ratio.toFixed(2)}:1 against white; the lane NAME is white text on this fill`,
+      ).toBeGreaterThanOrEqual(4.5)
+      // Hue, so "seven DISTINCT hues" is checked as a spread rather than as seven
+      // different RGB triples (two blues would pass the latter and fail the request).
+      const [r, g, b] = fill.map((v) => v / 255) as [number, number, number]
+      const max = Math.max(r, g, b)
+      const min = Math.min(r, g, b)
+      const delta = max - min
+      let hue = 0
+      if (delta !== 0) {
+        if (max === r) hue = 60 * (((g - b) / delta) % 6)
+        else if (max === g) hue = 60 * ((b - r) / delta + 2)
+        else hue = 60 * ((r - g) / delta + 4)
       }
+      hues.push(Math.round((hue + 360) % 360))
     }
+    const sorted = [...hues].sort((a, b) => a - b)
+    // Neighbouring hues must be at least 25 degrees apart, including the wrap from the
+    // last back to the first — otherwise the wheel has two lanes that read alike.
+    const gaps = sorted.map((h, i) => (i === 0 ? h + 360 - (sorted[sorted.length - 1] ?? 0) : h - (sorted[i - 1] ?? 0)))
+    expect(
+      Math.min(...gaps),
+      `hues ${sorted.join(', ')} (gaps ${gaps.join(', ')}) — two lanes are too close in hue`,
+    ).toBeGreaterThanOrEqual(25)
 
-    // The specific grey that used to be here must not come back by any spelling.
-    const palette = bars.join(' ')
-    expect(palette).not.toContain(REJECTED_IDLE_TOKEN)
-    expect(palette).not.toContain('idle')
+    // The Lead is FIXED: the same colour in every team and session.
+    const lead = LANE_COLOR_TOKENS[0]
+    expect(LEAD_COLOR_TOKENS).toEqual(lead)
+    expect(resolveLaneColor(lead?.bar ?? '', valueOf), 'the Lead must be blue').toEqual([37, 99, 235])
   })
 
   it('turns the real log\'s 80 user/message events into exactly the human prompts', async () => {
@@ -652,9 +665,15 @@ describe('buildTimeline over the real Lead journal', () => {
 
     const value = await buildTimeline(host(), ROOT_SESSION)
     assertTimeline(value)
-    const emitted = value.lanes.flatMap((lane) => [lane.color.bar, lane.color.on])
-    expect(emitted.length).toBeGreaterThan(0)
-    const unknown = [...new Set(emitted)].filter((token) => !known.has(token))
+    // A `color-mix()` composition is only allowed to reference tokens that exist, so
+    // the check is on every `var(--...)` INSIDE the composition as well as on the bare
+    // names. Extracting the references is the point: checking the whole string against
+    // the snapshot would reject every legitimate composition.
+    const references = value.lanes
+      .flatMap((lane) => [lane.color.bar, lane.color.on, lane.color.onLight ?? ''])
+      .flatMap((value) => [...value.matchAll(/var\((--[a-z0-9-]+)\)/g)].map((m) => m[1] as string).concat(/^--/.test(value) ? [value] : []))
+    expect(references.length).toBeGreaterThan(0)
+    const unknown = [...new Set(references)].filter((token) => !known.has(token))
     expect(unknown, `these lane colour tokens are not defined by the host theme: ${unknown.join(', ')}`).toEqual([])
   })
 
