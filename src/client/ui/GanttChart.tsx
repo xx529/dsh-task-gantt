@@ -57,8 +57,8 @@ import {
   DEFAULT_LANE_HEIGHT,
   LANE_COLOR_FALLBACKS as LANE_COLOR_FALLBACKS_SHARED,
   LANE_HEAD_WIDTH,
-  MESSAGE_MARKER_HEIGHT,
-  MESSAGE_MARKER_TOP,
+  ACTIVITY_TRACK_HEIGHT,
+  ACTIVITY_TRACK_TOP,
   clampZoomMsPerPx,
   computeWindow,
   fitMsPerPx,
@@ -256,7 +256,7 @@ export function GanttChart(props: GanttChartProps): ReactNode {
    * the chain of ancestors above it, because `position: fixed` does not escape an
    * ancestor's overflow clipping (see `clipBounds`).
    */
-  const [hoveredTask, setHoveredTask] = useState<{ task: TimelineTask; anchor: HTMLElement } | null>(null)
+  const [hoveredPopover, setHoveredPopover] = useState<{ anchor: HTMLElement; body: ReactNode } | null>(null)
 
   /**
    * A fixed-positioned popover would be stranded if the chart scrolled under it, so
@@ -266,10 +266,12 @@ export function GanttChart(props: GanttChartProps): ReactNode {
     const el = scrollRef.current
     if (el === null) return
     const onScroll = (): void => {
-      setHoveredTask((previous) => {
+      setHoveredPopover((previous) => {
         if (previous === null) return null
-        const card = el.querySelector<HTMLElement>(`[data-task-id="${previous.task.id}"] .dtg-task`)
-        return card === null ? null : { task: previous.task, anchor: card }
+        // The anchor may be a task card or a message marker; both are found by the
+        // same re-query so a scrolled-away anchor dismisses exactly like a hover-out.
+        const found = el.contains(previous.anchor) ? previous.anchor : null
+        return found === null ? null : previous
       })
     }
     el.addEventListener('scroll', onScroll, { passive: true })
@@ -519,8 +521,8 @@ export function GanttChart(props: GanttChartProps): ReactNode {
    * `true` from its own ref, which is what suspends its native `title`.
    */
   const isPopoverAnchor = useCallback(
-    (element: HTMLElement | null): boolean => element !== null && element === hoveredTask?.anchor,
-    [hoveredTask],
+    (element: HTMLElement | null): boolean => element !== null && element === hoveredPopover?.anchor,
+    [hoveredPopover],
   )
 
   const endMarker = layout.endMarker
@@ -640,6 +642,29 @@ export function GanttChart(props: GanttChartProps): ReactNode {
                   selected={marker.key === selectedMessageKey}
                   onSelect={onSelectMessage}
                   tzOffsetMinutes={tzOffsetMinutes}
+                  onHoverChange={(element) => {
+                    if (element === null) {
+                      setHoveredPopover(null)
+                      return
+                    }
+                    const resolved = markerPaint(marker, laneColors, laneIdOf, userPaint, systemPaint)
+                    setHoveredPopover({
+                      anchor: element,
+                      body: (
+                        <MessagePopoverBody
+                          kind={marker.kind}
+                          route={
+                            resolved.direction === 'outgoing'
+                              ? `${uiLabel('messageSentTo')} ${resolved.peerName}`
+                              : `${uiLabel('messageReceivedFrom')} ${resolved.peerName}`
+                          }
+                          when={formatDateTime(marker.time, tzOffsetMinutes)}
+                          preview={marker.preview ?? ''}
+                        />
+                      ),
+                    })
+                  }}
+                  isPopoverAnchor={isPopoverAnchor}
                 />
               ))}
               {endMarker !== null && endMarker.visible ? (
@@ -658,7 +683,11 @@ export function GanttChart(props: GanttChartProps): ReactNode {
                 tzOffsetMinutes={tzOffsetMinutes}
                 msPerPx={layout.msPerPx}
                 color={laneColors.get(rect.laneId)}
-                onHoverChange={setHoveredTask}
+                onHoverChange={(element) => {
+                  setHoveredPopover(
+                    element === null ? null : { anchor: element, body: <TaskPopoverBody task={rect.task} tzOffsetMinutes={tzOffsetMinutes} /> },
+                  )
+                }}
                 isPopoverAnchor={isPopoverAnchor}
               />
             ))}
@@ -695,8 +724,8 @@ export function GanttChart(props: GanttChartProps): ReactNode {
         `position: fixed` from the card's own `getBoundingClientRect()` then places
         it in viewport coordinates, where neither container can clip it.
       */}
-      {hoveredTask === null ? null : (
-        <TaskPopover task={hoveredTask.task} anchor={hoveredTask.anchor} tzOffsetMinutes={tzOffsetMinutes} />
+      {hoveredPopover === null ? null : (
+        <HoverPopover anchor={hoveredPopover.anchor}>{hoveredPopover.body}</HoverPopover>
       )}
 
       <div className="dtg-legend">
@@ -1125,11 +1154,18 @@ export interface WaitBandRect {
 }
 
 /**
- * Lay out a lane's `wait_agent` spans on the MESSAGE track.
+ * Lay out a lane's `wait_agent` spans on the ACTIVITY track, coinciding with the
+ * turn band and the step bar centred inside it.
  *
- * Deliberately not on the turn/step bars: those mean "working", a wait means
- * "blocked, waiting for someone else" — the distinction the user asked for — and
- * the message row is already where an agent's contact with others is drawn.
+ * This row was originally the message track, on the reasoning that a wait is a
+ * social act ("blocked on a teammate") while the activity bars mean "working". The
+ * user overruled that: "我觉得等待的灰色条可以重合在 span，这样表达更清晰" — a wait is
+ * ALSO what the agent was doing during that stretch, so drawing it on the span it
+ * belongs to reads more directly than putting it on a different row. The wait is
+ * still told apart from work by its own texture and caps, not by its row.
+ *
+ * Only the vertical slice moved; the caps, the striped mask, the
+ * open/timedOut/unknown classes and the window behaviour are unchanged.
  *
  * @param waits - the lane's waits, in any order.
  * @param input - the window and scale to project into content px.
@@ -1190,8 +1226,12 @@ export function waitBandRects(
       x,
       w,
       clippedLeft,
-      y: (input.laneY ?? 0) + MESSAGE_MARKER_TOP,
-      h: MESSAGE_MARKER_HEIGHT,
+      // On the ACTIVITY track, coinciding with the turn band and the step bar inside
+      // it: the user asked for the wait to overlap the span ("等待的灰色条可以重合在
+      // span，这样表达更清晰"), because a wait IS what the agent was doing during that
+      // stretch — it was blocked on a teammate.
+      y: (input.laneY ?? 0) + ACTIVITY_TRACK_TOP,
+      h: ACTIVITY_TRACK_HEIGHT,
       capLeftX: x,
       capRightX: x + w,
       viewX,
@@ -1296,12 +1336,18 @@ function MessageMarker({
   tzOffsetMinutes,
   selected,
   onSelect,
+  onHoverChange,
+  isPopoverAnchor,
 }: {
   marker: MessageMarkerRect
   paint: MarkerPaint
   tzOffsetMinutes: number
   selected: boolean
   onSelect?: ((key: string | null) => void) | undefined
+  /** Reports hover/focus to the popover host, or null on close. */
+  onHoverChange?: ((element: HTMLElement | null) => void) | undefined
+  /** Tells this marker whether it currently owns the open popover. */
+  isPopoverAnchor?: ((element: HTMLElement | null) => boolean) | undefined
 }): ReactNode {
   const color = paint.paint
   const outgoing = paint.direction === 'outgoing'
@@ -1372,13 +1418,36 @@ function MessageMarker({
   // the tooltip stays the one-line summary, and the detail view carries the text.
   const interactive = typeof onSelect === 'function'
   const Tag = interactive ? 'button' : 'span'
+  /**
+   * The marker element, for hit-testing the popover's ownership and for its rect.
+   * Typed as a button ref because the interactive branch renders a button; the
+   * non-interactive branch never attaches it (and never opens a popover).
+   */
+  const markerRef = useRef<HTMLButtonElement | null>(null)
+  /*
+   * The SAME popover as the task cards, so it is opened here only when this marker is
+   * interactive (a plain span cannot take keyboard focus, and would give the reader a
+   * tooltip with no way to reach the body text).
+   */
+  const popoverOpen = interactive && (isPopoverAnchor?.(markerRef.current) ?? false)
+  useSuspendedTitle(markerRef.current as HTMLElement | null, popoverOpen)
+  const reportHover = (): void => onHoverChange?.(markerRef.current as HTMLElement | null)
   return (
     <Tag
+      {...(interactive ? { ref: markerRef } : {})}
       {...(interactive ? { type: 'button', onClick: () => onSelect(selected ? null : marker.key), 'aria-pressed': selected } : {})}
       className={classes.join(' ')}
       style={style}
       title={`${when} · ${route}${peerNote}${dropped}`}
       aria-label={label}
+      {...(interactive
+        ? {
+            onMouseEnter: reportHover,
+            onMouseLeave: () => onHoverChange?.(null),
+            onFocus: reportHover,
+            onBlur: () => onHoverChange?.(null),
+          }
+        : {})}
       data-msg-kind={marker.kind}
       data-msg-shape={shape}
       data-msg-direction={paint.direction}
@@ -1401,6 +1470,56 @@ function MessageMarker({
       )}
       {marker.droppedBefore > 0 ? <span className="dtg-msg-count" aria-hidden="true">{`+${marker.droppedBefore}`}</span> : null}
     </Tag>
+  )
+}
+
+/**
+ * Suspend an element's native `title` while it owns the open popover.
+ *
+ * Both are tooltips and the browser's own paints on top of ours (measured in
+ * task-25: the dark native bubble covered the right half of the popover), so the
+ * attribute is removed while open and the SAME string put back afterwards.
+ *
+ * `aria-label` is untouched, so keyboard and screen-reader users lose nothing, and
+ * the title is present at rest — which is what task-21 requires.
+ *
+ * The restore is written through the DOM from an effect cleanup rather than by
+ * clearing a state flag, so it runs on EVERY close path — mouseleave, blur, the
+ * scroll-driven dismissal and unmount — because each of those turns the cleanup.
+ * A card that unmounts while hovered still gets its attribute back before its node
+ * goes away, so no path can leave an element without its title.
+ *
+ * Shared by task cards AND message markers: one implementation, so the two cannot
+ * drift apart.
+ *
+ * @param element - the element whose title should be suspended while open.
+ * @param open - whether this element currently owns the popover.
+ */
+function useSuspendedTitle(element: HTMLElement | null, open: boolean): void {
+  const saved = useRef<string | null>(null)
+  useEffect(() => {
+    const el = element
+    if (el === null) return
+    if (open) {
+      if (saved.current === null) {
+        saved.current = el.getAttribute('title')
+        el.removeAttribute('title')
+      }
+      return
+    }
+    if (saved.current !== null) {
+      const restore = saved.current
+      saved.current = null
+      el.setAttribute('title', restore)
+    }
+  }, [element, open])
+  useEffect(
+    () => () => {
+      if (saved.current === null) return
+      element?.setAttribute('title', saved.current)
+      saved.current = null
+    },
+    [element],
   )
 }
 
@@ -1456,15 +1575,14 @@ function clipBounds(anchor: HTMLElement): { left: number; right: number; top: nu
  * - clamped horizontally so it cannot leave the viewport;
  * - `pointer-events: none`, so it can never swallow the pointer that opened it.
  */
-function TaskPopover({
-  task,
+function HoverPopover({
   anchor,
-  tzOffsetMinutes,
+  children,
 }: {
-  task: TimelineTask
-  /** The card element itself; its rect is re-read here so it is never stale. */
+  /** The anchor element itself; its rect is re-read here so it is never stale. */
   anchor: HTMLElement
-  tzOffsetMinutes: number
+  /** The body. Supplied by the caller so ONE popover serves tasks and markers. */
+  children: ReactNode
 }): ReactNode {
   const rect = anchor.getBoundingClientRect()
   const GAP = 6
@@ -1488,17 +1606,9 @@ function TaskPopover({
   const style: CSSProperties = flipAbove
     ? { left, bottom: Math.max(0, bounds.bottom - rect.top + GAP), width }
     : { left, top: rect.bottom + GAP, width }
-  const first = task.history[0]?.time
-  const last = task.history[task.history.length - 1]?.time
   return (
     <div className="dtg-popover" style={style} role="tooltip">
-      <div className="dtg-popover-title">{task.subject === '' ? '—' : task.subject}</div>
-      {task.description === '' ? null : <div className="dtg-popover-desc">{task.description}</div>}
-      {first === undefined || last === undefined ? null : (
-        <div className="dtg-popover-meta">
-          {`${formatDateTime(first, tzOffsetMinutes)} -> ${formatDateTime(last, tzOffsetMinutes)}`}
-        </div>
-      )}
+      {children}
     </div>
   )
 }
@@ -1532,6 +1642,68 @@ function TaskPopover({
  *   points down-left (this lane received it).
  * @param props.ink - the counterpart's lane FILL, as a CSS colour.
  */
+/**
+ * A task card's popover body: full title, description and the dated range.
+ *
+ * Kept as its own small component so `HoverPopover` stays generic and the host can
+ * choose the body per anchor kind (task vs message marker).
+ */
+function TaskPopoverBody({
+  task,
+  tzOffsetMinutes,
+}: {
+  task: TimelineTask
+  tzOffsetMinutes: number
+}): ReactNode {
+  const first = task.history[0]?.time
+  const last = task.history[task.history.length - 1]?.time
+  return (
+    <>
+      <div className="dtg-popover-title">{task.subject === '' ? '—' : task.subject}</div>
+      {task.description === '' ? null : <div className="dtg-popover-desc">{task.description}</div>}
+      {first === undefined || last === undefined ? null : (
+        <div className="dtg-popover-meta">
+          {`${formatDateTime(first, tzOffsetMinutes)} -> ${formatDateTime(last, tzOffsetMinutes)}`}
+        </div>
+      )}
+    </>
+  )
+}
+
+/**
+ * A message marker's popover body.
+ *
+ * Every string here is the SAME one the marker's `title`/`aria-label` already carry
+ * (built once in `MessageMarker` and passed in), never re-derived: two derivations of
+ * "who sent what to whom" is exactly how a tooltip and a screen-reader label drift.
+ */
+function MessagePopoverBody({
+  kind,
+  route,
+  when,
+  preview,
+}: {
+  kind: string
+  /** The direction stated from THIS lane's point of view, e.g. "sent to alpha". */
+  route: string
+  when: string
+  preview: string
+}): ReactNode {
+  return (
+    <>
+      <div className="dtg-popover-title">{route}</div>
+      <div className="dtg-popover-meta">{when}</div>
+      {preview === '' ? null : (
+        <>
+          <div className="dtg-popover-desc">{uiLabel('messagePopoverPreview')}</div>
+          <div className="dtg-popover-body">{preview}</div>
+        </>
+      )}
+      {kind === 'turn' ? <div className="dtg-popover-meta">{uiLabel('waitLegend')}</div> : null}
+    </>
+  )
+}
+
 /**
  * The lane arrow. ONE style for both directions.
  *
@@ -1787,8 +1959,8 @@ function TaskCard({
   /** Scale of the chart, so an event's mark lands at its own real time. */
   msPerPx: number
   color?: LaneColorTokens | undefined
-  /** Reports the hovered card (as a live element) to the popover host. */
-  onHoverChange?: ((value: { task: TimelineTask; anchor: HTMLElement } | null) => void) | undefined
+  /** Reports hover/focus (as a live element) to the popover host, or null on close. */
+  onHoverChange?: ((element: HTMLElement | null) => void) | undefined
   /** Tells this card whether it currently owns the open popover. */
   isPopoverAnchor?: ((element: HTMLElement | null) => boolean) | undefined
 }): ReactNode {
@@ -1856,56 +2028,9 @@ function TaskCard({
    */
   const showEllipsis = rect.labelPlacement === 'ellipsis'
   const subject = task.subject === '' ? '—' : task.subject
-  /**
-   * Whether this card currently owns the open popover.
-   *
-   * The host identifies the owner by element, so this is derived rather than stored:
-   * only one card can match. It drives the `title` suspension below.
-   */
+  /** This card owns the open popover; derived from the element, so only one matches. */
   const popoverOpen = isPopoverAnchor?.(cardRef.current) ?? false
-  /**
-   * Suspend the native `title` while the popover is open.
-   *
-   * Both are tooltips, and the browser's own appears on top of ours (measured in
-   * task-25: the dark native bubble covered the right half of the popover). So the
-   * attribute is removed while open and the SAME string put back afterwards.
-   *
-   * `aria-label` is untouched and complete throughout, so nothing is lost for
-   * keyboard or screen-reader users — and the title is back at rest, which is what
-   * task-21 requires.
-   *
-   * The restore is written through the DOM rather than by clearing a state flag: it
-   * then runs on EVERY close path — mouseleave, blur, the scroll-driven dismissal,
-   * and unmount — because each of those turns this effect's cleanup, which is the one
-   * place that owns the restore. A card that unmounts while hovered still has the
-   * attribute put back before its node goes away, so no path can leave a card without
-   * its title.
-   */
-  const suspendedTitle = useRef<string | null>(null)
-  useEffect(() => {
-    const el = cardRef.current
-    if (el === null) return
-    if (popoverOpen) {
-      if (suspendedTitle.current === null) {
-        suspendedTitle.current = el.getAttribute('title')
-        el.removeAttribute('title')
-      }
-      return
-    }
-    if (suspendedTitle.current !== null) {
-      const restore = suspendedTitle.current
-      suspendedTitle.current = null
-      el.setAttribute('title', restore)
-    }
-  }, [popoverOpen])
-  useEffect(
-    () => () => {
-      if (suspendedTitle.current === null) return
-      cardRef.current?.setAttribute('title', suspendedTitle.current)
-      suspendedTitle.current = null
-    },
-    [],
-  )
+  useSuspendedTitle(cardRef.current, popoverOpen)
   /**
    * Hand the popover host the card element. A ref object is never null, so the element
    * is read from `.current` and the report is skipped if it is not mounted yet —
@@ -1913,9 +2038,7 @@ function TaskCard({
    */
   const reportHover = (): void => {
     if (onHoverChange === undefined) return
-    const el = cardRef.current
-    if (el === null) return
-    onHoverChange({ task, anchor: el })
+    onHoverChange(cardRef.current)
   }
   return (
     <span className="dtg-task-wrap" data-task-id={task.id}>

@@ -104,6 +104,7 @@ const zh = {
   messageDropped: '{shown}/{total} 条消息已绘制（当前时间段内）',
   messageDroppedHint: '按像素间距抽稀；每个标记仍是它自己的真实时间，未绘制的只被省略、未被挪动',
   messageAria: '{time}，{route}，{preview}',
+  messagePopoverPreview: '消息内容',
   leadLabel: 'Lead',
 } as const
 
@@ -204,6 +205,7 @@ const en: Record<UiMessageKey, string> = {
   messageDropped: '{shown}/{total} messages drawn (within the selected range)',
   messageDroppedHint: 'Thinned by pixel spacing; every marker keeps its own real time — omitted ones are never moved',
   messageAria: '{time}, {route}, {preview}',
+  messagePopoverPreview: 'Message',
   leadLabel: 'Lead',
 }
 

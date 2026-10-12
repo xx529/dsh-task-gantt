@@ -1,5 +1,56 @@
 # Changelog
 
+## 0.2.13 — 2026-10-12
+
+**1 — the message markers get the same hover popover as the task cards**
+
+"鼠标悬停到发送和接收的 icon 也要像任务卡一样有悬浮框出现". The 0.2.12 popover was not copied:
+`TaskPopover` became a shared `HoverPopover({ anchor, children })`, and the `title`-suspension
+logic became a shared `useSuspendedTitle(element, open)` hook used by BOTH the cards and the
+markers — so there is one popover implementation and one place that can forget to restore a
+title (there is none: the restore lives in the effect cleanup).
+
+The marker body reuses what the marker already knows (`messageSentTo` / `messageReceivedFrom`
+for the route line, `preview` for the body) rather than re-deriving anything. Measured on the
+built bundle: an outgoing marker reads `发出 → alpha · 10-12 14:27:21 · 消息内容 · lane 0 msg 10`
+and an incoming one reads `收到 ← alpha · … · lane 0 msg 9`.
+
+The invariants that cost this repo real time all still hold, re-measured with a marker popover
+OPEN: `.dtg-scroll` stays 249/248 (identical to closed — the trap that twice inflated the scroll
+box), the popover's parent is the chart and not the scroller, it is clamped into the panel, and
+`title` follows rest -> absent -> restored-to-the-same-string across mouseleave AND focus->blur
+with 160/160 markers carrying their title again afterwards.
+
+**2 — the grey wait bar coincides with the span**
+
+"我觉得等待的灰色条可以重合在 span，这样表达更清晰". `waitBandRects` moved from the message
+track to the activity track: `y = laneY + ACTIVITY_TRACK_TOP`, `h = ACTIVITY_TRACK_HEIGHT`. The
+band now covers the whole turn band with the 8px step bar centred inside it, so "this agent was
+blocked right here" is drawn on the very interval it describes. Measured on a page with waits:
+`wait {y: 96, h: 10}` against `step {y: 97, h: 8}` — a 1px offset, which is exactly
+`(10 - 8) / 2`, on all five waits.
+
+Only the vertical slice moved: the caps, the striped pattern, and the `open` / `timedOut` /
+`unknown` classes are untouched, and the doc comment above the function — which argued the
+OPPOSITE ("Deliberately not on the turn/step bars") — was rewritten to the new ruling instead of
+being left contradicting the code.
+
+**3 — the wait band's geometry is now guarded, which it never was**
+
+`grep -rn 'waitBandRects\|MESSAGE_MARKER_TOP' tests/` used to return nothing: the band's
+position had no test at all, which is how it could drift from the activity track to the message
+track without anything going red. `tests/wait-band.spec.ts` adds 8 locks — the y and height for
+several lane indices, coincidence with the same lane's turn band taken from `laneTracks()` (so
+either side drifting fails), an explicit "NOT the message track" regression lock, the band
+staying inside its own lane, and the unchanged window / clip / cull behaviour. Writing them
+caught a real coordinate mistake in the test itself (`laneTracks()` returns absolute y, so adding
+`laneY` again double-counted) — which is the point of a lock.
+
+One label key was added for the popover body (`messagePopoverPreview`, zh + en, no existing key
+touched).
+
+The footer build identity is now `v0.2.13 · popover-everywhere`.
+
 ## 0.2.12 — 2026-10-12
 
 Three requests from a screenshot of a real board, and one bug found while building them.

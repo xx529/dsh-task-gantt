@@ -378,6 +378,17 @@ export const BOARD_CSS = `
   margin-top: 4px;
   color: var(--dsw-alias-label-tertiary);
 }
+/* A message preview can be long, so the popover caps its height instead of growing
+   past the panel; the overflow scrolls (a tooltip that cannot be read is worse than
+   one that scrolls). */
+.dtg-popover-body {
+  margin-top: 2px;
+  max-height: 160px;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  color: var(--dsw-alias-label-secondary);
+}
 
 /* --- lane head navigation (requirement: click a teammate -> their chat) - */
 
