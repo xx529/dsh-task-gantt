@@ -39,6 +39,15 @@ export const BOARD_CSS = `
   flex: 0 0 auto;
   min-width: 0;
   padding: 4px 6px;
+  /* The toolbar is its own horizontal scroller. Narrowing the panel used to wrap the
+     labels ("时间段" measured 2 lines at 480px and 3 at 420px and below), which made the
+     row look broken. Nothing inside may wrap, and the row scrolls sideways instead of
+     squeezing its controls. That range belongs to THIS element, deliberately NOT to
+     the scroll container - a different element that has produced a phantom horizontal
+     scroll twice in this project. */
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
   border-bottom: 1px solid var(--dsw-alias-border-l1);
   background: var(--dsw-alias-bg-layer-1);
   -webkit-app-region: no-drag;
@@ -65,6 +74,9 @@ export const BOARD_CSS = `
 .dtg-chip-warn { color: var(--dsw-alias-state-warn-primary); border-color: var(--dsw-alias-state-warn-primary); }
 .dtg-chip-error { color: var(--dsw-alias-state-error-primary); border-color: var(--dsw-alias-state-error-primary); }
 .dtg-spacer { flex: 1 1 auto; min-width: 0; }
+/* Every direct child of the bar sizes to its content; a shrinking child is what let a
+   label break onto a second line. The spacer above is the exception and absorbs slack. */
+.dtg-bar > * { flex: 0 0 auto; }
 .dtg-btn {
   display: inline-flex;
   align-items: center;
@@ -77,6 +89,8 @@ export const BOARD_CSS = `
   background: transparent;
   color: var(--dsw-alias-label-secondary);
   font: var(--dsw-font-xxxs-11);
+  /* A control label never breaks across lines, at any panel width. */
+  white-space: nowrap;
   cursor: pointer;
   -webkit-app-region: no-drag;
 }
@@ -599,9 +613,12 @@ export const BOARD_CSS = `
 }
 /* Controls in the toolbar: the range picker and the follow toggle. */
 .dtg-control { display: inline-flex; align-items: center; gap: 3px; min-width: 0; }
-.dtg-control-label { color: var(--dsw-alias-label-tertiary); font: var(--dsw-font-xxxs-11); }
+.dtg-control-label { color: var(--dsw-alias-label-tertiary); font: var(--dsw-font-xxxs-11); white-space: nowrap; }
 .dtg-select {
   max-width: 72px;
+  /* A native select renders its value on one line; pin it so a narrow bar cannot
+     turn the option text into two rows. */
+  white-space: nowrap;
   padding: 1px 2px;
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 3px;

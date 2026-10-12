@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.2.18 — 2026-10-12
+
+**Toolbar labels stop wrapping when the panel is narrow**
+
+"这里缩小后就文本换行了，修复一下" — at narrow widths `时间段` was breaking across two and then
+three lines, so the toolbar row grew from 14px to 42px and the row looked broken.
+
+MEASURED before the fix by sweeping `#host` width: the wrapping element was exactly one —
+`.dtg-control-label` (时间段) with `white-space: normal` — at 480px it was 28px / 2 lines, and from
+420px down it stayed 42px / 3 lines; every other label was already on one line but carried the same
+`normal` value and the same latent risk, so all of them were fixed together. `.dtg-bar` is now a
+horizontally scrollable row (`overflow-x: auto`, hidden scrollbar) whose children are
+`flex: 0 0 auto`, and `.dtg-btn` / `.dtg-control-label` / `.dtg-select` are `nowrap`. No control is
+hidden, no label is truncated, and no copy or behaviour changed (`git diff --stat labels.ts` empty).
+
+MEASURED after: at 480 / 420 / 380 / 340 / 300px every label is ONE line (max 1), 时间段 went
+42px → 14px, all 8 controls remain in the DOM, and at the narrowest width the toolbar scrolls
+(508px of content) with the last control fully visible once scrolled. The toolbar's scroll range does
+NOT leak into `.dtg-scroll` — checked as a control experiment at 300px with the bar hidden and shown:
+`169/168` both ways, `barContributesToScrollContainer: false`.
+
+Known trade-off, reported rather than papered over: the toolbar's intrinsic width is 508px, so at
+panel widths below that it scrolls, which means the leftmost controls are not initially in view.
+Tightening the padding/gaps would win ~20–30px and shortening the labels would need copy changes the
+user has not asked for, so neither was done unilaterally.
+
+The footer build identity is now `v0.2.18 · bar-nowrap`.
+
 ## 0.2.17 — 2026-10-12
 
 **The hover popover shows the WHOLE title, plus start, end, status and duration**
