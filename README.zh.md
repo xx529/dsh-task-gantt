@@ -4,14 +4,15 @@
 
 [English](README.md) | 中文
 
-> **下面的截图是真实面板 + 合成 fixture 数据**（6 条泳道、每条泳道双向消息、两种
-> 箭头粗细），由真实浏览器拍摄，存于 `docs/screenshots/panel-v3.png`。之所以标注清楚：
-> 画面是**出厂组件**画的，但**数据是 fixture**，所以它不是真机团队数据截图。图里页脚
-> 带着构建标识（`v0.2.2`），读者据此可以判断是哪个构建画的。
+> **下面的截图是真实面板 + 合成 fixture 数据**（5 条泳道、5 种不同的 agent 颜色、时长
+> 差异明显的任务、一个仍在进行的任务、双向消息箭头），由真实浏览器以 2 倍分辨率拍摄并裁到
+> 面板本体，存于 `docs/screenshots/panel-v4.png`。之所以标注清楚：画面是**出厂组件**画的，
+> 但**数据是 fixture**，所以它不是真机团队数据截图。图里页脚带着构建标识
+> （`v0.2.11 · label-in-box`），读者据此可以判断是哪个构建画的。
 > 其余截图（真机团队数据的面板全貌、任务卡详情、降级态）仍待补；清单见
 > [`docs/SCREENSHOTS.md`](docs/SCREENSHOTS.md)。不会用示意图冒充实拍。
 
-![任务甘特图面板：每个 teammate 一条泳道、消息箭头分发出与收到、任务条长度即真实时长](docs/screenshots/panel-v3.png)
+![暗色皮肤下的任务甘特图面板：五条不同 agent 颜色的泳道、消息箭头分发出与收到、任务条长度即真实时长，标题画在条内](docs/screenshots/panel-v4.png)
 
 `dsh-task-gantt` 是 [dsh-better-sidebar](https://github.com/ChuanTianML/dsh-better-sidebar) 的插件：它注册一个额外的侧边栏页签。插件是**只读**的 —— 它不会创建、认领或完成任何任务。
 
@@ -21,7 +22,7 @@
 
 | | |
 |---|---|
-| 版本 | `0.2.10` |
+| 版本 | `0.2.11` |
 | 冻结契约（`src/shared/contract.ts`） | 已完成 |
 | host 数据层（`src/host/**`） | 进行中 |
 | 页签注册（`src/client/index.ts`） | 已完成 |

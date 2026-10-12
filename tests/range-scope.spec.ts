@@ -24,6 +24,7 @@ import { describe, expect, it } from 'vitest'
 import type { LaneColorTokens, MessageSpan, TimelineLane, TimelineResponse } from '../src/shared/contract.ts'
 import {
   MESSAGE_MARKER_MIN_GAP_PX,
+  TASK_LABEL_MIN_WIDTH,
   MESSAGE_MARKER_WIDTH,
   computeWindow,
   inWindow,
@@ -186,21 +187,60 @@ describe('defect 2: omissions must count in-range candidates only', () => {
   })
 })
 
-describe('defect 3: no captions when the zoom cannot show them', () => {
-  it('hides every caption at 600 s/px (pre-fix: 8 captions, 18px wide, 42-68px of text)', () => {
+describe("defect 3 re-based: the label is INSIDE the box, or absent (user ruling)", () => {
+  // The user deleted outside-box placement entirely ("只在条内画，装不下就较少显示
+  // 的文本"). New contract, read from the source:
+  //   labelPlacement = anchor === 'history' && w >= TASK_LABEL_MIN_WIDTH ? 'inside' : 'none'
+  //   'inside' -> labelX === x, labelW === w ;  'none' -> labelX === x, labelW === 0
+  // My fixture's completed task spans at(30) -> at(75) = 45 min = 2_700_000 ms, so
+  //   w = 2_700_000 / msPerPx. Every zoom below is inside the sanity range
+  //   [MIN_MS_PER_PX 50, MAX_MS_PER_PX 600_000], so nothing else clamps w.
+  const TASK_MS = 45 * 60_000 // 2_700_000
+
+  function completedTask(msPerPx: number) {
+    const result = layout(msPerPx)
+    const task = result.tasks.find((card) => card.anchor === 'history' && card.durationMs === TASK_MS)
+    expect(task, `the 45-minute task must be laid out (msPerPx=${msPerPx})`).toBeDefined()
+    return task as NonNullable<typeof task>
+  }
+
+  it('draws the label INSIDE when the box is at least TASK_LABEL_MIN_WIDTH wide', () => {
+    // msPerPx = 50_000  =>  w = 2_700_000 / 50_000 = 54 px  >= 36
+    const task = completedTask(50_000)
+    expect(task.w).toBe(54)
+    expect(task.w).toBeGreaterThanOrEqual(TASK_LABEL_MIN_WIDTH)
+    expect(task.labelPlacement, 'w=54 >= 36 must be inside').toBe('inside')
+    expect(task.labelX).toBe(task.x)
+    expect(task.labelW).toBe(task.w)
+    expect(task.labelW).toBe(54)
+  })
+
+  it('is INSIDE exactly AT the boundary (>= is inclusive)', () => {
+    // msPerPx = 2_700_000 / 36 = 75_000  =>  w = exactly 36
+    const task = completedTask(75_000)
+    expect(task.w).toBe(TASK_LABEL_MIN_WIDTH)
+    expect(task.labelPlacement, 'w === 36 is inclusive, so the label must be inside').toBe('inside')
+    expect(task.labelW).toBe(TASK_LABEL_MIN_WIDTH)
+  })
+
+  it('drops the label entirely just BELOW the boundary', () => {
+    // msPerPx = 2_700_000 / 35 = 77_142.857…  =>  w = 35 < 36
+    const task = completedTask(2_700_000 / 35)
+    expect(task.w).toBeCloseTo(35, 9)
+    expect(task.w).toBeLessThan(TASK_LABEL_MIN_WIDTH)
+    expect(task.labelPlacement).toBe('none')
+    expect(task.labelW).toBe(0)
+    expect(task.labelX, 'labelX stays the box edge even when nothing is drawn').toBe(task.x)
+  })
+
+  it('hides the label at the coarsest zoom (the browser measured 0 .dtg-task-caption)', () => {
+    // 600_000 ms/px  =>  2_700_000 / 600_000 = 4.5 px  << 36
     const result = layout(600_000)
     expect(result.tasks.length, 'the tasks are still laid out').toBeGreaterThan(0)
     for (const task of result.tasks) {
-      expect(task.labelPlacement, `${task.task.id} must not try to render a caption here`).toBe('none')
+      expect(task.labelPlacement, `${task.task.id} at 600 s/px`).toBe('none')
+      expect(task.labelW).toBe(0)
     }
-  })
-
-  it('still shows captions at a zoom where they fit (the fix must not delete labels)', () => {
-    // 93 s/px is the auto-fit zoom of the browser run, where 4 captions were
-    // measured at 116px wide with subject scrollWidth 116 (not truncated).
-    const result = layout(93_000)
-    const labelled = result.tasks.filter((task) => task.labelPlacement !== 'none')
-    expect(labelled.length, 'some caption must survive at a readable zoom').toBeGreaterThan(0)
   })
 })
 

@@ -126,8 +126,8 @@
  *   else:
  *     anchor = 'live' ; historyIndex = -1
  *     from   = to = window.end
- *     w      = TASK_BAR_MIN_WIDTH                    // duration unknown: marker only
- *     x      = max(0, dataWidth - TASK_CHIP_WIDTH)   // right-aligned to `now`
+ *     w      = TASK_MARKER_WIDTH                     // duration unknown: marker only
+ *     x      = max(0, dataWidth - TASK_MARKER_WIDTH) // right-aligned to `now`
  *   viewX  = x - scrollLeft
  *   visible = viewX + w >= 0 && viewX <= viewportWidth
  *   at      = from            (epoch ms the card is anchored at)
@@ -140,9 +140,9 @@
  * last dated transition exactly, floored only at the single-pixel hairline
  * {@link TASK_BAR_MIN_WIDTH} (a 30s task and a 300s task differ by 10x, and a
  * 1ms task really is a hairline rather than a 2px rule).
- * The LABEL is a separate chip — inside the bar when the bar is at least
- * {@link TASK_CHIP_INSIDE_MIN_WIDTH} wide, otherwise hung to its right — so
- * label text and bar length are decoupled.
+ * The LABEL is drawn INSIDE the box ({@link TASK_LABEL_MIN_WIDTH} or wider) and
+ * truncated there, or omitted entirely below that — never hung beside the box — so
+ * label text and box length stay decoupled without the label claiming any time.
  *
  * ============================== CULLING / INPUT SANITIZATION ===============
  * `cull: false` (default) returns every rect with `visible` computed.
@@ -308,8 +308,7 @@ export const TASK_MARKER_WIDTH = 9
  * THE TASK BOX *IS* THE DURATION — there is no separate bar any more.
  *
  * The previous revision drew TWO objects per task: a thin 10px bar whose length was
- * the real duration, and a 36px card BOX that held the label at a FIXED
- * `TASK_CHIP_WIDTH` of 148px. The user read the box as "the task" and reported the
+ * the real duration, and a 36px card BOX that held the label at a FIXED 148px. The user read the box as "the task" and reported the
  * consequence: "如果时间线的长度比任务框固定最小的长度少的时候会出现问题，任务框的长度应该
  * 是按实际时间线来，而不是有个最小固定长度大小（这样意义上不合理）". They were right — a
  * 5-second task and a 5-minute task drew the same 148px box, so the box carried no
@@ -333,34 +332,23 @@ export const TASK_BAR_HEIGHT = 20
  */
 export const TASK_BAR_TOP_OFFSET = 0
 
-/** Horizontal gap between the task box and a label that has to sit outside it. */
-export const TASK_CHIP_GAP = 3
-
 /**
- * Preferred width of the label when it cannot fit inside the box.
+ * The narrowest task box that still gets a label, in px.
  *
- * This is the LABEL's width, not a floor on the task's. A short task draws a short box
- * and its label hangs outside as plain text, which is why the number no longer
- * misrepresents any duration.
- */
-export const TASK_CHIP_WIDTH = 148
-
-/**
- * The label stays INSIDE the box at or above this width, and hangs outside below it.
- * 148px is the narrowest width at which one line of subject plus one of description
- * still reads without being cut to nothing.
- */
-export const TASK_CHIP_INSIDE_MIN_WIDTH = TASK_CHIP_WIDTH
-
-/**
- * The narrowest a label may be and still be worth placing on a given side, in px.
+ * The user's rule, twice refined: "只在条内画，装不下就较少显示的文本" — the label lives
+ * INSIDE the duration box, and when the box is too narrow for the whole subject the text
+ * is TRUNCATED, never moved outside it. There is no outside placement left to fall back
+ * on (see `TaskLabelPlacement`), so this constant is the only guard, and it has to be
+ * wide enough for CSS `text-overflow: ellipsis` to produce an actual ellipsis: the
+ * browser needs room for the ellipsis itself, and below that it clips a glyph in half —
+ * the exact unreadable artefact the user reported twice (first as 图 1, then as
+ * "还是出现图中文字在任务条外的情况").
  *
- * Deliberately NOT {@link TASK_CHIP_INSIDE_MIN_WIDTH}: "fits inside the box" needs the
- * full 148px, but "there is room to sit BESIDE the box" only needs enough to read a
- * truncated word. Using 148 for both made a canvas with 72px of room fall through to the
- * clamp-anywhere branch, which then laid the label across the top of its own box.
+ * Arithmetic from the card's own padding in `styles.ts` (8px left + 6px right = 14px):
+ * the text box is `w - 14`; one 11px glyph plus an ~8px ellipsis needs ~19px, so
+ * `w >= 33`. 36 is that with a small margin. IF THE PADDING CHANGES, RE-DERIVE THIS.
  */
-export const TASK_CHIP_MIN_SIDE_WIDTH = 48
+export const TASK_LABEL_MIN_WIDTH = 36
 
 /* ---------------------------------------------------------------- zoom */
 
@@ -371,18 +359,23 @@ export const MAX_MS_PER_PX = 600_000
 export const DEFAULT_MS_PER_PX = 1_000
 
 /**
- * 5 s per px — the finest MANUAL zoom, by user rule ("时间粒度，最少的只需要去到 5 秒就行").
+ * 1 s per px — the finest MANUAL zoom, by user rule.
+ *
+ * Raised from 50 ms to 5 s ("时间粒度，最少的只需要去到 5 秒就行"), then lowered to 1 s
+ * ("最小时间粒度改成 1s 吧") once the 5 s floor was on screen and read as too coarse.
+ * The number has moved twice; the STRUCTURE below has not, and that is the part worth
+ * keeping:
  *
  * Deliberately a SEPARATE constant from {@link MIN_MS_PER_PX}, and deliberately not
  * wired into {@link clampMsPerPx}: that one function is shared by three callers —
  * this floor's manual-zoom path, {@link fitMsPerPx}, and `layoutTimeline`'s own input
- * sanitisation — so raising it there would also clamp 适应窗口. Measured consequence
- * of getting that wrong: a 5-minute range on a 248px canvas fits at ~1.2 s/px, so a
- * clamped fit would draw 300s ÷ 5s = 60px of content inside a 248px canvas and strand
- * the chart in the left quarter. The user's choice was explicit: constrain the manual
- * zoom only.
+ * sanitisation — so a floor there would also clamp 适应窗口. Measured consequence of
+ * getting that wrong (measured while the floor was 5 s/px): a 5-minute range on a 248px
+ * canvas fits at ~1.2 s/px, so a clamped fit would have drawn 300s ÷ 5s = 60px of content
+ * inside a 248px canvas and stranded the chart in the left quarter. The user's choice was
+ * explicit: constrain the manual zoom only.
  */
-export const MIN_ZOOM_MS_PER_PX = 5 * SECOND_MS
+export const MIN_ZOOM_MS_PER_PX = 1 * SECOND_MS
 
 /** Hard cap on generated ticks, so a pathological zoom can never hang a render. */
 export const MAX_TICKS = 400
@@ -571,7 +564,7 @@ export interface SpanRect {
  * Exported as a named type so the renderer can switch on it exhaustively rather
  * than re-spelling the union and drifting from the layout's own contract.
  */
-export type TaskLabelPlacement = 'inside' | 'right' | 'left' | 'none'
+export type TaskLabelPlacement = 'inside' | 'none'
 
 export interface TaskCardRect {
   laneId: string
@@ -613,21 +606,20 @@ export interface TaskCardRect {
   /** Alias of `anchor === 'live'`, for readable call sites. */
   live: boolean
   /**
-   * The LABEL chip, decoupled from the bar so that "can I read the title" and
-   * "how long did it take" stop fighting each other:
-   * - `'inside'`  – `labelX === x`, `labelW === w` (the bar is wide enough);
-   * - `'right'`   – `labelX === x + w + TASK_CHIP_GAP`, `labelW === TASK_CHIP_WIDTH`;
-   * - `'left'`    – mirrored to the left of the bar;
-   * - `'none'`    – the label cannot be drawn READABLY, so it is not drawn at all
-   *                 (`labelW === 0`, `labelX === x`). This is the coarse-zoom case:
-   *                 the whole content is narrower than the least width a caption is
-   *                 worth drawing at, so every caption would be a one-character
-   *                 fragment in the same few pixels. The user's rule: "如果时间线粒度
-   *                 太粗，无法展示任务卡文本时候，就不要强行展示了". The box, its
-   *                 tooltip and its click target are unaffected.
+   * The LABEL, and it is INSIDE the box or absent — there is no third answer.
    *
-   * A chip placed to the right NEVER moves `x`/`w`: the bar keeps its true
-   * start and length.
+   * - `'inside'` – `labelX === x`, `labelW === w`. The renderer draws the subject here,
+   *                truncated with CSS ellipsis when `w` is too small for it.
+   * - `'none'`   – `labelW === 0`, `labelX === x`: the box is narrower than
+   *                {@link TASK_LABEL_MIN_WIDTH}, i.e. there is not even room for the
+   *                ellipsis, so nothing is drawn. The box, its `title` and its click
+   *                target are unaffected.
+   *
+   * The label used to move OUTSIDE the box when it did not fit (`'right'`/`'left'`, with
+   * the `TASK_CHIP_*` geometry and a clamp-into-the-canvas fallback). The user removed
+   * that: "只在条内画，装不下就较少显示的文本" — see `taskCardRect` for the history.
+   *
+   * Neither answer ever moves `x`/`w`: the box keeps its true start and its true length.
    */
   labelPlacement: TaskLabelPlacement
   /**
@@ -855,13 +847,15 @@ export function clampMsPerPx(value: number): number {
  *
  * Two things, and the second is the one that bites:
  *
- * 1. the floor is {@link MIN_ZOOM_MS_PER_PX} (5 s/px), so zooming in stops where the
+ * 1. the floor is {@link MIN_ZOOM_MS_PER_PX} (1 s/px), so zooming in stops where the
  *    user said it should;
  * 2. the floor is the FINER of that and `current`. {@link fitMsPerPx} is allowed below
- *    the manual floor (a 5-minute range in a 248px canvas fits at ~1.2 s/px), so a
- *    plain `clamp(requested, 5000, …)` would make a zoom-IN click from a fitted
- *    1.2 s/px snap to 5 s/px — the user asks to move closer and the chart jumps 4x
- *    AWAY. With `min(floor, current)`, that click clamps onto the current value, and
+ *    the manual floor, so a plain `clamp(requested, 1000, …)` would make a zoom-IN click
+ *    from a fitted sub-floor zoom snap UP to the floor — the user asks to move closer
+ *    and the chart jumps AWAY. It needs a SHORT window to show (a 248px canvas only fits
+ *    below 1 s/px under ~4 minutes, and the finest range option is 5m), which is exactly
+ *    why the unit test constructs one instead of reusing a shipped range.
+ *    With `min(floor, current)`, that click clamps onto the current value, and
  *    `applyZoom`'s `next === effectiveMsPerPx` guard turns it into a no-op: the button
  *    simply stops, which is what "5 s is the finest" means when you are already finer.
  *    Zooming OUT from there is unaffected.
@@ -2059,62 +2053,32 @@ function taskCardRect(
   const intersects = inWindow(from, to, win)
   const clippedLeft = intersects && from < win.start
   /**
-   * Where the label goes when it cannot fit inside the box.
+   * Where the label goes — and there are now only two answers, both INSIDE the box.
    *
-   * It flips to the LEFT of the box when there is no room on the right, and its width is
-   * clamped to the room that side actually has. Both rules exist because of a measured
-   * defect: a borderless caption 148px wide, starting just past the box, reached 151px
-   * BEYOND the canvas for a task at the right edge. An absolutely-positioned descendant
-   * contributes to its scroll container's scrollable overflow, so that did not merely
-   * look wrong — it inflated `scrollWidth` from 248 to 399 and gave the panel a phantom
-   * horizontal scroll range, which in turn broke the follow toggle (there is no "keep NOW
-   * at the right edge" to do when the content already overflows by 151px).
+   * The user, after seeing the outside caption on screen: "只在条内画，装不下就较少显示的
+   * 文本". So the label is never placed beside the box any more; when the box is too narrow
+   * for the whole subject the renderer truncates it with CSS ellipsis, and below
+   * {@link TASK_LABEL_MIN_WIDTH} there is not even room for the ellipsis, so no label is
+   * emitted at all (`'none'`, `labelW === 0`).
    *
-   * Priority: right, then left, then (only if the canvas can host a readable caption at
-   * all) clamp inside the canvas, otherwise draw NO label.
+   * HISTORY, because the deleted machinery was not stupid — it answered a different
+   * question. The outside caption existed so that a short task could still be named: a
+   * borderless 148px caption hung to the right of the box, flipped to the left when the
+   * right side ran out, and clamped to whichever side had room. Two measured defects came
+   * with it: a caption at the canvas edge reached 151px past it and inflated `scrollWidth`
+   * from 248 to 399 (a phantom horizontal scroll that broke the follow toggle), and at a
+   * coarse zoom all twelve captions were squeezed into the same 18.1px column holding
+   * 45-71px of text. Constraining the width fixed the first and suppressing the unreadable
+   * case (0.2.9) fixed the second, but the reader was still looking at task names outside
+   * the box that measures the task — which is what this removes.
    *
-   * The "clamp inside the canvas" case keeps the label readable for a narrow canvas
-   * instead of letting it vanish or overflow — and it can never produce a rect outside
-   * `[0, contentWidth]`.
-   *
-   * The last case is the user's issue 3: "如果时间线粒度太粗，无法展示任务卡文本时候，就
-   * 不要强行展示了". Measured at the coarsest zoom (600 s/px) over a 3-hour log: the content
-   * is `3h / 600s = 18px` wide, so all twelve captions were clamped to the same
-   * 18.1px-wide column (measured `scrollWidth` 45–71px inside an 18px box) and every one
-   * of them rendered as a one-character fragment stacked at the same x. A caption that
-   * cannot be read is not information; the box, its `title` and its click target all
-   * still carry the task.
+   * The box, its `title` and its click target are untouched by all of it: the full subject
+   * and the description stay reachable even when `labelW` is 0.
    */
-  const contentWidth = win.durationMs / msPerPx
-  const roomRight = contentWidth - (x + w + TASK_CHIP_GAP)
-  const roomLeft = x - TASK_CHIP_GAP
-  let labelPlacement: TaskLabelPlacement =
-    anchor === 'history' && w >= TASK_CHIP_INSIDE_MIN_WIDTH ? 'inside' : 'right'
-  let labelX = x + w + TASK_CHIP_GAP
-  let labelW = TASK_CHIP_WIDTH
-  if (labelPlacement === 'right') {
-    if (roomRight >= TASK_CHIP_MIN_SIDE_WIDTH) {
-      labelW = Math.min(TASK_CHIP_WIDTH, roomRight)
-    } else if (roomLeft >= TASK_CHIP_MIN_SIDE_WIDTH) {
-      labelPlacement = 'left'
-      labelW = Math.min(TASK_CHIP_WIDTH, roomLeft)
-      labelX = x - TASK_CHIP_GAP - labelW
-    } else if (contentWidth < TASK_CHIP_MIN_SIDE_WIDTH) {
-      // Not "this side has no room" but "NO side can have room": the whole canvas is
-      // narrower than the minimum width this module already declares a caption worth
-      // drawing at (`TASK_CHIP_MIN_SIDE_WIDTH`). Squeezing the text in anyway is what
-      // produced twelve unreadable fragments in eighteen pixels.
-      labelPlacement = 'none'
-      labelW = 0
-      labelX = x
-    } else {
-      // No side has room, but the canvas itself is wide enough to read a caption in.
-      // Keep it inside the canvas at all costs: an overflowing rect is worse than an
-      // overlapped one, because it corrupts the scroll geometry.
-      labelW = Math.min(TASK_CHIP_WIDTH, Math.max(0, contentWidth))
-      labelX = Math.max(0, Math.min(x + w + TASK_CHIP_GAP, contentWidth - labelW))
-    }
-  }
+  const labelPlacement: TaskLabelPlacement =
+    anchor === 'history' && w >= TASK_LABEL_MIN_WIDTH ? 'inside' : 'none'
+  const labelX = x
+  const labelW = labelPlacement === 'inside' ? w : 0
   return {
     laneId,
     laneIndex,

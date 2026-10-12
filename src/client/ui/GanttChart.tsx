@@ -59,7 +59,6 @@ import {
   LANE_HEAD_WIDTH,
   MESSAGE_MARKER_HEIGHT,
   MESSAGE_MARKER_TOP,
-  TASK_CHIP_GAP,
   clampZoomMsPerPx,
   computeWindow,
   fitMsPerPx,
@@ -1668,38 +1667,19 @@ function TaskCard({
     top: rect.barY,
     width: rect.w,
     height: rect.barH,
-    ...(color === undefined ? {} : { background: color.bar, color: lanePaint(color.on) }),
-  }
-  /**
-   * The label, when it does not fit inside the box.
-   *
-   * Deliberately NOT a box: no background, no border, so the only bordered rectangle on
-   * a task row is the one whose LENGTH means something. A fixed-width label BOX was
-   * exactly what the user objected to; label text may be any width it likes precisely
-   * because it no longer looks like the task.
-   */
-  const captionStyle: CSSProperties = {
-    left: rect.labelX,
-    top: rect.barY,
-    width: rect.labelW,
-    height: rect.barH,
+    // The agent colour is ONLY the 3px left edge (restored from 00e58a6^). The fill
+    // stays the neutral surface token so the box reads as a label card, not as a
+    // solid identity swatch: a solid agent-coloured box was what the user asked to
+    // undo, while the geometry (one box, length = duration) stays as it is.
+    ...(color === undefined ? {} : { borderLeftColor: color.bar }),
   }
   const inside = rect.labelPlacement === 'inside'
-  /**
-   * Only `'right' | 'left'` have a caption to draw. `'none'` is the layout saying
-   * the chosen granularity is too coarse to fit text: at 600 s/px all twelve
-   * captions were clamped to the same 18.1px column holding 45-71px of text, i.e.
-   * twelve one-character fragments stacked on one x. Rendering nothing is the
-   * honest outcome — the button's title/aria-label still carry subject and
-   * description, so the text is reachable without pretending to show it.
-   */
-  const hasCaption = rect.labelPlacement === 'right' || rect.labelPlacement === 'left'
   const subject = task.subject === '' ? '—' : task.subject
   return (
     <span className="dtg-task-wrap" data-task-id={task.id}>
       <button
         type="button"
-        className={`dtg-task dtg-ink-${task.status}${rect.live ? ' dtg-task-live' : ''}${hasCaption ? ' dtg-task-outside' : ''}`}
+        className={`dtg-task dtg-ink-${task.status}${rect.live ? ' dtg-task-live' : ''}`}
         style={boxStyle}
         title={full}
         aria-label={aria}
@@ -1709,21 +1689,16 @@ function TaskCard({
         data-task-anchor={rect.anchor}
         data-label-placement={rect.labelPlacement}
       >
+        {/*
+          The label is drawn INSIDE this box or not at all: the user asked for
+          "only inside the bar; if it does not fit, show less text". `'none'` means
+          the layout decided the granularity cannot fit text (at the coarsest zoom
+          all twelve captions collapsed onto one 18.1px column), so nothing is
+          rendered; `title`/`aria-label` still carry subject and description, which
+          makes them the only text affordance in that state.
+        */}
         {inside ? <span className="dtg-task-subject">{subject}</span> : null}
       </button>
-      {hasCaption ? (
-        // `aria-hidden`: the button above already carries the whole accessible name, and
-        // this is the same control's mouse affordance, so the text is not read twice.
-        <span
-          className="dtg-task-caption"
-          style={captionStyle}
-          aria-hidden="true"
-          onClick={() => onSelectTask(selected ? null : task.id)}
-        >
-          <span className="dtg-task-subject">{subject}</span>
-          {task.description === '' ? null : <span className="dtg-task-desc">{task.description}</span>}
-        </span>
-      ) : null}
       {/* Every dated transition, at its own real time, on a rail under the box. */}
       <TaskEventMarks
         rect={rect}

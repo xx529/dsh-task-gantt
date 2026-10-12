@@ -32,9 +32,7 @@ import {
   TASK_BAR_HEIGHT,
   TASK_BAR_MIN_WIDTH,
   TASK_MARKER_WIDTH,
-  TASK_CHIP_GAP,
-  TASK_CHIP_WIDTH,
-  TASK_CHIP_INSIDE_MIN_WIDTH,
+  TASK_LABEL_MIN_WIDTH,
   TURN_BAND_HEIGHT,
   buildTicks,
   clamp,
@@ -162,23 +160,36 @@ describe('zoom helpers', () => {
     // so raising its floor would clamp 适应窗口 too. The user-facing limit lives in
     // `clampZoomMsPerPx`.
     expect(MIN_MS_PER_PX).toBe(50)
-    expect(MIN_ZOOM_MS_PER_PX).toBe(5 * SECOND_MS)
+    expect(MIN_ZOOM_MS_PER_PX).toBe(1 * SECOND_MS)
     expect(MIN_ZOOM_MS_PER_PX).toBeGreaterThan(MIN_MS_PER_PX)
   })
 
-  it('does NOT lift a fitted zoom up to the manual floor (a 5m range still fills the canvas)', () => {
-    // MEASURED in the browser: a 5-minute range on a 248px canvas fits at ~1.2 s/px,
-    // which is FINER than the 5 s/px manual floor. If the floor leaked into the fit or
-    // into `layoutTimeline`'s input sanitisation, the content would be 300s / 5s = 60px
-    // inside a 248px canvas and the chart would be stranded in the left quarter.
-    const FIVE_MIN = 5 * MINUTE_MS
-    const data = { ...liveResponse(), range: { start: 0, end: FIVE_MIN }, lanes: [], tasks: [] }
-    const fitted = fitMsPerPx(FIVE_MIN, 248)
+  it('does NOT lift a fitted zoom up to the manual floor (the fit path stays free)', () => {
+    // The manual floor is 1 s/px. A SHORT window fits finer than that — 1 minute on a
+    // 248px canvas is 241.9 ms/px — and if the floor leaked into `fitMsPerPx` or into
+    // `layoutTimeline`'s input sanitisation, that fit would be raised to 1000 ms/px and
+    // the content would be 60s / 1s = 60px inside a 248px canvas: the chart stranded in
+    // the left quarter. (At 5 s/px the same trap caught the 5-MINUTE range, which is how
+    // it was found; the floor has since moved to 1 s, so the short window is the case
+    // that still exercises it.)
+    const ONE_MIN = MINUTE_MS
+    const data = { ...liveResponse(), range: { start: 0, end: ONE_MIN }, lanes: [], tasks: [] }
+    const fitted = fitMsPerPx(ONE_MIN, 248)
     expect(fitted).toBeLessThan(MIN_ZOOM_MS_PER_PX)
-    expect(fitted).toBeCloseTo(FIVE_MIN / 248, 6)
-    const layout = layoutTimeline(data, { ...VIEWPORT, width: 248 }, { now: FIVE_MIN, msPerPx: fitted, tzOffsetMinutes: 0 })
+    expect(fitted).toBeCloseTo(ONE_MIN / 248, 6)
+    const layout = layoutTimeline(data, { ...VIEWPORT, width: 248 }, { now: ONE_MIN, msPerPx: fitted, tzOffsetMinutes: 0 })
     expect(layout.msPerPx).toBe(fitted)
     expect(layout.dataWidth).toBeCloseTo(248, 3)
+    // …and a range whose fit is COARSER than the floor is untouched too (the 5m option):
+    // the fit path must not be rescaled in either direction.
+    const FIVE_MIN = 5 * MINUTE_MS
+    const fiveMinData = { ...liveResponse(), range: { start: 0, end: FIVE_MIN }, lanes: [], tasks: [] }
+    const fiveMinFit = fitMsPerPx(FIVE_MIN, 248)
+    expect(fiveMinFit).toBeGreaterThan(MIN_ZOOM_MS_PER_PX)
+    expect(fiveMinFit).toBeCloseTo(FIVE_MIN / 248, 6)
+    const fiveMinLayout = layoutTimeline(fiveMinData, { ...VIEWPORT, width: 248 }, { now: FIVE_MIN, msPerPx: fiveMinFit, tzOffsetMinutes: 0 })
+    expect(fiveMinLayout.msPerPx).toBe(fiveMinFit)
+    expect(fiveMinLayout.dataWidth).toBeCloseTo(248, 3)
   })
 
   it('clamp() collapses an inverted range to lo', () => {
@@ -188,31 +199,34 @@ describe('zoom helpers', () => {
 })
 
 /**
- * The user's rule: "时间粒度，最少的只需要去到 5 秒就行" — and, when asked which of the
- * two granularities that meant, they chose the MANUAL ZOOM floor, `只约束手动缩放`
- * (constrain the manual zoom only). So 适应窗口 must stay free to fit a short range.
+ * The user's rules, in order: "时间粒度，最少的只需要去到 5 秒就行", then — asked which of
+ * the two granularities that meant — the MANUAL ZOOM floor, `只约束手动缩放` (constrain
+ * the manual zoom only), so 适应窗口 stays free to fit a short range; and finally
+ * "最小时间粒度改成 1s 吧", which moved the floor from 5 s to 1 s. The number has changed
+ * twice; what these tests lock is the STRUCTURE that makes the number safe to change:
+ * two separate floors, the fit path exempt, and no backwards jump from a sub-floor fit.
  */
-describe('the manual zoom floor is 5 s/px', () => {
+describe('the manual zoom floor is 1 s/px', () => {
   it('stops a zoom-in request at the floor', () => {
     expect(clampZoomMsPerPx(1, 60_000)).toBe(MIN_ZOOM_MS_PER_PX)
-    expect(clampZoomMsPerPx(4_000, 60_000)).toBe(MIN_ZOOM_MS_PER_PX)
+    expect(clampZoomMsPerPx(500, 60_000)).toBe(MIN_ZOOM_MS_PER_PX)
     expect(clampZoomMsPerPx(MIN_ZOOM_MS_PER_PX, 60_000)).toBe(MIN_ZOOM_MS_PER_PX)
     // …and a request that is already coarser than the floor is untouched.
     expect(clampZoomMsPerPx(6_000, 60_000)).toBe(6_000)
   })
 
   it('lets a zoom-OUT through from the floor', () => {
-    expect(clampZoomMsPerPx(MIN_ZOOM_MS_PER_PX * 1.5, MIN_ZOOM_MS_PER_PX)).toBe(7_500)
+    expect(clampZoomMsPerPx(MIN_ZOOM_MS_PER_PX * 1.5, MIN_ZOOM_MS_PER_PX)).toBe(1_500)
     expect(clampZoomMsPerPx(10_000_000, 60_000)).toBe(MAX_MS_PER_PX)
   })
 
-  it('turns a zoom-in click from a fitted sub-floor zoom into a no-op, not a 4x jump', () => {
-    // `fitMsPerPx` may already be finer than the manual floor — a 5-minute range on a
-    // 248px canvas fits at ~1.2 s/px. A plain `clamp(requested, 5000, …)` would answer
-    // that click with 5000: the reader asks to move CLOSER and the chart jumps 4x AWAY.
+  it('turns a zoom-in click from a fitted sub-floor zoom into a no-op, not a backwards jump', () => {
+    // `fitMsPerPx` may be finer than the manual floor — 1 minute on a 248px canvas fits
+    // at 241.9 ms/px, well under 1 s/px. A plain `clamp(requested, 1000, …)` would answer
+    // that click with 1000: the reader asks to move CLOSER and the chart jumps 4x AWAY.
     // The floor is the finer of the two instead, and `applyZoom`'s
     // `next === effectiveMsPerPx` guard makes the equal case a no-op.
-    const fitted = 300_000 / 248
+    const fitted = MINUTE_MS / 248
     expect(fitted).toBeLessThan(MIN_ZOOM_MS_PER_PX)
     expect(clampZoomMsPerPx(fitted / 1.5, fitted)).toBe(fitted)
     // Zooming OUT from the same place is unaffected by the floor.
@@ -456,29 +470,52 @@ describe('layoutTimeline — the label never overflows the canvas', () => {
     }
   })
 
-  it('flips the label to the LEFT when the right side has no room', () => {
-    // The task ends exactly at the canvas edge, so there is no room to its right.
-    // The window is [1_000, 20_000] = 190px of canvas, so a task ending at the right
-    // edge must START late enough that 148px of label fits to its left.
+  it('keeps the label on the box even when the task ends at the canvas edge', () => {
+    // This replaces `flips the label to the LEFT when the right side has no room`. That
+    // flip existed only because the label could be placed OUTSIDE the box; the user
+    // removed that ("只在条内画"), so a task at the right edge now simply keeps its label
+    // inside its own box — which is the whole point: the label can no longer reach past
+    // the canvas, and the measured 151px phantom-scroll defect cannot come back.
     const layout = layoutTimeline(
       withTasks(data, [task({ history: [{ time: 16_100, action: 'created', sessionId: 's' }, { time: 20_000, action: 'completed', sessionId: 's' }] })]),
       VIEWPORT,
       { now: 20_000, msPerPx: 100, tzOffsetMinutes: 0 },
     )
     const card = layout.tasks[0]
-    expect(card?.labelPlacement).toBe('left')
-    expect((card?.labelX ?? -1) + (card?.labelW ?? 0)).toBeLessThanOrEqual((card?.x ?? 0) + 1e-6)
+    // (20000-16100)/100 = 39px >= TASK_LABEL_MIN_WIDTH => the label is drawn inside.
+    expect(card?.w).toBeCloseTo(39, 5)
+    expect(card?.labelPlacement).toBe('inside')
+    expect(card?.labelX).toBe(card?.x)
+    expect(card?.labelW).toBe(card?.w)
+    expect((card?.labelX ?? -1) + (card?.labelW ?? 0)).toBeLessThanOrEqual(layout.contentWidth + 1e-6)
   })
 
-  it('still prefers the right side when there IS room', () => {
-    const layout = layoutTimeline(
+  it('draws the label INSIDE the box as soon as the box is wide enough', () => {
+    // 1000ms at 100ms/px = a 10px box: under TASK_LABEL_MIN_WIDTH, so no label at all
+    // (there is not even room for an ellipsis).
+    const narrow = layoutTimeline(
       withTasks(data, [task({ history: [{ time: 2_000, action: 'created', sessionId: 's' }, { time: 3_000, action: 'completed', sessionId: 's' }] })]),
       VIEWPORT,
       { now: 20_000, msPerPx: 100, tzOffsetMinutes: 0 },
     )
-    expect(layout.tasks[0]?.labelPlacement).toBe('right')
-    const card = layout.tasks[0]
-    expect(card?.labelX).toBeCloseTo((card?.x ?? 0) + (card?.w ?? 0) + TASK_CHIP_GAP, 5)
+    expect(narrow.tasks[0]?.labelPlacement).toBe('none')
+    expect(narrow.tasks[0]?.labelX).toBe(narrow.tasks[0]?.x)
+    expect(narrow.tasks[0]?.labelW).toBe(0)
+    // A 4000ms task at the finest allowed zoom (MIN_MS_PER_PX = 50ms/px) is an 80px box,
+    // and then the label IS drawn — inside it, with labelX/labelW equal to the box's own
+    // geometry, so it can never claim a time the box does not cover. (A 1000ms task
+    // could not be used here: reaching 36px would need 27ms/px, below the sanitiser's
+    // own 50ms/px floor.)
+    const wide = layoutTimeline(
+      withTasks(data, [task({ history: [{ time: 2_000, action: 'created', sessionId: 's' }, { time: 6_000, action: 'completed', sessionId: 's' }] })]),
+      VIEWPORT,
+      { now: 20_000, msPerPx: MIN_MS_PER_PX, tzOffsetMinutes: 0 },
+    )
+    const card = wide.tasks[0]
+    expect(card?.w).toBeCloseTo(80, 5)
+    expect(card?.labelPlacement).toBe('inside')
+    expect(card?.labelX).toBe(card?.x)
+    expect(card?.labelW).toBe(card?.w)
   })
 })
 
@@ -634,17 +671,15 @@ describe('layoutTimeline — task cards', () => {
     expect(card?.w).toBeCloseTo((3_500 - 2_000) / 100, 5)
     expect(card?.w).toBeGreaterThan(TASK_BAR_MIN_WIDTH)
     expect(card?.durationMs).toBe(1_500)
-    // The label chip is a separate rect: the bar itself is only 15px, so the
-    // chip hangs to its right rather than stretching the bar.
-    expect(card?.labelPlacement).toBe('right')
-    // The width is `min(TASK_CHIP_WIDTH, roomToTheRight)` — it USED to be exactly
-    // TASK_CHIP_WIDTH, which is what let a 148px label at the canvas edge overflow by
-    // 151px and hand the panel a phantom horizontal scroll range. In this fixture the
-    // canvas is only ~100px wide, so the clamp is what is being asserted.
-    expect(card?.labelW).toBe(Math.min(TASK_CHIP_WIDTH, layout.contentWidth - ((card?.x ?? 0) + (card?.w ?? 0) + TASK_CHIP_GAP)))
-    expect(card?.labelW).toBeLessThanOrEqual(TASK_CHIP_WIDTH)
-    expect(card?.labelX).toBeCloseTo((card?.x ?? 0) + (card?.w ?? 0) + TASK_CHIP_GAP, 5)
-    expect((card?.labelX ?? 0) + (card?.labelW ?? 0)).toBeLessThanOrEqual(layout.contentWidth + 1e-6)
+    // A 15px box is well under TASK_LABEL_MIN_WIDTH, so this task draws NO label. The
+    // label is never moved outside the box any more (the user: "只在条内画，装不下就较少
+    // 显示的文本"), and 15px could not hold an ellipsis anyway.
+    expect(card?.labelPlacement).toBe('none')
+    expect(card?.labelW).toBe(0)
+    expect(card?.labelX).toBe(card?.x)
+    // The label can never claim a time the box does not cover. This is the old
+    // phantom-scroll guard, now trivially true because no label ever leaves the box.
+    expect((card?.labelX ?? 0) + (card?.labelW ?? 0)).toBeLessThanOrEqual((card?.x ?? 0) + (card?.w ?? 0) + 1e-6)
     expect(card?.y).toBe(DEFAULT_HEADER_HEIGHT + TASK_CARD_TOP)
     expect(card?.h).toBe(TASK_CARD_HEIGHT)
   })
@@ -659,7 +694,7 @@ describe('layoutTimeline — task cards', () => {
     expect(layout.msPerPx).toBe(MIN_MS_PER_PX)
     // (199000-1000)/50 = 3960px — far beyond any chip width, and that is correct.
     expect(layout.tasks[0]?.w).toBeCloseTo(198_000 / MIN_MS_PER_PX, 5)
-    expect(layout.tasks[0]?.w).toBeGreaterThan(TASK_CHIP_WIDTH)
+    expect(layout.tasks[0]?.w).toBeGreaterThan(TASK_LABEL_MIN_WIDTH)
   })
 
   it('doubling the duration doubles the bar (no clamping band)', () => {
@@ -710,13 +745,13 @@ describe('layoutTimeline — task cards', () => {
     const huge = build('x'.repeat(4_000))
     expect(oneChar).toEqual(huge)
     expect(oneChar.w).toBeCloseTo(120, 5)
-    // A 4000-char subject is truncated by CSS, so `inside` must consider ONLY
-    // the bar width — never the text. 120px < TASK_CHIP_INSIDE_MIN_WIDTH(148).
+    // A 4000-char subject is truncated by CSS, so the placement must consider ONLY the
+    // box width — never the text. 120px >= TASK_LABEL_MIN_WIDTH(36) => 'inside'.
     const withHugeSubject = withTasks(data, [
       task({ subject: 'x'.repeat(4_000), history: [{ time: 1_000, action: 'created', sessionId: 's' }, { time: 121_000, action: 'completed', sessionId: 's' }] }),
     ])
     const placement = layoutTimeline(withHugeSubject, { ...VIEWPORT, width: 600 }, { now: 200_000, msPerPx, tzOffsetMinutes: 0 }).tasks[0]?.labelPlacement
-    expect(placement).toBe('right')
+    expect(placement).toBe('inside')
   })
 
   it('anchors a card with no dated history at NOW and flags it live', () => {
@@ -731,16 +766,17 @@ describe('layoutTimeline — task cards', () => {
     // duration obeys (see the "1ms task is a hairline" test).
     expect(TASK_BAR_MIN_WIDTH).toBe(1)
     expect(card?.durationMs).toBe(0)
-    // The marker sits AT the canvas's right edge, so there is no room for a label to its
-    // right: the label now flips to the LEFT instead of starting past the edge and
-    // overflowing the canvas (the measured 151px phantom-scroll defect). It used to be
-    // pinned 'right', which is exactly what put it outside.
-    expect(card?.labelPlacement).toBe('left')
+    // A live anchor is a 9px marker with no duration, so it never carries a label:
+    // TASK_LABEL_MIN_WIDTH is 36 and this box is 9. (Before, the label flipped to the
+    // LEFT of the marker to dodge the canvas edge — the geometry that produced the
+    // measured 151px phantom-scroll defect.)
+    expect(card?.labelPlacement).toBe('none')
+    expect(card?.labelW).toBe(0)
     // The MARKER sits at NOW — the right edge of the canvas — not 148px to its left.
-    // It used to be offset by `TASK_CHIP_WIDTH` so that a fixed-width label chip would
-    // fit inside the canvas; the label is no longer a fixed-width box, and pinning the
-    // mark 148px away from the instant it marks was the cost of that. A live task's
-    // last known moment is NOW, so that is where the mark goes.
+    // It used to be offset by a fixed label-chip width (148px) so that the chip would
+    // fit inside the canvas; the label is no longer a fixed-width box and never sits
+    // outside the box, so pinning the mark 148px away from the instant it marks was
+    // pure cost. A live task's last known moment is NOW, so that is where the mark goes.
     expect(card?.x).toBe(layout.dataWidth - TASK_MARKER_WIDTH)
     // ...and it is still never pushed off the left edge of the canvas.
     const narrow = layoutTimeline(withTasks(data, [task({ history: [] })]), { ...VIEWPORT, width: 1 }, { now: 11_000, msPerPx: 10_000, tzOffsetMinutes: 0 })
@@ -805,7 +841,7 @@ describe('layoutTimeline — task cards', () => {
     //
     // NOTE (issue 3): this assertion used to require the live card to OVERFLOW
     // the canvas, i.e. `x + w > dataWidth`, because the card was 148px wide
-    // (`TASK_CHIP_WIDTH`) at x = 0 on a 1px canvas. Measurement — not the text —
+    // (a fixed label chip) at x = 0 on a 1px canvas. Measurement — not the text —
     // now decides the width, so the card can no longer be assumed to overflow and
     // that assertion pinned layout arithmetic rather than the reachability it was
     // written to protect.
@@ -814,8 +850,8 @@ describe('layoutTimeline — task cards', () => {
     expect(floored).toBeDefined()
     expect(floored?.x).toBe(0)
     // NOTE (issue 3): this block used to require the live card to OVERFLOW the
-    // canvas (`x + w > dataWidth`) because the card was 148px wide
-    // (`TASK_CHIP_WIDTH`) at x = 0 on a 1px canvas. The width is now decided by
+    // canvas (`x + w > dataWidth`) because the card was 148px wide (a fixed label
+    // chip) at x = 0 on a 1px canvas. The width is now decided by
     // measurement, not by the text, so that assertion had become a statement
     // about layout arithmetic rather than about the reachability it was written
     // to protect. What actually keeps a card reachable is that its left edge is
@@ -1356,9 +1392,10 @@ describe('layoutTimeline — a task caption that cannot be read is not drawn', (
     { time: to, action: 'completed' as const, sessionId: 's' },
   ]
 
-  it('suppresses the caption when the whole canvas is narrower than a readable one', () => {
-    // 19_000ms of window at 1000ms/px = a 19px canvas. Both sides are also under
-    // TASK_CHIP_MIN_SIDE_WIDTH, which is what routed this into the clamp before.
+  it('suppresses the label on a box too narrow to hold even an ellipsis', () => {
+    // 19_000ms of window at 1000ms/px = a 19px canvas, and the task is 4px of it. There
+    // is no room for one glyph plus an ellipsis, so nothing is drawn — the renderer no
+    // longer has a "move it outside" fallback to reach for.
     const layout = layoutTimeline(withTasks(data, [task({ history: created(1_000, 5_000) })]), VIEWPORT, {
       now: 20_000,
       msPerPx: 1_000,
@@ -1374,37 +1411,51 @@ describe('layoutTimeline — a task caption that cannot be read is not drawn', (
     expect(card?.x).toBe(0)
     expect(card?.w).toBe(4)
     expect(card?.anchor).toBe('history')
-    // The phantom-scroll invariant still holds for the suppressed case.
+    // The phantom-scroll invariant, now trivially satisfied because no label can leave
+    // the box: `labelX + labelW <= x + w <= contentWidth`.
+    expect((card?.labelX ?? -1) + (card?.labelW ?? 0)).toBeLessThanOrEqual((card?.x ?? 0) + (card?.w ?? 0) + 1e-6)
     expect((card?.labelX ?? -1) + (card?.labelW ?? 0)).toBeLessThanOrEqual(layout.contentWidth)
   })
 
-  it('still clamps the caption inside a canvas that IS wide enough to read one', () => {
-    // contentWidth 63.3px: narrow, but a 63px caption is readable — so the old
-    // clamp-inside-the-canvas behaviour must survive, or a task at the right edge of a
-    // narrow pane would lose its label for no reason.
-    const layout = layoutTimeline(withTasks(data, [task({ history: created(7_000, 10_000) })]), VIEWPORT, {
+  it('draws the label inside a box that is wide enough, and never outside it', () => {
+    // 3000ms at 300ms/px = 10px: still under the floor. At 50ms/px (the finest the
+    // sanitiser allows) it is 60px, and the label is drawn INSIDE with labelX/labelW
+    // equal to the box's own x/w. NOTE: asking for 30ms/px here would be clamped UP to
+    // `MIN_MS_PER_PX` (50) and the box would be 60px, not 100 — the layout sanitises
+    // its zoom input.
+    const narrow = layoutTimeline(withTasks(data, [task({ history: created(7_000, 10_000) })]), VIEWPORT, {
       now: 20_000,
       msPerPx: 300,
       tzOffsetMinutes: 0,
     })
-    const card = layout.tasks[0]
-    expect(layout.contentWidth).toBeCloseTo(19_000 / 300, 6)
-    expect(card?.labelPlacement).toBe('right')
-    expect(card?.labelW).toBeCloseTo(layout.contentWidth, 6)
-    expect(card?.labelX).toBe(0)
-    expect((card?.labelX ?? -1) + (card?.labelW ?? 0)).toBeLessThanOrEqual(layout.contentWidth + 1e-6)
-  })
-
-  it('never suppresses a caption when a side genuinely has room', () => {
-    const layout = layoutTimeline(withTasks(data, [task({ history: created(2_000, 3_000) })]), VIEWPORT, {
+    expect(narrow.tasks[0]?.w).toBeCloseTo(10, 5)
+    expect(narrow.tasks[0]?.labelPlacement).toBe('none')
+    const wide = layoutTimeline(withTasks(data, [task({ history: created(7_000, 10_000) })]), VIEWPORT, {
       now: 20_000,
-      msPerPx: 100,
+      msPerPx: MIN_MS_PER_PX,
       tzOffsetMinutes: 0,
     })
-    const card = layout.tasks[0]
-    expect(card?.labelPlacement).toBe('right')
-    expect(card?.labelW).toBe(TASK_CHIP_WIDTH)
-    expect(card?.labelW).toBeGreaterThan(0)
+    const card = wide.tasks[0]
+    expect(card?.w).toBeCloseTo(60, 5)
+    expect(card?.labelPlacement).toBe('inside')
+    expect(card?.labelX).toBe(card?.x)
+    expect(card?.labelW).toBe(card?.w)
+  })
+
+  it('puts the boundary exactly at TASK_LABEL_MIN_WIDTH', () => {
+    // A 36_000ms task at 1000ms/px is 36px — exactly the floor — and one notch coarser
+    // is 32.7px. Pinning both sides means moving the constant has to be deliberate.
+    const at = (msPerPx: number) =>
+      layoutTimeline(withTasks(data, [task({ history: created(2_000, 38_000) })]), VIEWPORT, {
+        now: 40_000,
+        msPerPx,
+        tzOffsetMinutes: 0,
+      }).tasks[0]
+    expect(at(1_000)?.w).toBeCloseTo(36, 5)
+    expect(at(1_000)?.labelPlacement).toBe('inside')
+    expect(at(1_100)?.w).toBeCloseTo(36_000 / 1_100, 5)
+    expect(at(1_100)?.labelPlacement).toBe('none')
+    expect(TASK_LABEL_MIN_WIDTH).toBe(36)
   })
 })
 

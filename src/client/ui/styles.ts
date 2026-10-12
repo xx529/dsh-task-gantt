@@ -259,8 +259,8 @@ export const BOARD_CSS = `
 /* One absolutely-positioned wrapper per task, so the BAR and its LABEL chip are
    laid out independently: bar length = duration, chip = readable text. The
    wrapper has no size of its own; both children carry their own geometry. */
-/* The task WRAP is a zero-sized positioning context for one task: its box, an optional
-   outside label, and the transition rail. */
+/* The task WRAP is a zero-sized positioning context for one task: its box and the
+   transition rail. */
 .dtg-task-wrap { position: absolute; left: 0; top: 0; width: 0; height: 0; }
 
 /* THE box. Its width is set inline from the real elapsed time and it has NO padding
@@ -270,20 +270,29 @@ export const BOARD_CSS = `
    time, and a label card at a FIXED 148px. The user read the fixed one as the task:
    "任务框的长度应该是按实际时间线来，而不是有个最小固定长度大小".
    A fixed width carries no information and contradicted the bar beside it, so there is
-   now one box: its LENGTH is the duration, and its fill is the lane identity colour
-   with the lane's own ink — the same treatment the lane NAME gets. */
+   now ONE box whose LENGTH is the duration.
+
+   Its PAINT went back to the pre-00e58a6 card at the user's request ("任务条背景颜色
+   不要用跟 agent 的颜色，用回之前那种"): a neutral surface whose only agent-coloured
+   element is the 3px left edge. In between it was filled solid with the lane identity
+   colour, which read as an identity swatch rather than as a task. */
 .dtg-task {
   position: absolute;
   display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
   align-items: center;
-  gap: 4px;
-  padding: 0 5px;
+  justify-content: flex-start;
+  gap: 0;
+  padding: 2px 6px 2px 8px;
   margin: 0;
   text-align: left;
-  border: 0;
-  border-radius: 3px;
-  background: var(--dsw-alias-label-tertiary);
-  color: var(--dsw-alias-label-primary-inverted);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-left-width: 3px;
+  border-left-color: currentColor;
+  border-radius: 4px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
   cursor: pointer;
   overflow: hidden;
   font: var(--dsw-font-xxxs-11);
@@ -316,34 +325,17 @@ export const BOARD_CSS = `
   padding: 0;
 }
 
-/* The label when it does not fit inside the box. Deliberately NOT a box: no background
-   and no border, so the only bordered rectangle on a task row is the one whose LENGTH
-   means something. A label may be any width it likes precisely because it no longer
-   looks like the task. */
-.dtg-task-caption {
-  position: absolute;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 1px;
-  padding: 0;
-  overflow: hidden;
-  color: var(--dsw-alias-label-primary);
-  cursor: pointer;
-}
+/* The only label: drawn inside the box, truncated with a real ellipsis when the box
+   is too narrow (the user: show less text rather than render it outside). The flex
+   parent needs a zero min-width on the child to be allowed to shrink at all, and the
+   container must not wrap, or the text would push the box's own layout around. */
 .dtg-task-subject {
+  min-width: 0;
+  flex: 0 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font: var(--dsw-font-xxxs-strong-11);
-}
-.dtg-task-caption .dtg-task-subject { font: var(--dsw-font-xxs-strong-12); }
-.dtg-task-desc {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--dsw-alias-label-tertiary);
-  font: var(--dsw-font-xxxs-11);
 }
 
 /* --- lane head navigation (requirement: click a teammate -> their chat) - */

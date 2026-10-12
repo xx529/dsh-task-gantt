@@ -1,5 +1,76 @@
 # Changelog
 
+## 0.2.11 — 2026-10-12
+
+Four more real-screen requests, and the label finally stops leaving the box.
+
+**1 — the finest manual zoom is 1 s/px**
+
+"最小时间粒度改成 1s 吧" moved `MIN_ZOOM_MS_PER_PX` from 5 s to 1 s. The structure that made the
+number safe to move is unchanged and is what the tests lock: two separate floors
+(`MIN_MS_PER_PX = 50` is only the sanity clamp), the fit path exempt in BOTH directions, and
+`clampZoomMsPerPx(value, current)` never letting a zoom-IN click from a sub-floor fit jump
+backwards. The number has now moved twice, so the tests assert the relationships rather than
+the constant.
+
+**2 — the label lives inside the box, or not at all**
+
+"还是出现图中文字在任务条外的情况", then, asked how far to go: "只在条内画，装不下就较少显示的
+文本". So the outside caption is GONE — `TaskLabelPlacement` is now `'inside' | 'none'`, and
+`TASK_CHIP_GAP` / `TASK_CHIP_WIDTH` / `TASK_CHIP_INSIDE_MIN_WIDTH` / `TASK_CHIP_MIN_SIDE_WIDTH`
+are deleted with it. A history-anchored box at least `TASK_LABEL_MIN_WIDTH = 36` px wide draws
+its subject inside and the renderer truncates with CSS ellipsis; below that the layout emits
+`'none'` (`labelW === 0`) because there is not room for the ellipsis itself, and `title` /
+`aria-label` still carry subject and description.
+
+36 is derived, not chosen: the card's padding is 8px + 6px, so the text box is `w - 14`; one
+11px glyph plus an ~8px ellipsis needs 19px, i.e. `w >= 33`. Below that the browser clips a
+glyph in half — the exact artefact the user had now reported twice.
+
+The deleted machinery was not stupid: the outside caption existed so a SHORT task could still be
+named, and two measured defects came with it (a caption at the canvas edge reached 151px past it
+and inflated `scrollWidth` 248 → 399, and at a coarse zoom all twelve captions collapsed into one
+18.1px column). Removing the placement deletes both failure modes instead of constraining them.
+
+Measured on the built bundle (12 task boxes at 44 s/px): `.dtg-task-caption` 0,
+`.dtg-task-outside` 0, placements only `['inside','none']`, every `'none'` box has no subject
+child (8/8), and an `'inside'` box measured `subClient 22` vs `subScroll 65` — the ellipsis path
+is genuinely engaged. `.dtg-scroll` scrollWidth 249 vs clientWidth 248: the phantom horizontal
+scroll has not come back.
+
+**3 — the task box is no longer filled with the agent colour**
+
+"任务条背景颜色不要用跟 agent 的颜色，用回之前那种看图2". `00e58a6` had replaced the earlier
+"thin agent-coloured bar + neutral label card with a 3px agent-coloured left edge" with ONE box
+filled solid in the lane identity colour. The one-box geometry (length = duration) is what the
+user asked for and it stays; the PAINT goes back to the pre-`00e58a6` card: fill
+`var(--dsw-alias-bg-layer-2)`, 1px `var(--dsw-alias-border-l2)` border, `border-left-width: 3px`
+coloured by the agent, radius 4px, ink `var(--dsw-alias-label-primary)`, padding
+`2px 6px 2px 8px`.
+
+Measured: all 12 boxes share ONE background (`rgb(255,255,255)` in the Light skin, i.e. the
+theme's `bg-layer-2` — no lane colour among them) while the left edges resolve to four different
+lane colours (`rgb(37,99,235)` / `rgb(236,19,19)` / `rgb(221,134,41)` / `rgb(34,197,94)`), all at
+exactly 3px. Every box measured 20px tall — `.dtg-root *` is `box-sizing: border-box`, so the new
+1px border and the padding stay inside the bar height instead of overflowing their track.
+
+**4 — a better README feature image**
+
+`docs/screenshots/panel-v3.png` is replaced by a high-DPI capture of the real panel with the
+recent rounds of fixes visible.
+
+**Recorded, not fixed**
+
+- The zoom readout prints whole seconds at >= 1 s/px (`toFixed(msPerPx < 1000 ? 2 : 0)`), so two
+  DIFFERENT zooms can read the same text: measured "2 秒/像素" at both 1614 and 2421 ms/px. That
+  makes "click until the readout stops changing" an unsound acceptance method — the verifier
+  caught it while checking the new floor and switched to fixed click counts plus a scrollWidth
+  cross-check. Worth a look next round: the readout is not lying about the layout, only about
+  its own precision.
+- ❓24 (a message at exactly `range.end` is culled on a frozen board, silently) is still open.
+
+The footer build identity is now `v0.2.11 · label-in-box`.
+
 ## 0.2.10 — 2026-10-12
 
 **The manual zoom stops at 5 s/px, and 适应窗口 is deliberately left free**

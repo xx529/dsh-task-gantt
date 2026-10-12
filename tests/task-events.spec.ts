@@ -47,12 +47,12 @@ function card(history: TaskEvent[], over: Partial<TaskCardRect> = {}): TaskCardR
     viewX: 40,
     visible: true,
     live: false,
-    labelPlacement: 'right',
-    labelX: 143,
+    labelPlacement: 'inside',
+    labelX: 40,
     labelY: 0,
     labelW: 100,
     labelH: 36,
-  } as TaskCardRect
+  }
 }
 
 describe('every dated transition gets a mark, at its own time', () => {

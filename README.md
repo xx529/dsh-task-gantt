@@ -5,17 +5,20 @@
 English | [中文](README.zh.md)
 
 > **Screenshot below is the real panel rendered from a synthetic fixture**
-> (6 lanes, both message directions on every lane, both arrow weights), captured
-> from a real browser at `docs/screenshots/panel-v3.png`. It is labelled as such on
-> purpose: the drawing is the shipped component, but the DATA is a fixture, so it
-> is not a real-team capture. The footer in the image carries the build identity
-> (`v0.2.2`), which is how a reader can tell which build drew it.
+> (5 lanes with 5 different agent colours, tasks of clearly different durations,
+> one still running, message arrows in both directions), captured from a real
+> browser at 2× and cropped to the panel itself: `docs/screenshots/panel-v4.png`.
+> It is labelled as such on purpose: the drawing is the shipped component, but the
+> DATA is a fixture, so it is not a real-team capture. The footer in the image
+> carries the build identity (`v0.2.11 · label-in-box`), which is how a reader can
+> tell which build drew it.
 > The remaining shots (board overview from real team data, task-card detail,
 > degraded state) are still pending; see
 > [`docs/SCREENSHOTS.md`](docs/SCREENSHOTS.md). No mock-ups will be published.
 
-![The task Gantt panel: one lane per teammate, message arrows pointing out or in,
-and task bars whose length is the task's real duration](docs/screenshots/panel-v3.png)
+![The task Gantt panel in the dark skin: five lanes with different agent colours,
+message arrows pointing out or in, and task bars whose length is the task's real
+duration, with the title drawn inside each bar](docs/screenshots/panel-v4.png)
 
 `dsh-task-gantt` is a plugin for [dsh-better-sidebar](https://github.com/ChuanTianML/dsh-better-sidebar): it registers one extra sidebar tab. It is **read-only** — it never creates, claims, or completes a task.
 
@@ -25,7 +28,7 @@ and task bars whose length is the task's real duration](docs/screenshots/panel-v
 
 | | |
 |---|---|
-| Version | `0.2.10` |
+| Version | `0.2.11` |
 | Frozen contract (`src/shared/contract.ts`) | done |
 | Host data layer (`src/host/**`) | in progress |
 | Sidebar tab registration (`src/client/index.ts`) | done |
