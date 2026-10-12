@@ -1685,12 +1685,21 @@ function TaskCard({
     height: rect.barH,
   }
   const inside = rect.labelPlacement === 'inside'
+  /**
+   * Only `'right' | 'left'` have a caption to draw. `'none'` is the layout saying
+   * the chosen granularity is too coarse to fit text: at 600 s/px all twelve
+   * captions were clamped to the same 18.1px column holding 45-71px of text, i.e.
+   * twelve one-character fragments stacked on one x. Rendering nothing is the
+   * honest outcome — the button's title/aria-label still carry subject and
+   * description, so the text is reachable without pretending to show it.
+   */
+  const hasCaption = rect.labelPlacement === 'right' || rect.labelPlacement === 'left'
   const subject = task.subject === '' ? '—' : task.subject
   return (
     <span className="dtg-task-wrap" data-task-id={task.id}>
       <button
         type="button"
-        className={`dtg-task dtg-ink-${task.status}${rect.live ? ' dtg-task-live' : ''}${inside ? '' : ' dtg-task-outside'}`}
+        className={`dtg-task dtg-ink-${task.status}${rect.live ? ' dtg-task-live' : ''}${hasCaption ? ' dtg-task-outside' : ''}`}
         style={boxStyle}
         title={full}
         aria-label={aria}
@@ -1701,9 +1710,8 @@ function TaskCard({
         data-label-placement={rect.labelPlacement}
       >
         {inside ? <span className="dtg-task-subject">{subject}</span> : null}
-        {rect.live ? <span className="dtg-task-flag">{uiLabel('liveBadge')}</span> : null}
       </button>
-      {inside ? null : (
+      {hasCaption ? (
         // `aria-hidden`: the button above already carries the whole accessible name, and
         // this is the same control's mouse affordance, so the text is not read twice.
         <span
@@ -1715,7 +1723,7 @@ function TaskCard({
           <span className="dtg-task-subject">{subject}</span>
           {task.description === '' ? null : <span className="dtg-task-desc">{task.description}</span>}
         </span>
-      )}
+      ) : null}
       {/* Every dated transition, at its own real time, on a rail under the box. */}
       <TaskEventMarks
         rect={rect}

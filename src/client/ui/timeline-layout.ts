@@ -553,6 +553,14 @@ export interface SpanRect {
   step?: number
 }
 
+/**
+ * Where a task's label is drawn, or that it is not drawn at all.
+ *
+ * Exported as a named type so the renderer can switch on it exhaustively rather
+ * than re-spelling the union and drifting from the layout's own contract.
+ */
+export type TaskLabelPlacement = 'inside' | 'right' | 'left' | 'none'
+
 export interface TaskCardRect {
   laneId: string
   laneIndex: number
@@ -596,12 +604,20 @@ export interface TaskCardRect {
    * The LABEL chip, decoupled from the bar so that "can I read the title" and
    * "how long did it take" stop fighting each other:
    * - `'inside'`  – `labelX === x`, `labelW === w` (the bar is wide enough);
-   * - `'right'`   – `labelX === x + w + TASK_CHIP_GAP`, `labelW === TASK_CHIP_WIDTH`.
+   * - `'right'`   – `labelX === x + w + TASK_CHIP_GAP`, `labelW === TASK_CHIP_WIDTH`;
+   * - `'left'`    – mirrored to the left of the bar;
+   * - `'none'`    – the label cannot be drawn READABLY, so it is not drawn at all
+   *                 (`labelW === 0`, `labelX === x`). This is the coarse-zoom case:
+   *                 the whole content is narrower than the least width a caption is
+   *                 worth drawing at, so every caption would be a one-character
+   *                 fragment in the same few pixels. The user's rule: "如果时间线粒度
+   *                 太粗，无法展示任务卡文本时候，就不要强行展示了". The box, its
+   *                 tooltip and its click target are unaffected.
    *
    * A chip placed to the right NEVER moves `x`/`w`: the bar keeps its true
    * start and length.
    */
-  labelPlacement: 'inside' | 'right' | 'left'
+  labelPlacement: TaskLabelPlacement
   /**
    * True when the time-range filter cuts this task's START off, i.e. it began before the
    * window and is still inside it. The UI should say "continues from before" rather than
@@ -1695,7 +1711,13 @@ export function layoutTimeline(
     if (list.length === 0) continue
     const laneY = headerHeight + index * laneHeight
     // The band is the lane's TRUE extent: it is built from every message, so
-    // decimation of the markers below can never shrink the reported span.
+    // decimation of the markers below can never shrink the reported span. It is
+    // deliberately NOT range-scoped the way the markers are — "this lane was talking
+    // from here to there, and it keeps talking past the edge of what you selected" is
+    // exactly the fact the strip exists to carry, and its own tooltip names the true
+    // endpoints. What it must never do is exist for a lane whose messages the window
+    // does not touch AT ALL: `clamp` would collapse that to a 2px stub at x=0, i.e. a
+    // phantom mark at the very start of the timeline (see the `inWindow` guard below).
     let firstTime = Number.POSITIVE_INFINITY
     let lastTime = Number.NEGATIVE_INFINITY
     for (const message of list) {
@@ -1704,7 +1726,7 @@ export function layoutTimeline(
       if (time < firstTime) firstTime = time
       if (time > lastTime) lastTime = time
     }
-    if (Number.isFinite(firstTime) && Number.isFinite(lastTime)) {
+    if (Number.isFinite(firstTime) && Number.isFinite(lastTime) && inWindow(firstTime, lastTime, win)) {
       const x0 = clamp(firstTime, win.start, win.end)
       const x1 = clamp(lastTime, win.start, win.end)
       const x = (x0 - win.start) / msPerPx
@@ -1726,7 +1748,33 @@ export function layoutTimeline(
       if (!cull || band.visible) messageBands.push(band)
     }
 
-    const kept = decimateMarkers(list, {
+    /* ---- the markers ARE range-scoped; the band above is not ---------------- */
+    //
+    // THE BUG THIS REPLACES. Both this candidate list and the count behind the "+n"
+    // badge used to be the lane's WHOLE message list. Because a marker's x is
+    // `(clamp(time, win.start, win.end) - win.start) / msPerPx`, every message older
+    // than the selected range was clamped onto the window's LEFT EDGE and drawn there.
+    // Measured on a 4-lane / 3-hour fixture (180 messages per lane, 248px viewport):
+    // 8 markers with a left edge of exactly 0 at the 15-minute range, against 0 of them
+    // at `all`. `clamp` had turned "not in the range" into "at the start of the range",
+    // which is a claim about a time at which nothing happened — the user's issue 1,
+    // "当时间线不是选 all 的时候，在时间线最开头有莫名其妙标记".
+    //
+    // And `countCandidatesBetween` ran over that same whole list, so the badge counted
+    // the omission of messages the reader had explicitly filtered OUT: on the same
+    // fixture the badges read "+163" at 15m against "+6" at `all` — the user's issue 2,
+    // "发送收取消息的 icon 多了很多 +n 的标记". A decimation count is only meaningful
+    // about the set being decimated, and with a range selected that set is the range.
+    //
+    // Scoping the CANDIDATE LIST (rather than filtering the output) is what makes the
+    // pixel budget honest too: `decimateMarkers` is handed `widthPx: dataWidth`, which
+    // is the WINDOW's width, so in-range messages now spend the whole budget instead of
+    // competing for it with messages that are off the axis entirely.
+    const inRange = list.filter((message) => {
+      const time = num(message?.time, Number.NaN)
+      return Number.isFinite(time) && inWindow(time, time, win)
+    })
+    const kept = decimateMarkers(inRange, {
       windowStart: win.start,
       msPerPx,
       widthPx: dataWidth,
@@ -1738,14 +1786,17 @@ export function layoutTimeline(
     })
     // `kept.indices` is ascending already, and every candidate between two kept
     // indices was dropped — counted onto the marker that follows it, so the UI
-    // can say "3 more here" instead of silently losing them.
+    // can say "3 more here" instead of silently losing them. The count is taken over
+    // `inRange`, so "3 more" means three more IN THE SELECTED RANGE.
     let previousCandidate = -1
     for (const keptIndex of kept.indices) {
-      const message = list[keptIndex]
+      const message = inRange[keptIndex]
       if (message === undefined) continue
-      const droppedBefore = countCandidatesBetween(list, previousCandidate, keptIndex, messageMode)
+      const droppedBefore = countCandidatesBetween(inRange, previousCandidate, keptIndex, messageMode)
       previousCandidate = keptIndex
       const time = num(message.time, win.start)
+      // In range by construction, so this clamp can no longer drag a marker onto the
+      // window's edge; it is kept so a hostile payload cannot yield NaN.
       const x = (clamp(time, win.start, win.end) - win.start) / msPerPx
       const viewX = x - scrollLeft
       const rect: MessageMarkerRect = {
@@ -1985,14 +2036,25 @@ function taskCardRect(
    * horizontal scroll range, which in turn broke the follow toggle (there is no "keep NOW
    * at the right edge" to do when the content already overflows by 151px).
    *
-   * Priority: right, then left, then give up on the side and clamp inside the canvas.
-   * The last case keeps the label readable for a narrow canvas instead of letting it
-   * vanish or overflow — and it can never produce a rect outside `[0, contentWidth]`.
+   * Priority: right, then left, then (only if the canvas can host a readable caption at
+   * all) clamp inside the canvas, otherwise draw NO label.
+   *
+   * The "clamp inside the canvas" case keeps the label readable for a narrow canvas
+   * instead of letting it vanish or overflow — and it can never produce a rect outside
+   * `[0, contentWidth]`.
+   *
+   * The last case is the user's issue 3: "如果时间线粒度太粗，无法展示任务卡文本时候，就
+   * 不要强行展示了". Measured at the coarsest zoom (600 s/px) over a 3-hour log: the content
+   * is `3h / 600s = 18px` wide, so all twelve captions were clamped to the same
+   * 18.1px-wide column (measured `scrollWidth` 45–71px inside an 18px box) and every one
+   * of them rendered as a one-character fragment stacked at the same x. A caption that
+   * cannot be read is not information; the box, its `title` and its click target all
+   * still carry the task.
    */
   const contentWidth = win.durationMs / msPerPx
   const roomRight = contentWidth - (x + w + TASK_CHIP_GAP)
   const roomLeft = x - TASK_CHIP_GAP
-  let labelPlacement: 'inside' | 'right' | 'left' =
+  let labelPlacement: TaskLabelPlacement =
     anchor === 'history' && w >= TASK_CHIP_INSIDE_MIN_WIDTH ? 'inside' : 'right'
   let labelX = x + w + TASK_CHIP_GAP
   let labelW = TASK_CHIP_WIDTH
@@ -2003,9 +2065,18 @@ function taskCardRect(
       labelPlacement = 'left'
       labelW = Math.min(TASK_CHIP_WIDTH, roomLeft)
       labelX = x - TASK_CHIP_GAP - labelW
+    } else if (contentWidth < TASK_CHIP_MIN_SIDE_WIDTH) {
+      // Not "this side has no room" but "NO side can have room": the whole canvas is
+      // narrower than the minimum width this module already declares a caption worth
+      // drawing at (`TASK_CHIP_MIN_SIDE_WIDTH`). Squeezing the text in anyway is what
+      // produced twelve unreadable fragments in eighteen pixels.
+      labelPlacement = 'none'
+      labelW = 0
+      labelX = x
     } else {
-      // No side has room. Keep it inside the canvas at all costs: an overflowing rect is
-      // worse than an overlapped one, because it corrupts the scroll geometry.
+      // No side has room, but the canvas itself is wide enough to read a caption in.
+      // Keep it inside the canvas at all costs: an overflowing rect is worse than an
+      // overlapped one, because it corrupts the scroll geometry.
       labelW = Math.min(TASK_CHIP_WIDTH, Math.max(0, contentWidth))
       labelX = Math.max(0, Math.min(x + w + TASK_CHIP_GAP, contentWidth - labelW))
     }

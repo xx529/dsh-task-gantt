@@ -1,5 +1,70 @@
 # Changelog
 
+## 0.2.9 — 2026-10-12
+
+**Four defects the time-range filter exposed — and one it still hides**
+
+All four were reported against the panel after 0.2.7 shipped the range filter. The first two
+turned out to be ONE cause.
+
+**1 + 2 — the phantom mark at the start of the timeline, and the "+n" that ballooned**
+
+- The message layer was the only part of the layout that never asked `inWindow()` before
+  drawing (`spanRect` and `taskCardRect` both do). A marker's x is
+  `(clamp(time, win.start, win.end) - win.start) / msPerPx`, so a message OLDER than the selected
+  range was never dropped — it was clamped onto the window's left edge and drawn there.
+  Measured on a 4-lane / 3-hour fixture (180 messages per lane, 248px viewport):
+  **8 markers with a left edge of exactly 0 at the 15-minute range, against 0 at 全部**.
+- `droppedBefore` ran over the lane's WHOLE list too, so the badge counted the omission of
+  messages the reader had explicitly filtered OUT: **"+163" at 15m against "+6" at 全部**.
+- The fix scopes the CANDIDATE LIST (not the output) to `[win.start, win.end]` — which also
+  makes the pixel budget honest, since `decimateMarkers` is handed the WINDOW's width. The
+  density band is deliberately left at the lane's true extent and is only skipped when the
+  window does not touch it at all: "this lane was talking from here to there" is the fact the
+  strip carries, and its tooltip names the true endpoints.
+- Verified after: 15m → 60 markers, **0 at the left edge**, **0 badges**; 全部 → byte-identical
+  to before (160 markers, 76 badges all "+6"). Calibrated in reverse: putting the whole list
+  back makes the three new tests fail with `marker at 1000000 is outside [4000000, 4600000]`,
+  `expected 69 to be 19`, and one clamped stub back on the all-before lane.
+- The legend now reads "…（当前时间段内）" because its denominator is the SELECTED RANGE —
+  measured "12/60 条消息已绘制（当前时间段内）" where it used to divide by 720, the whole log.
+
+**3 — a task caption that cannot be read is no longer drawn**
+
+- At the coarsest zoom (600 s/px) over a 3-hour log the content is `3h / 600s = 18px` wide, and
+  `taskCardRect`'s last-resort branch ("no side has room, so clamp inside the canvas") clamped
+  all **12 captions into that same 18.1px column with 45–71px of text inside each** — twelve
+  one-character fragments at one x.
+- `TaskCardRect.labelPlacement` gained a fourth case, `'none'`, and `TaskLabelPlacement` is now
+  exported as a named type: when the whole canvas is narrower than `TASK_CHIP_MIN_SIDE_WIDTH`,
+  no label is emitted at all. The box, its `title`/`aria-label` and its click target are
+  untouched (verified: at 600 s/px, 0 captions, 12 boxes still titled 长任务 0 …).
+- A canvas that is narrow but still ≥ 48px keeps the old clamp, because that behaviour is what
+  stopped a 148px caption from inflating `scrollWidth` from 248 to 399.
+
+**4 — the 「实时」 badge is gone**
+
+- The growing box already says "still elapsing" with a dashed right cap; the badge repeated it
+  in words on every open task (measured: 4 of them). Removed, together with the
+  `.dtg-task-flag` CSS rule and the now-unused `liveBadge` string in BOTH locales. The
+  accessible name still says 实时态, so nothing is lost to a screen reader.
+
+**Found while verifying, and NOT fixed: the last message of a frozen run is invisible**
+
+- A message at exactly `win.end` passes `inWindow` (both ends are closed) but lands at
+  `viewX === viewportWidth`, and `rectVisible` is strict on the right (`viewX < viewportWidth`),
+  so with `cull: true` it is dropped — and it is neither drawn nor thinned, so neither the
+  legend nor a badge mentions it. Measured on a frozen board filtered to 15m: 45 markers,
+  minutes 165..179 present, **180 absent**, empty legend.
+- This is PRE-EXISTING, and narrower than the two above: a live board heals itself as the clock
+  advances, so only a frozen board puts the last event out of reach permanently. It is recorded
+  as a standing `❓` in docs/VALIDATION.md rather than papered over, because every candidate fix
+  trades against a stronger invariant (`contentWidth` slack would move the phantom-scroll and
+  follow behaviour; shifting the edge marker would break "a marker is never moved off its own
+  time").
+
+The footer build identity is now `v0.2.9 · range-scoped-messages`.
+
 ## 0.2.8 — 2026-10-12
 
 **A dark-skin defect that had been invisible because there was no dark demo**

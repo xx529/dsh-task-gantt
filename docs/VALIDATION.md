@@ -711,7 +711,7 @@ ui-2 自查出：他曾在自检里打印**手写的** `when=00:00:00` 当作证
     真机复核（暗色）：名称药丸 `bg rgb(37,99,235) / color rgb(255,255,255)`、任务框同色；等待条 `rgb(173,178,184)`；箭头红。
     仍未实测：暗色皮肤下的**原生 `<select>` 下拉菜单**样式（平台绘制），以及暗色下的整体目视美感。
 19. ❓（**已知上限，Lead 裁定本轮不改**）`MESSAGE_MARKER_MIN_GAP_PX`(9) < `MESSAGE_MARKER_WIDTH`(11)：抽稀只保证标记**位置**间距 ≥9px，保留的两个标记仍可重叠 2px。我在 `tests/layout.spec.ts` 中只断言 gap 下限、**不**断言 `gap >= width`（那会刻意为红）；若后续把它改成 ≥12，把那条断言补上即可。
-20. ❓（**已知启发式 + 显式保留项，Lead 裁定本轮不改**，ui-2 要求记档以免收尾时被当成新 bug）**⚠️ 该条已部分过时，见 §1.21**：`labelPlacement` 现在有**三种**取值（`inside` / `right` / `left`），因为贴右缘的标签会**溢出画布 151px**（幽灵横向滚动）；另新增 `TASK_CHIP_MIN_SIDE_WIDTH = 48` 作为"这一侧放得下标签"的下限，并把宽度**夹到该侧可用空间**。以下原文的 148 阈值仍适用于 `inside` 的判定：chip 的 `inside` 阈值 `TASK_CHIP_INSIDE_MIN_WIDTH = 148px`：`labelPlacement === 'inside'` 仅当**条宽 ≥ chip 宽**，语义是"条装得下完整文字才内嵌，否则右侧挂靠"。148 是**与 chip 等宽的启发式**而非实测最优值——任何更窄的条一律右侧挂靠（例如 100px 的条不内嵌文字）。`tests/layout.spec.ts` 因此只断言结构（两条轨道不相交、`TASK_CARD_TOP === task 轨 y`、`TASK_CARD_HEIGHT <= TASK_TRACK_HEIGHT`）与 `labelPlacement` 的**两端情形**，**不**断言 148 这个魔数；若日后改为自适应，请同步更新 `labelPlacement` 的断言口径。（同批显式保留项还有 ❓19：`MESSAGE_MARKER_MIN_GAP_PX(9) < WIDTH(11)` 可重叠 2px；以及真机目视项：条高 10 / chip 36 / `dtg-msg-out` 命中数 / `data-build`，归 Lead。）
+20. ❓（**已知启发式 + 显式保留项，Lead 裁定本轮不改**，ui-2 要求记档以免收尾时被当成新 bug）**⚠️ 该条已部分过时，见 §1.21**：`labelPlacement` 现在有**三种**取值（`inside` / `right` / `left`），因为贴右缘的标签会**溢出画布 151px**（幽灵横向滚动）；另新增 `TASK_CHIP_MIN_SIDE_WIDTH = 48` 作为"这一侧放得下标签"的下限，并把宽度**夹到该侧可用空间**。**⚠️ 2026-10-12 再更新：现在是四种取值，新增 `'none'`（见 CHANGELOG 0.2.9）** —— 当**整个画布**都比 `TASK_CHIP_MIN_SIDE_WIDTH` 还窄（例如 3 小时日志缩到 600 秒/像素 ⇒ 内容只有 18px）时，四条 caption 曾全部被夹进同一个 18.1px 列、内部文本 45–71px，等于十二个单字碎片叠在同一个 x；此时**不画标签**（`labelW = 0`，`labelX = x`），box / `title` / 点击目标不变。`TaskLabelPlacement` 已作为具名类型导出，渲染侧只对 `'right' | 'left'` 渲染 caption。以下原文的 148 阈值仍适用于 `inside` 的判定：chip 的 `inside` 阈值 `TASK_CHIP_INSIDE_MIN_WIDTH = 148px`：`labelPlacement === 'inside'` 仅当**条宽 ≥ chip 宽**，语义是"条装得下完整文字才内嵌，否则右侧挂靠"。148 是**与 chip 等宽的启发式**而非实测最优值——任何更窄的条一律右侧挂靠（例如 100px 的条不内嵌文字）。`tests/layout.spec.ts` 因此只断言结构（两条轨道不相交、`TASK_CARD_TOP === task 轨 y`、`TASK_CARD_HEIGHT <= TASK_TRACK_HEIGHT`）与 `labelPlacement` 的**两端情形**，**不**断言 148 这个魔数；若日后改为自适应，请同步更新 `labelPlacement` 的断言口径。（同批显式保留项还有 ❓19：`MESSAGE_MARKER_MIN_GAP_PX(9) < WIDTH(11)` 可重叠 2px；以及真机目视项：条高 10 / chip 36 / `dtg-msg-out` 命中数 / `data-build`，归 Lead。）
 21. ✅（**已裁决：不做**，Lead 2026-10-12）是否给 `user-prompt` 补 `to` —— **不做**。理由：用户只要求"我本人发起的对话用固定颜色"，而当前"prompt 挂在其承载泳道上"的语义已经正确（读作 `incoming`，即"我收到了你的话"，符合 §18.7 规则 4）；补 `to` 属于**行为变更**，且会让人类发言在视觉上**翻倍**（同一句话出现在两条泳道上）。我的守护两种形态都已覆盖，因此这条裁决不产生任何断言改动。
 22. ✅（**已闭环，Lead 2026-10-12 复核 —— 该条已过时**）原文说「`BoardView` 只在 `visible` 翻转时取数，
     **没有任何刷新机制**，所以面板开着不动 → 看不到新消息」。**这不成立了**：`BoardView` 有
@@ -725,6 +725,29 @@ ui-2 自查出：他曾在自检里打印**手写的** `when=00:00:00` 当作证
     - 原文担心的"回归锁必然是假绿"仍然成立且**仍然没加**：`tests/stubs/react.ts` 的 `useEffect` 是 no-op，
       所以任何"effect 被调用了 N 次"的断言都跑不到。要锁行为，正确做法是把**该不该轮询**抽成纯函数
       （`shouldPoll(data)`）再断言真值表；真实节奏留给真机冒烟（我上面那次 34 秒计数就是可复现的做法）。
+
+24. ❓（**本轮验证中新发现，已知缺陷，Lead 裁定不在本轮修**）**冻结盘 + 时间段过滤时，正好落在窗口右端的那条消息永久不可见，而且不会有任何提示**。
+    机制（两条源码事实，verify 指出、Lead 复核）：
+    `inWindow(from, to, win) = to >= win.start && from <= win.end`（**两端闭**），所以 `time === win.end` 的消息**是候选**、通过了范围过滤；
+    但它的 x 落在 `dataWidth`，即 `viewX === viewportWidth`，而 `rectVisible(viewX, w, viewportWidth) = viewX + w > 0 && viewX < viewportWidth` 的右端是**严格 `<`**
+    ⇒ 判为不可见，`cull: true` 时被丢弃。它既不算 drawn（不在 `layout.messages` 里）也不算 dropped（`droppedMessageCount` 只统计抽稀掉的），
+    所以**图例与 +n 都不会提醒**。
+    verify 实测（**修复后的 bundle** `917fceca426dbe57216cb66b9bc1ea53`；其自建 3 泳道 / 每泳道 180 条 / 最后一条时间**恰好等于** `range.end`；
+    冻结态 `live:false` + 时间段 15m，窗口 = `[end-900000, end]` = 分钟 [165,180]）：
+    ```
+    drawn markers        : 45   (= 每泳道 15 条)
+    uniqueMinutes drawn  : 165..179      ← 180 不在其中
+    hasMinute180         : 0
+    hasMinute165         : 3             ← 起点那条在（x=0；左端闭区间 + rectVisible 左端是 viewX + w > 0）
+    legend / badges      : [] / []       ← 零漏画提示
+    ```
+    **为什么不在这轮修**：用户本轮报的四条里没有它，且**修复前同样如此（更糟 —— 那时左端还有 8 个幻影）**，因此不是本轮引入的回归。
+    它的每一种修法都要和更强的既有不变量交换：
+    (a) 让 `contentWidth` 留出 ≥ 一个 marker 宽度的余量 —— 会动到 §1.16 的"幽灵横向滚动 399→248"修复与 follow 的不变量：fit 时 `dataWidth === viewportWidth`，一加余量就会**恒有**横向滚动；
+    (b) 像 NOW 标记那样把右端 marker 左移自身宽度 —— 违反本模块最强的约定「每个标记都停在自己的真实时间；未绘制的只被省略、**从不被移动**」；
+    (c) 只把"因被裁掉而未绘制"计入 `droppedMessageCount`，让图例至少说一句 —— 这条**只修告知、不修可见性**，代价最小，是下一轮的首选项。
+    **live 态的边界更窄**：窗口右端是 `now` 且持续前进，所以刚到的新消息只在到达瞬间处在 `viewX === dataWidth`，随 `now` 前进会自己移进可见区；**只有冻结盘**会把最后一条事件永久留在画布外。
+    守护：**有意不加**任何断言锁住这个行为（把缺陷写成"期望通过"等于把它锁死）；verify 已被告知只报 ✗、不写断言。
 
 ---
 

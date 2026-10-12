@@ -345,18 +345,6 @@ export const BOARD_CSS = `
   color: var(--dsw-alias-label-tertiary);
   font: var(--dsw-font-xxxs-11);
 }
-/* The live badge, inside the box. */
-.dtg-task-flag {
-  position: absolute;
-  top: 1px;
-  right: 3px;
-  padding: 0 3px;
-  border-radius: 3px;
-  border: 1px solid currentColor;
-  font: var(--dsw-font-xxxs-strong-11);
-  line-height: 1.3;
-  pointer-events: none;
-}
 
 /* --- lane head navigation (requirement: click a teammate -> their chat) - */
 

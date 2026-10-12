@@ -21,6 +21,7 @@ import {
   LANE_PAD_Y,
   MAX_MS_PER_PX,
   MAX_TICKS,
+  MINUTE_MS,
   MIN_MS_PER_PX,
   MIN_SPAN_PX,
   STEP_BAR_HEIGHT,
@@ -1072,6 +1073,271 @@ describe('message markers and density bands', () => {
     const layout = layoutTimeline(hostile, VIEWPORT, { now: 11_000, msPerPx: 100, tzOffsetMinutes: 0 })
     expect(layout.messages.length).toBeLessThanOrEqual(1)
     expect(layout.window.end).toBeGreaterThanOrEqual(layout.window.start + 1)
+  })
+})
+
+/* ------------------------------------------------------------------------- */
+/* The message layer is scoped to the SELECTED RANGE (live bugs 1 and 2)       */
+/* ------------------------------------------------------------------------- */
+
+/**
+ * The user, after the time-range filter shipped:
+ *
+ *   1. "当时间线不是选 all 的时候，在时间线最开头有莫名其妙标记"
+ *   2. "当时间线不是选 all 的时候，发送收取消息的 icon 多了很多 +n 的标记"
+ *
+ * Both had ONE cause. Every other rect builder in this module asks `inWindow`
+ * before drawing — `spanRect` and `taskCardRect` both do; the message markers and
+ * the message bands did not. Because a marker's x is
+ * `(clamp(time, win.start, win.end) - win.start) / msPerPx`, an out-of-range
+ * message was never dropped: it was CLAMPED onto the window's left edge and drawn
+ * there. And `droppedBefore` ran over the lane's whole list, so the badge counted
+ * the omission of messages the selected range had excluded.
+ *
+ * Measured before the fix on a 4-lane / 3-hour / 180-messages-per-lane fixture at
+ * a 248px viewport:
+ *   range = all : 160 markers, 0 of them at the left edge, every badge "+6"
+ *   range = 15m : 8 markers AT the left edge, and badges reading "+163"
+ *
+ * The fixture below is arithmetic rather than sampled, so every expectation is a
+ * count that can be checked by hand. Window: [NOW - 10min, NOW] at 10s per px, so
+ * the filtered content is exactly 60px wide.
+ */
+describe('layoutTimeline — the message layer is scoped to the selected range', () => {
+  const BASE = 1_000_000
+  const NOW = BASE + HOUR_MS
+  const RANGE = 10 * MINUTE_MS
+  /** What the filter produces: [WINDOW_START, NOW]. */
+  const WINDOW_START = NOW - RANGE
+  const MS_PER_PX = 10_000
+  const at = (offset: number): number => BASE + offset
+  const isInWindow = (time: number): boolean => time >= WINDOW_START && time <= NOW
+
+  const message = (time: number, index: number): MessageSpan => ({
+    kind: 'message',
+    time,
+    end: null,
+    from: { kind: 'lead', id: 'session-1', name: 'Lead' },
+    to: { kind: 'teammate', id: 'member-1', name: 'member-1' },
+    messageId: `m-${index}`,
+    sessionId: 'session-1',
+  })
+
+  const laneOf = (id: string, times: number[]): TimelineResponse['lanes'][number] => ({
+    ...(liveResponse().lanes[0] as TimelineResponse['lanes'][number]),
+    id,
+    name: id,
+    spans: [],
+    messages: times.map((time, index) => message(time, index)),
+  })
+
+  /** 20 messages, ALL of them older than the window opens. */
+  const EARLY = Array.from({ length: 20 }, (_, index) => at(index * 1_000))
+  /** 30 older than the window … */
+  const SPANNING_BEFORE = Array.from({ length: 30 }, (_, index) => at(2_900_000 + index * 1_000))
+  /** … and 12 inside it, spread over ~50 of the 60 content px. */
+  const SPANNING_INSIDE = Array.from({ length: 12 }, (_, index) => at(3_030_000 + index * 45_000))
+  /** 5 messages, all inside. */
+  const INNER = Array.from({ length: 5 }, (_, index) => at(3_400_000 + index * 1_000))
+  /** One exactly at each edge of the window: `inWindow` is inclusive on both sides. */
+  const EDGES = [WINDOW_START, NOW]
+
+  const IN_RANGE: Readonly<Record<string, number>> = {
+    early: 0,
+    spanning: SPANNING_INSIDE.length,
+    inside: INNER.length,
+    edges: EDGES.length,
+  }
+
+  const fixture = (): TimelineResponse => ({
+    ...liveResponse(),
+    range: { start: BASE, end: null },
+    live: true,
+    tasks: [],
+    lanes: [
+      laneOf('early', EARLY),
+      laneOf('spanning', [...SPANNING_BEFORE, ...SPANNING_INSIDE]),
+      laneOf('inside', INNER),
+      laneOf('edges', EDGES),
+    ],
+  })
+
+  const filtered = () =>
+    layoutTimeline(fixture(), VIEWPORT, { now: NOW, msPerPx: MS_PER_PX, windowSpanMs: RANGE, tzOffsetMinutes: 0 })
+  const unfiltered = () => layoutTimeline(fixture(), VIEWPORT, { now: NOW, msPerPx: MS_PER_PX, tzOffsetMinutes: 0 })
+
+  it('resolves the filtered window as [end - span, now]', () => {
+    expect(filtered().window).toMatchObject({ start: WINDOW_START, end: NOW, live: true })
+  })
+
+  it('draws no marker and no band for a lane whose messages are all older than the window', () => {
+    // The clamp used to turn each of these 20 messages into a marker pinned at
+    // x === 0 — the phantom at the very start of the timeline. The band did the same
+    // thing as a 2px stub, because its own x0/x1 are clamped too.
+    const layout = filtered()
+    expect(layout.messages.filter((marker) => marker.laneId === 'early')).toHaveLength(0)
+    expect(layout.messageBands.filter((band) => band.laneId === 'early')).toHaveLength(0)
+  })
+
+  it('keeps every marker inside the window and still draws a message that sits ON an edge', () => {
+    const layout = filtered()
+    expect(layout.messages.length).toBeGreaterThan(0)
+    for (const marker of layout.messages) {
+      expect(isInWindow(marker.time), `marker at ${marker.time} is outside [${WINDOW_START}, ${NOW}]`).toBe(true)
+    }
+    // Inclusive on BOTH sides: a message at win.start really is at x === 0, and a
+    // message at win.end really is at the right edge of the content. Dropping these
+    // would be the opposite bug — a range filter that hides the boundaries it names.
+    const edgeMarkers = layout.messages.filter((marker) => marker.laneId === 'edges')
+    expect(edgeMarkers.map((marker) => marker.time).sort((a, b) => a - b)).toEqual([WINDOW_START, NOW])
+    expect(edgeMarkers.find((marker) => marker.time === WINDOW_START)?.x).toBe(0)
+    expect(edgeMarkers.find((marker) => marker.time === NOW)?.x).toBeCloseTo(layout.dataWidth, 6)
+  })
+
+  it('counts only in-range messages, so a "+n" badge can never claim omissions outside the range', () => {
+    const layout = filtered()
+    const expected = Object.values(IN_RANGE).reduce((sum, count) => sum + count, 0)
+    expect(layout.messageCount).toBe(expected)
+    expect(layout.messageCount).toBe(19)
+    expect(layout.droppedMessageCount).toBe(layout.messageCount - layout.messages.length)
+    for (const marker of layout.messages) {
+      // THE lock for bug 2: the badge is a claim about the set being decimated, and
+      // with a range selected that set is the range — so it cannot exceed it.
+      const allowed = (IN_RANGE[marker.laneId] ?? 0) - 1
+      expect(
+        marker.droppedBefore,
+        `lane ${marker.laneId} claims +${marker.droppedBefore} but only ${IN_RANGE[marker.laneId]} messages are in range`,
+      ).toBeLessThanOrEqual(allowed)
+    }
+    // The decisive one: this lane has 30 messages the range EXCLUDES. Before the fix
+    // they were decimated together with the in-range ones and their omission landed on
+    // the first in-range badge (measured "+163" on the browser fixture, "+6" at `all`).
+    const spanning = layout.messages.filter((marker) => marker.laneId === 'spanning')
+    expect(spanning.length).toBeGreaterThan(0)
+    for (const marker of spanning) expect(marker.droppedBefore).toBeLessThan(SPANNING_INSIDE.length)
+  })
+
+  it('is a no-op when no range is selected', () => {
+    // The fix must not change anything the reader sees at `all`: with no filter,
+    // `computeWindow` covers every datum by construction, so the candidate list is
+    // the whole lane and the counts are the pre-fix ones.
+    const layout = unfiltered()
+    expect(layout.window).toMatchObject({ start: BASE, end: NOW })
+    expect(layout.messageCount).toBe(EARLY.length + SPANNING_BEFORE.length + SPANNING_INSIDE.length + INNER.length + EDGES.length)
+    expect(layout.messageCount).toBe(69)
+    expect(layout.droppedMessageCount).toBe(layout.messageCount - layout.messages.length)
+    // With no filter the window is the WHOLE log, so every message is a candidate and
+    // the clamp has nothing to move: the pre-fix and post-fix marker sets are identical.
+    for (const marker of layout.messages) {
+      expect(marker.time).toBeGreaterThanOrEqual(layout.window.start)
+      expect(marker.time).toBeLessThanOrEqual(layout.window.end)
+    }
+    // …and the band that a filter cannot shrink is still reported for every lane.
+    expect(layout.messageBands.map((band) => band.laneId).sort()).toEqual(['early', 'edges', 'inside', 'spanning'])
+  })
+
+  it('keeps the band at the TRUE first→last extent, and only when the window touches it', () => {
+    const layout = filtered()
+    // Deliberately NOT range-scoped: "this lane was talking from here to there and it
+    // keeps talking past the edge you selected" is the fact the strip carries, and its
+    // tooltip names the true endpoints. Only the phantom case is dropped.
+    expect(layout.messageBands.find((band) => band.laneId === 'spanning')).toMatchObject({
+      count: 30 + 12,
+      firstTime: at(2_900_000),
+      lastTime: at(3_525_000),
+      x: 0,
+    })
+    // A band that begins at the window's left edge is not a phantom: the lane really
+    // has messages on both sides of it.
+    expect(layout.messageBands.find((band) => band.laneId === 'edges')?.w).toBeCloseTo(layout.dataWidth, 6)
+    expect(layout.messageBands.find((band) => band.laneId === 'edges')?.count).toBe(2)
+  })
+})
+
+/* ------------------------------------------------------------------------- */
+/* A task caption that cannot be read is not drawn at all (live bug 3)         */
+/* ------------------------------------------------------------------------- */
+
+/**
+ * The user: "如果时间线粒度太粗，无法展示任务卡文本时候，就不要强行展示了".
+ *
+ * Measured before the fix (a 3-hour log at 600 s/px, the coarsest zoom, in a 248px
+ * canvas): the content is `3h / 600s = 18px` wide, and all twelve captions were
+ * clamped into that same 18.1px column with 45–71px of text inside each — twelve
+ * one-character fragments stacked at one x. `taskCardRect`'s last-resort branch
+ * ("no side has room, so clamp inside the canvas") cannot tell "this canvas is
+ * narrow" from "this canvas cannot show text at all"; the suppression below can.
+ */
+describe('layoutTimeline — a task caption that cannot be read is not drawn', () => {
+  const data = liveResponse()
+  const task = (over: Partial<TimelineResponse['tasks'][number]> = {}): TimelineResponse['tasks'][number] => ({
+    id: 't',
+    revision: 1,
+    subject: 's',
+    description: 'd',
+    status: 'completed',
+    blockedBy: [],
+    writeScopes: [],
+    ready: true,
+    writeScopeWarnings: [],
+    laneId: 'lead',
+    history: [{ time: 2_000, action: 'created', sessionId: 's' }],
+    ...over,
+  })
+  const created = (from: number, to: number) => [
+    { time: from, action: 'created' as const, sessionId: 's' },
+    { time: to, action: 'completed' as const, sessionId: 's' },
+  ]
+
+  it('suppresses the caption when the whole canvas is narrower than a readable one', () => {
+    // 19_000ms of window at 1000ms/px = a 19px canvas. Both sides are also under
+    // TASK_CHIP_MIN_SIDE_WIDTH, which is what routed this into the clamp before.
+    const layout = layoutTimeline(withTasks(data, [task({ history: created(1_000, 5_000) })]), VIEWPORT, {
+      now: 20_000,
+      msPerPx: 1_000,
+      tzOffsetMinutes: 0,
+    })
+    expect(layout.contentWidth).toBe(19)
+    const card = layout.tasks[0]
+    expect(card?.labelPlacement).toBe('none')
+    expect(card?.labelW).toBe(0)
+    expect(card?.labelX).toBe(card?.x)
+    // The BOX is untouched: it still is the duration, still is the click target, and
+    // still carries the whole task in its `title`/`aria-label` in the renderer.
+    expect(card?.x).toBe(0)
+    expect(card?.w).toBe(4)
+    expect(card?.anchor).toBe('history')
+    // The phantom-scroll invariant still holds for the suppressed case.
+    expect((card?.labelX ?? -1) + (card?.labelW ?? 0)).toBeLessThanOrEqual(layout.contentWidth)
+  })
+
+  it('still clamps the caption inside a canvas that IS wide enough to read one', () => {
+    // contentWidth 63.3px: narrow, but a 63px caption is readable — so the old
+    // clamp-inside-the-canvas behaviour must survive, or a task at the right edge of a
+    // narrow pane would lose its label for no reason.
+    const layout = layoutTimeline(withTasks(data, [task({ history: created(7_000, 10_000) })]), VIEWPORT, {
+      now: 20_000,
+      msPerPx: 300,
+      tzOffsetMinutes: 0,
+    })
+    const card = layout.tasks[0]
+    expect(layout.contentWidth).toBeCloseTo(19_000 / 300, 6)
+    expect(card?.labelPlacement).toBe('right')
+    expect(card?.labelW).toBeCloseTo(layout.contentWidth, 6)
+    expect(card?.labelX).toBe(0)
+    expect((card?.labelX ?? -1) + (card?.labelW ?? 0)).toBeLessThanOrEqual(layout.contentWidth + 1e-6)
+  })
+
+  it('never suppresses a caption when a side genuinely has room', () => {
+    const layout = layoutTimeline(withTasks(data, [task({ history: created(2_000, 3_000) })]), VIEWPORT, {
+      now: 20_000,
+      msPerPx: 100,
+      tzOffsetMinutes: 0,
+    })
+    const card = layout.tasks[0]
+    expect(card?.labelPlacement).toBe('right')
+    expect(card?.labelW).toBe(TASK_CHIP_WIDTH)
+    expect(card?.labelW).toBeGreaterThan(0)
   })
 })
 
