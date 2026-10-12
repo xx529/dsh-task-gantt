@@ -4,10 +4,18 @@
 
 English | [中文](README.zh.md)
 
-> **Screenshots are pending real-machine capture.**
-> Three shots are planned — board overview, task-card detail, and the degraded
-> state. See [`docs/SCREENSHOTS.md`](docs/SCREENSHOTS.md) for the inventory and
-> the capture plan. No mock-ups will be published in their place.
+> **Screenshot below is the real panel rendered from a synthetic fixture**
+> (4 lanes, both message directions, a long task and a short one), captured from
+> a real browser at `docs/screenshots/panel-v3.png`. It is labelled as such on
+> purpose: the drawing is the shipped component, but the DATA is a fixture, so it
+> is not a real-team capture. The footer in the image carries the build identity
+> (`v0.2.2`), which is how a reader can tell which build drew it.
+> The remaining shots (board overview from real team data, task-card detail,
+> degraded state) are still pending; see
+> [`docs/SCREENSHOTS.md`](docs/SCREENSHOTS.md). No mock-ups will be published.
+
+![The task Gantt panel: one lane per teammate, message arrows pointing out or in,
+and task bars whose length is the task's real duration](docs/screenshots/panel-v3.png)
 
 `dsh-task-gantt` is a plugin for [dsh-better-sidebar](https://github.com/ChuanTianML/dsh-better-sidebar): it registers one extra sidebar tab. It is **read-only** — it never creates, claims, or completes a task.
 
@@ -17,7 +25,7 @@ English | [中文](README.zh.md)
 
 | | |
 |---|---|
-| Version | `0.1.0` |
+| Version | `0.2.2` |
 | Frozen contract (`src/shared/contract.ts`) | done |
 | Host data layer (`src/host/**`) | in progress |
 | Sidebar tab registration (`src/client/index.ts`) | done |

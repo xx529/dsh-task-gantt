@@ -208,7 +208,7 @@ Lead 扩展并冻结了 `src/shared/contract.ts`（`SpanSpeaker` / `MessageSpan`
 **用户的原始观察**：「这些任务长度，应该是根据任务创建，到结束时间的长度，而不是每个都一样的长度」。
 根因：旧几何 `w = clamp((x1-x0)/msPerPx, TASK_MIN_WIDTH=148, TASK_MAX_WIDTH=260)` —— **148/260 是文字宽度**，把任何任务都夹进同一条 148–260px 窄带，**时长信息被抹掉**（Lead 按真机图上 10 万 ms/px 换算：148px ≈ 740 秒，而 demo 任务只有几十秒）。
 
-**新契约（ui-2，`src/client/ui/timeline-layout.ts` 文件头）**：`w = max(TASK_BAR_MIN_WIDTH=2, (clamp(last)-clamp(first))/msPerPx)`；**没有上限**；标签变成独立 chip（`labelPlacement/labelX/labelW`），`'inside'` 仅当 `w >= TASK_CHIP_INSIDE_MIN_WIDTH=148`；无 history → `w=2` 点标记、`durationMs=0`；`TASK_MIN_WIDTH`/`TASK_MAX_WIDTH` **已删除**（`grep -rn "TASK_MIN_WIDTH\|TASK_MAX_WIDTH" src/` 为空）。
+**新契约（ui-2，`src/client/ui/timeline-layout.ts` 文件头）**：`w = max(TASK_BAR_MIN_WIDTH, (clamp(last)-clamp(first))/msPerPx)`；写这节时 `TASK_BAR_MIN_WIDTH` 还是 `MIN_SPAN_PX`(2)，**该值已在 0.2.2 改成 1px 发丝**（理由与证据见 §1.16 第 3 条 —— 那个 2px 正是「长度被给了最小值」的下限来源）；**没有上限**；标签变成独立 chip（`labelPlacement/labelX/labelW`），`'inside'` 仅当 `w >= TASK_CHIP_INSIDE_MIN_WIDTH=148`；无 history → `w=2` 点标记、`durationMs=0`；`TASK_MIN_WIDTH`/`TASK_MAX_WIDTH` **已删除**（`grep -rn "TASK_MIN_WIDTH\|TASK_MAX_WIDTH" src/` 为空）。
 
 **我改的 3 条（都在 `tests/layout.spec.ts`，都是"钉旧行为"）**
 1. `anchors a card on its first history event…`：`w` 改为 `(last-first)/msPerPx` 真值 + `durationMs` + `x` 按窗口起点算，并断言 chip 挂在右侧（`labelPlacement==='right'`、`labelX === x+w+TASK_CHIP_GAP`）。
@@ -219,7 +219,7 @@ Lead 扩展并冻结了 `src/shared/contract.ts`（`SpanSpeaker` / `MessageSpan`
 | 用例 | 钉住的东西 |
 |---|---|
 | `doubling the duration doubles the bar` | `msPerPx=1000` 下 30s→**30.00px**、300s→**300.00px**、比值 **10.00**（用户需求的直接回归锁） |
-| `the floor only applies below it` | 1ms 任务 → 恰好 **2px**（防止上一条退化成"只要大于下限就绿"） |
+| `a 1ms task is a hairline, NOT a 2px rule`（原 `the floor only applies below it`） | 1ms 任务 → 1px 发丝；2s 任务在 1000ms/px 下 → **恰好 2px**（真值，不是下限） |
 | `never lets the subject length move the bar` | subject 1 字符 vs **4000 字符** → `x`/`w` **完全相等**（实测 120px），且 `'inside'` 判定只看条宽不看文字 —— 根因级锁 |
 | `client stylesheets are intact template literals`（`tests/theme.spec.ts`） | CSS 模板字面量被反引号截断的守卫，见下 |
 
@@ -769,3 +769,32 @@ unzstd -c ~/.dsh/sessions/--Users-lzx-Documents-GitHub-dsh-task-gantt--/session-
 # + 全部 team_task_* tool/call；仅把超长人读文本（subject/description/label）截到 90 字符，
 # keys / seq / time / status / revision / id / 事件顺序原样保留。
 ```
+
+## 1.16 第二轮真机反馈：五个缺陷的真实根因（Lead 复现 + 逐条像素级证据）
+
+用户报告的 5 条里，**只有 1 条（条宽下限）的根因与症状长得像**；其余 4 条都不是"看起来那样"，所以全部先在真实浏览器里复现、量到数字，再改代码。复现环境：`/tmp/dtg-repro/serve`（静态 demo 页 + `lib/client.js` + 两行 loader shim），由 `python3 -m http.server 8791` 提供，页面契约是 `window.__ModuleLoader__.load({id, factory})` + `__DSH_TRANSPORT__.streamBaseUrl`，与真实 client 加载路径一致。
+
+| # | 症状 | 过硬的证据 | 真实根因 |
+|---|---|---|---|
+| 5 | 点消息 icon 打不开正文 | `getComputedStyle(marker).pointerEvents === 'none'`；11 个 marker 逐个 `elementFromPoint` 命中率 **0/11**，命中的是泳道头按钮 / `.dtg-canvas` | `.dtg-layer{pointer-events:none}` 被 marker `<button>` **继承**。不是 React、不是 handler —— 标记一直是 `<button>` 且有 `onClick`，只是永远收不到事件。修后 **8/8** 可命中且点击能打开正文 |
+| 2 | 缩放后 icon 定住并叠加 | React 真的报了 `Encountered two children with the same key, msg:m2`；DOM 里 3 个重复 key，且部分 marker 的 `left` 停留在**上一档缩放**的值 | 同一条消息同时挂在收发两条泳道且共用 `messageId`，key 却是裸 `messageId` → 一维数组里出现重复 key，React 对着重复 key 复用节点。另有一处：`visible` 用 CONTENT 空间算（与模块自己文件头写的 `viewX` 矛盾），内容宽于视口时滚进来的会被剔除 |
+| 3 | 任务条被给了最小长度 | 1ms 任务在 `msPerPx=1000` 下 `w=2`（真实 0.001px） | `TASK_BAR_MIN_WIDTH = MIN_SPAN_PX = 2`，把"时长"这个量夹到了与"瞬时"同一个下限 |
+| 4 | 悬停任务时中间出现色条 | 同一张卡片、同一滚动位置，仅切 hover：卡片区域"饱和像素行" **0 行 → 第 100..109 行整行 `rgb(135,82,225)`** | `.dtg-task-bar` 与卡片**同位置**且 DOM 在卡片之前，所以卡片不透明时 100% 被遮挡；`:hover` 用**半透明**的 `--dsw-alias-interactive-bg-hover` **替换**了不透明背景，条就透出来了 |
+| 1 | 圆圈+箭头脏、方向对比弱 | 计算样式：13 个 marker 全是 `border-radius:50%` 的 11×11 盘，字形 9px | 设计问题，无"根因"可挖；盘与方向色相耦合 |
+
+**缺陷 4 为什么值得记一笔**：`tests/fixtures/dsw-theme-tokens.json` 里只有 token **名**、没有解析值，所以静态读不出"这个 token 是半透明的"。定案的线索是**主题自己的词法**：同一份 token 表里同时存在 `--dsw-alias-interactive-bg-hover` 和 `--dsw-alias-interactive-bg-hover-solid` —— 只有在"普通 hover 是半透明"的前提下才需要有 `-solid` 变体。改法是 `box-shadow: inset 0 0 0 999px <token>`：inset 阴影画在**自身背景之上、内容之下**，token 半透明时是叠加着色（观感不变），不透明时完全覆盖，两种情况都不打穿卡片，也不动盒模型。
+
+## 1.17 教训（第 7 条，与"断言打在自己构造的常量上"并列）：**扫描器的覆盖范围包含注释**
+
+ui-2 在 `styles.ts` 的 CSS 注释里写了 `rgba(0,0,0,0.06)` 作为证据，`pnpm run test` 立刻红：
+
+```
+FAIL tests/theme.spec.ts > src/client/** carries zero hardcoded colors
+src/client/ui/styles.ts:293 [color-literal] rgb(): rgba(
+```
+
+`tests/helpers/theme-scan.ts` 的 `/\brgba?\s*\(/` 对**整份文件文本**匹配，**不剥注释**（该文件顶部注释就写明"#rrggbb、rgb(、颜色名都要红"）。这是本仓库**有意的**约定：注释和代码是同一片扫描面。
+
+**做法**：解释一个颜色时用文字描述它，不要写出它的值 —— 例如写 "a black tint at six percent alpha" 而不是它的字面量形式。同类的第 1、2 次事故是**反引号**（`markdown-citation`、`position: absolute`）提前终止 CSS 模板字面量，那一类由 `styles.ts` 的 `assertNoBackticksInCss` 在模块加载时抛错兜住；**这一类没有运行时守卫，只有测试会红**，所以更容易在"跑测试之前"被当成无害文字写下去。
+
+**推论**：新增任何"文档化证据"的注释后，`pnpm run test` 必须重跑一遍 —— `pnpm run typecheck` 不会红（注释在字符串里合法），`pnpm run build` 也不会红。
