@@ -144,24 +144,45 @@ describe('renderer-side facts that only a DOM could otherwise show (PROXIES)', (
     expect(chart.slice(turnPass - 400, turnPass)).not.toContain('? null')
   })
 
-  it('PROXY: the TASK popover body is title + time only, and its title is ellipsised', () => {
-    // ITEM 2. Note the MARKER popover legitimately has a desc (the preview label),
-    // so the assertion must be scoped to the task body — my first version asserted
-    // the whole file and failed on the marker's `dtg-popover-desc`.
-    const taskBodyStart = chart.indexOf('TITLE and TIME only')
-    expect(taskBodyStart).toBeGreaterThan(-1)
+  it('PROXY: the TASK popover shows the FULL title plus start, end, status and duration', () => {
+    // RE-BASED, not deleted. The previous version of this lock asserted the opposite
+    // of what the user now wants: it required `text-overflow: ellipsis` +
+    // `white-space: nowrap` on the title, and "title + time only" in the body. The
+    // user rejected both after seeing `Falsify the activity toggle, the tr…`:
+    //   > 就要完整显示标题，不能缩略了，显示完整标题，显示开始和结束时间、运行状态和运行用时
+    // So the guarded property is now: the title WRAPS with no ellipsis, and all four
+    // run facts are rendered.
+    // Slice from the START of TaskPopoverBody, not from the comment: the four facts
+    // (and the `statusText` call) are declared above that comment, so slicing at the
+    // comment cut them out of the window and the assertion failed on my own slice.
+    const bodyFn = chart.indexOf('function TaskPopoverBody')
+    expect(bodyFn, 'TaskPopoverBody must exist').toBeGreaterThan(-1)
+    const taskBodyStart = chart.indexOf('The FULL subject, wrapping', bodyFn)
+    expect(taskBodyStart, 'the wrapping comment must be inside it').toBeGreaterThan(bodyFn)
     // Slice forward to the NEXT function: `useSuspendedTitle` is defined EARLIER in
     // the file, so using it as the end bound produced an inverted range (my bug).
     const nextFunction = chart.indexOf('\nfunction ', taskBodyStart)
-    const taskBody = chart.slice(taskBodyStart, nextFunction === -1 ? taskBodyStart + 1_500 : nextFunction)
+    const taskBody = chart.slice(bodyFn, nextFunction === -1 ? taskBodyStart + 1_800 : nextFunction)
     expect(taskBody).toContain('dtg-popover-title')
     expect(taskBody).toContain('dtg-popover-meta')
+    // All four facts, each from the SAME duration helper the card title uses.
+    expect(taskBody).toContain("uiLabel('taskCreatedAt')")
+    expect(taskBody).toContain("uiLabel('taskFinishedAt')")
+    expect(taskBody).toContain('statusText(task.status)')
+    expect(taskBody).toContain("uiLabel('taskDuration')")
+    expect(taskBody).toContain('taskDurationLine(')
+    // The description stays OUT: the user asked for the title plus those four facts,
+    // and the description has its own home in the TaskDetails panel.
     expect(taskBody, 'the description must NOT be repeated in the task popover').not.toContain('dtg-popover-desc')
     expect(taskBody).not.toContain('task.description')
     // The marker popover keeps its preview label, which is a different thing.
     expect(chart).toContain('messagePopoverPreview')
-    // CSS: single-line ellipsis on the title, and the popover is height-capped.
-    expect(styles).toMatch(/\.dtg-popover-title\s*\{[^}]*text-overflow:\s*ellipsis[^}]*white-space:\s*nowrap/)
+    // CSS: the single-line rules are GONE from the title and the meta line, and the
+    // popover is still height-capped so it cannot grow past the panel.
+    expect(styles).not.toMatch(/\.dtg-popover-title\s*\{[^}]*text-overflow/)
+    expect(styles).not.toMatch(/\.dtg-popover-meta\s*\{[^}]*text-overflow/)
+    expect(styles).toMatch(/\.dtg-popover-title\s*\{[^}]*overflow-wrap:\s*anywhere/)
+    expect(styles).toMatch(/\.dtg-popover-meta\s*\{[^}]*flex-wrap:\s*wrap/)
     expect(styles).toMatch(/\.dtg-popover\s*\{[^}]*max-height:\s*200px/)
   })
 

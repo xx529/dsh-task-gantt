@@ -366,24 +366,27 @@ export const BOARD_CSS = `
   font: var(--dsw-font-xxxs-11);
 }
 .dtg-popover {
-  /* A hard ceiling so long text can never push the popover out of the panel. The
-     title clips on ONE line (that plus the time is all the user asked to see) and the
-     body scrolls instead of growing without bound. */
+  /* A hard ceiling so long text can never push the popover out of the panel. Now that
+     the title WRAPS, this is the one place that bounds the height; the body scrolls.
+     Measured against the longest subject on the demo fixture (see the task report):
+     title + four meta facts stay well inside 200px, so the clamp does not bite. */
   max-height: 200px;
-  overflow: hidden;
+  overflow: auto;
 }
+/* The title WRAPS. The single-line ellipsis added in 0.2.15 was withdrawn by the user
+   ("就要完整显示标题，不能缩略了，显示完整标题"), so there is deliberately no nowrap and
+   no text-overflow here: a long subject must be readable in full rather than clipped. */
 .dtg-popover-title {
-  /* Single line, ellipsised: a title long enough to wrap would defeat the point of a
-     tooltip. The full text is one click away in the details panel. */
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
   font: var(--dsw-font-xxs-strong-12);
 }
+/* The four run facts. They WRAP as separate chips rather than ellipsising: a status
+   like "已完成" was being cut to "已完…" when this was one nowrap line. */
 .dtg-popover-meta {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  overflow-wrap: anywhere;
 }
 .dtg-popover-desc {
   margin-top: 2px;

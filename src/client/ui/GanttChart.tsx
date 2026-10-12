@@ -1611,22 +1611,49 @@ function TaskPopoverBody({
   task: TimelineTask
   tzOffsetMinutes: number
 }): ReactNode {
-  const first = task.history[0]?.time
-  const last = task.history[task.history.length - 1]?.time
+  /**
+   * Start, end, duration and label, from the SAME helper the card's `title` attribute
+   * uses. Not a second formatting: the user pointed at that exact format
+   * (`… → 完成 10-12 14:04:17 (20m 0s)`), and two formatters would drift apart.
+   */
+  const elapsed = taskDurationLine(task, (time) => formatDateTime(time, tzOffsetMinutes), {
+    created: uiLabel('taskCreatedAt'),
+    finished: uiLabel('taskFinishedAt'),
+    lastTransition: uiLabel('taskLastTransitionAt'),
+    duration: uiLabel('taskDuration'),
+    unknown: uiLabel('taskDurationUnknown'),
+    line: uiLabel('taskDurationLine'),
+  })
   const status = statusText(task.status)
+  const format = (time: number): string => formatDateTime(time, tzOffsetMinutes)
   return (
     <>
       {/*
-        TITLE and TIME only. The user: "仅显示到标题和时间就够了，详细的点开来看" — the
-        description used to be repeated here, which pushed the popover past the panel
-        and made it unreadable ("悬停，看不完整"). Detail has its own home: clicking the
-        card opens the TaskDetails panel, which can scroll and wrap properly.
+        The FULL subject, wrapping. The user, after 0.2.15's single-line ellipsis:
+        "就要完整显示标题，不能缩略了，显示完整标题" — so no nowrap and no ellipsis here.
+        The description stays OUT: they asked for title + the four run facts, and the
+        description has its own home in the TaskDetails panel.
       */}
       <div className="dtg-popover-title">{task.subject === '' ? '—' : task.subject}</div>
       <div className="dtg-popover-meta">
-        {first === undefined || last === undefined
-          ? status
-          : `${formatDateTime(first, tzOffsetMinutes)} -> ${formatDateTime(last, tzOffsetMinutes)} · ${status}`}
+        {elapsed.known ? (
+          <>
+            {/* 开始时间 / 结束时间 / 运行状态 / 运行用时 — all four, each one
+                labelled so a reader (and a test) can tell them apart. The times come
+                from the task's own history endpoints, so "开始" is its first recorded
+                event and "结束" its last. */}
+            <span>{`${uiLabel('taskCreatedAt')} ${elapsed.from}`}</span>
+            <span>{`${uiLabel('taskFinishedAt')} ${elapsed.to}`}</span>
+            <span>{status}</span>
+            <span>{`${uiLabel('taskDuration')} ${elapsed.duration}`}</span>
+          </>
+        ) : (
+          <>
+            <span>{status}</span>
+            {/* A live task has no end yet: say so rather than invent one. */}
+            <span>{elapsed.text}</span>
+          </>
+        )}
       </div>
     </>
   )

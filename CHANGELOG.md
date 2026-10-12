@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.2.17 — 2026-10-12
+
+**The hover popover shows the WHOLE title, plus start, end, status and duration**
+
+"这个浮动的任务卡显示，就要完整显示标题，不能缩略了，显示完整标题，显示开始和结束时间、运行状态和运行
+用时". The 0.2.15 single-line rules (`text-overflow: ellipsis` + `white-space: nowrap` on the
+popover's title and meta) were exactly what the user was looking at, so they are gone: the title
+WRAPS (`overflow-wrap: anywhere`) and the meta line is a wrapping flex row.
+
+Measured on a deliberately long subject — the popover's title text is byte-equal to the first line
+of the card's own `title` attribute (68 characters, `VERBATIM_EQUAL: true`, `text-overflow: clip`,
+`white-space: normal`, 2 lines / 36px), and the meta carries all four facts as separate parts:
+`创建 10-12 18:59:31` / `完成 10-12 19:20:31` / `已完成` / `时长 21m 0s`. The start/end/duration
+values reuse the SAME `taskDurationLine(...)` the card's tooltip already used, so there is no second
+formatting to drift; a live task with no end still reports `duration unknown` rather than inventing
+one.
+
+The popover keeps `max-height: 200px` and its clamp into the panel, but its overflow is now `auto`
+so a title long enough to exceed the cap scrolls instead of being cut — measured `scrollHeight 98 ===
+clientHeight 98`, i.e. the cap did not bite for a 2-line title. Description still does not appear
+(`descriptionAbsent: true`) — the user asked for the title and the times, and the detail stays on
+click. The label INSIDE the task box keeps its own truncation (measured `clientW 53 / scrollW 357`,
+ellipsis) because that is a different surface and the user asked only about the popover.
+
+The lock that asserted the old contract (title ellipsised, title + time only) was RE-BASED rather
+than deleted, since it asserted the opposite of what is now required.
+
+The footer build identity is now `v0.2.17 · popover-full`.
+
 ## 0.2.16 — 2026-10-12
 
 **A filtered teammate's messages are hidden, not greyed — and the 活动+消息 toggle is gone**
