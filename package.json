@@ -1,6 +1,6 @@
 {
   "name": "dsh-task-gantt",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "description": "Agent-team task Gantt chart for the DSH sidebar — teammates on the y-axis, real session time on the x-axis, task title and summary in every bar. · DSH 侧边栏的 agent team 任务甘特图。",
   "license": "MIT",
   "type": "module",

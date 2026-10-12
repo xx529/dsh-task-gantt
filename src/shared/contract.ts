@@ -28,7 +28,7 @@ export const API_VERSION = 1 as const
  * or behaviour changes, and a tester can read the version off the screen
  * instead of guessing from a screenshot.
  */
-export const BUILD_LABEL = 'v0.2.6 · duration-box+growing-tasks' as const
+export const BUILD_LABEL = 'v0.2.7 · range+follow+waits' as const
 
 /** The sidebar tab type id registered through `ctx.betterSidebar.registerTab`. */
 export const TAB_TYPE_ID = 'dsh-task-gantt:board' as const
@@ -216,6 +216,50 @@ export interface TimelineTask {
 }
 
 /** One roster member: the y-axis lane of the chart. */
+/**
+ * The tool whose call/result pair defines a wait block.
+ *
+ * Lives in the SHARED contract, not in the host fold, because both halves need it and the
+ * client bundle must never import `src/host/**` — doing so would pull the host code into
+ * the browser. The host folds waits by this name; the client uses it for the legend.
+ */
+export const WAIT_TOOL_NAME = 'wait_agent'
+
+/**
+ * One `wait_agent` block: an agent that is NOT working, but blocked on its peers.
+ *
+ * This is a distinct kind of time from every other thing on the chart, which is why it
+ * gets its own shape rather than being folded into `spans` (turn/step) or `messages`:
+ *
+ * - a `turn`/`step` span is time the agent spent WORKING;
+ * - a message marker is an instant at which something was said;
+ * - a wait is time the agent spent deliberately doing nothing, and it can be long —
+ *   measured on this machine, 24 waits in one real log ran from 2.4s to 300s, several
+ *   hitting their full timeout.
+ *
+ * The user's ask: "在信息收发这一行，要多展示 wait_agent 的标志，开始和结束，这样就知道这个
+ * 时候 agent 不是在工作，而是在等待".
+ */
+export interface LaneWait {
+  /** When `wait_agent` was called, epoch ms. */
+  start: number
+  /** When it returned, epoch ms — or `null` while it is still blocking. */
+  end: number | null
+  /** The timeout the caller asked for, ms (`arguments.timeout_ms`), when present. */
+  timeoutMs?: number
+  /**
+   * `true` when the timeout elapsed with NOBODY arriving, `false` when a peer woke it.
+   *
+   * Worth carrying because it separates "waited productively" from "waited for nothing":
+   * the tool's own result is `{"timedOut":true|false}`. An ABSENT value means the result
+   * could not be read — never guess it, because a guess here becomes a false claim about
+   * what an agent was doing.
+   */
+  timedOut?: boolean
+  /** The session whose log this wait was read from. */
+  sessionId: string
+}
+
 export interface TimelineLane {
   /** The member's session id, or `'lead'` for the Lead row, or `'unassigned'`. */
   id: string
@@ -240,6 +284,14 @@ export interface TimelineLane {
    * Rendered as coloured markers so a lane shows who said what, when.
    */
   messages: MessageSpan[]
+  /**
+   * Ascending blocks in which this agent was WAITING on its peers, not working.
+   *
+   * Drawn on the same row as the messages, because that row is where "this agent is
+   * interacting with others" already lives: a message is an instant of contact and a
+   * wait is the stretch of time spent hoping for one.
+   */
+  waits?: LaneWait[]
   /**
    * This lane's identity colour, as theme-token names. Stable for a given
    * member id, so the same teammate keeps one colour across every panel.

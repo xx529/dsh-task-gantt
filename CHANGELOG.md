@@ -1,5 +1,71 @@
 # Changelog
 
+## 0.2.7 — 2026-10-12
+
+Three additions, and the two defects that measuring them turned up.
+
+**A time-range filter: 全部 / 5m / 15m / 30m / 1h / 3h**
+
+- Expressed as ONE number on the window (`windowSpanMs`), not as a pass over the rects
+  in the renderer: every downstream position is already relative to the window's start,
+  so the axis, the bars, the markers, the waits and the ticks are filtered by the same
+  decision and cannot disagree about what is in range.
+- The window's END is deliberately untouched. For a live board it is still `now`, which
+  is what lets the follow toggle keep working while a range is selected; for a frozen
+  board it is still the last datum, so filtering cannot make a stopped chart creep.
+- A range WIDER than the log is clamped to the log's own start, so "3 hours" on a
+  two-minute session shows those two minutes rather than an hour of empty axis.
+- Selecting a range re-fits the zoom, so the chosen span fills the panel instead of
+  becoming a 41px sliver of it (measured before the fix: 5 minutes drawn 41px wide on a
+  248px canvas).
+
+**A follow toggle: does the view keep up with the clock**
+
+- On, the scroller is moved so the NOW line stays at the viewport's right edge; off, it
+  is never touched. Verified end-to-end on a LIVE page: with it on, `scrollLeft` went
+  0 → 317 = maxScroll; with it off, it stayed at exactly 100 across seven seconds while
+  the clock advanced and the content grew.
+- Manual scrolling never flips the toggle: the callback does not write back, so there is
+  no "parent writes, child reports, parent writes again" loop.
+
+**`wait_agent` blocks, drawn on the message row**
+
+- A wait is time an agent spent blocked on its peers rather than working, so it is its
+  own fold (`foldWaitSpans`) rather than being folded into the activity spans or the
+  messages. Both ends are drawn, with a distinct cap at each: a start tick and an end
+  tick, and an end that is absent for a wait that is still blocking.
+- Three outcomes are kept apart, because they mean different things: `timedOut: true`
+  (waited out the timeout, nobody came), `false` (a peer woke it), and ABSENT (the result
+  could not be read — never collapsed to `false`, which would be the positive claim
+  "someone arrived").
+- Measured on a real session log: 24 `wait_agent` calls, 24 paired, 2.4s to 300s, 3
+  timeouts and 21 wakes.
+
+**Two defects found by measuring the above**
+
+- **A wait was paired with the wrong result.** On real data every `wait_agent` call
+  carries TWO results: the real one, and a much later re-append from the compaction
+  machinery whose body is `[dsh-jev-compaction] Historical tool output pruned…`. Keeping
+  the LAST gave all 24 waits a duration of 15 minutes to 21 hours and lost every
+  outcome — and looked perfectly reasonable against hand-built fixtures. The earliest
+  result is when the call actually returned. There is now a test that runs against a real
+  log when the machine has one, and skips VISIBLY when it does not.
+- **A task label could overflow the canvas by 151px.** The borderless caption added in
+  0.2.6 started just past its box, so for a task at the right edge it reached past the
+  canvas. An absolutely-positioned descendant contributes to its scroll container's
+  scrollable overflow, so this did not merely look wrong: `scrollWidth` went 248 → 399,
+  giving the panel a phantom horizontal scroll range that also defeated the follow
+  toggle. Labels now flip to the OTHER SIDE of the box when there is no room, and their
+  width is clamped to the room that side has, so no label can leave the canvas.
+- Related, and the same class of defect: a task or activity span that lay WHOLLY outside
+  the selected range was still drawn, because clamping an out-of-range rect into the
+  window produces a plausible stub at x=0 rather than something obviously wrong. With a
+  5-minute filter over a 30-minute log, a task that had ended 14 minutes earlier was
+  still a 10px box on the left edge. Out-of-range rects are now dropped; a rect that
+  merely STARTS before the window is kept and flagged `clippedLeft`.
+
+The footer build identity is now `v0.2.7 · range+follow+waits`.
+
 ## 0.2.6 — 2026-10-12
 
 Four issues from the first look at the panel in the real app.

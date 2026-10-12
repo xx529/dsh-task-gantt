@@ -39,6 +39,19 @@ import {
   taskDurationLine,
 } from './timeline-layout.ts'
 
+/**
+ * Time-range presets. The value is a DURATION, not a pair of timestamps: the
+ * window's right edge stays whatever the board says it is (NOW while live), so a
+ * preset means "the last N", never "this fixed slice of the past".
+ */
+const WINDOW_SPAN_PRESETS: readonly { ms: number; label: string }[] = [
+  { ms: 5 * 60_000, label: '5m' },
+  { ms: 15 * 60_000, label: '15m' },
+  { ms: 30 * 60_000, label: '30m' },
+  { ms: 60 * 60_000, label: '1h' },
+  { ms: 3 * 60 * 60_000, label: '3h' },
+]
+
 /** Poll cadence while the tab is visible (the host folds the log on demand). */
 const POLL_MS = 5_000
 /** Cadence of the NOW marker while the board is live. */
@@ -99,6 +112,18 @@ export function BoardView({ sessionId, visible, routeBase, navigate }: BoardView
    * body), so selecting one does not clear the other. Both can be open at once.
    */
   const [selectedMessageKey, setSelectedMessageKey] = useState<string | null>(null)
+  /**
+   * Time-range filter: `null` means "everything". Kept as component state (not in
+   * the payload) so changing it re-lays out the SAME fetched board without a
+   * refetch, and so it survives the 5s poll.
+   */
+  const [windowSpanMs, setWindowSpanMs] = useState<number | null>(null)
+  /**
+   * Follow: `true` keeps the NOW line pinned near the right edge as time advances.
+   * It only ever scrolls while ON; turning it off hands the scroll position
+   * entirely to the user, and nothing flips it back on their behalf.
+   */
+  const [follow, setFollow] = useState(true)
 
   useBoardStyles()
 
@@ -284,6 +309,35 @@ export function BoardView({ sessionId, visible, routeBase, navigate }: BoardView
             {`${formatDateTime(data.range.start, tzOffsetMinutes)} → ${uiLabel('endedLabel')} ${formatDateTime(data.range.end ?? data.generatedAt, tzOffsetMinutes)}`}
           </span>
         )}
+        <label className="dtg-control" title={uiLabel('rangeHint')}>
+          <span className="dtg-control-label">{uiLabel('rangeLabel')}</span>
+          <select
+            className="dtg-select"
+            aria-label={uiLabel('rangeLabel')}
+            value={windowSpanMs === null ? 'all' : String(windowSpanMs)}
+            onChange={(event) => {
+              const raw = event.target.value
+              setWindowSpanMs(raw === 'all' ? null : Number(raw))
+            }}
+          >
+            <option value="all">{uiLabel('rangeAll')}</option>
+            {WINDOW_SPAN_PRESETS.map((preset) => (
+              <option key={preset.ms} value={String(preset.ms)}>
+                {preset.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button
+          type="button"
+          className={follow ? 'dtg-btn dtg-btn-on' : 'dtg-btn'}
+          onClick={() => setFollow((value) => !value)}
+          title={uiLabel('followHint')}
+          aria-label={uiLabel('followLabel')}
+          aria-pressed={follow}
+        >
+          {`${uiLabel('followLabel')} ${follow ? '●' : '○'}`}
+        </button>
         <span className="dtg-spacer" />
         <span className="dtg-chip" title={`${t('tabTitle')} · ${data.lanes.length}`}>
           {`${data.tasks.length} ${uiLabel('tasksLabel')}`}
@@ -309,6 +363,8 @@ export function BoardView({ sessionId, visible, routeBase, navigate }: BoardView
           selectedMessageKey={selectedMessageKey}
           onSelectMessage={onSelectMessage}
           navigate={onNavigate}
+          windowSpanMs={windowSpanMs}
+          follow={follow}
         />
       )}
 

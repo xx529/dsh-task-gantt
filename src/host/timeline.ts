@@ -839,6 +839,13 @@ async function deriveTimeline(ctx: Context, sessionId: string, generatedAt: numb
       color: laneColorTokens(draft.id, laneIndex),
       tasks: [],
     }
+    // The time this lane spent WAITING on its peers rather than working. Read from
+    // the lane's OWN log, which is where its `wait_agent` calls live: a wait is
+    // something an agent does to itself, so unlike a message it is not dual-written.
+    if (draft.sessionId !== undefined) {
+      const laneFold = folds.get(draft.sessionId)
+      if (laneFold !== undefined && laneFold.waits.length > 0) lane.waits = laneFold.waits
+    }
     if (draft.sessionId !== undefined) {
       lane.navigation = { type: 'session', value: draft.sessionId }
     }

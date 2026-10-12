@@ -35,6 +35,7 @@ import {
 } from 'react'
 import type {
   LaneColorTokens,
+  LaneWait,
   LaneNavigation,
   MemberStatus,
   MessageSpan,
@@ -56,6 +57,8 @@ import {
   DEFAULT_LANE_HEIGHT,
   LANE_COLOR_FALLBACKS as LANE_COLOR_FALLBACKS_SHARED,
   LANE_HEAD_WIDTH,
+  MESSAGE_MARKER_HEIGHT,
+  MESSAGE_MARKER_TOP,
   TASK_CHIP_GAP,
   clampMsPerPx,
   computeWindow,
@@ -63,6 +66,8 @@ import {
   formatClock,
   formatDateTime,
   isLiveBoard,
+  clamp,
+  inWindow,
   messageMarkerPaint,
   speakerLaneMapper,
   taskDurationLine,
@@ -174,6 +179,17 @@ export interface GanttChartProps {
   onSelectTask: (taskId: string | null) => void
   /** Clicking a navigable lane head opens that session (shell-injected). */
   navigate?: (target: LaneNavigation) => boolean
+  /**
+   * Duration of the trailing window, or `null` for the whole board
+   * ("the last N", never a fixed slice: the right edge stays the board's own).
+   */
+  windowSpanMs?: number | null
+  /**
+   * When on, the view scrolls itself so the NOW line stays near the right edge as
+   * time advances. While off, this component NEVER writes `scrollLeft` — the
+   * user's position is theirs, and the panel does not flip the flag either.
+   */
+  follow?: boolean
   /** Key of the selected marker, or null (independent of the task selection). */
   selectedMessageKey?: string | null
   /** Clicking a marker toggles it; Esc closes it (handled by the parent). */
@@ -208,7 +224,18 @@ function laneColor(lane: TimelineResponse['lanes'][number], index: number): Lane
 }
 
 export function GanttChart(props: GanttChartProps): ReactNode {
-  const { data, now, visible, selectedTaskId, onSelectTask, navigate, selectedMessageKey, onSelectMessage } = props
+  const {
+    data,
+    now,
+    visible,
+    selectedTaskId,
+    onSelectTask,
+    navigate,
+    selectedMessageKey,
+    onSelectMessage,
+    windowSpanMs,
+    follow,
+  } = props
 
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const frameRef = useRef(0)
@@ -224,7 +251,20 @@ export function GanttChart(props: GanttChartProps): ReactNode {
    */
   const [messageMode, setMessageMode] = useState<'both' | 'markers'>('both')
 
-  const win = useMemo(() => computeWindow(data, now), [data, now])
+  // The trailing window is the LAYOUT's business (`options.windowSpanMs`): it
+  // already clamps to the log's own start, ignores null/0/negative/NaN, and keeps
+  // `end` untouched so a filtered live board still follows NOW. Re-deriving it
+  // here would be a second implementation of the same rule, free to drift.
+  /**
+   * The window is computed ONCE, here, WITH the time filter applied — and it is
+   * the same value the layout receives and the same one the auto-fit uses.
+   *
+   * Deriving an unfiltered window for the fit (or for the wait blocks) is how a
+   * "last 5 minutes" selection ended up drawn as a 41px sliver in a 248px panel:
+   * the scale was still fitted to the full 30-minute log. Anything that needs the
+   * window must read `layout.window` or this memo, never re-derive it.
+   */
+  const win = useMemo(() => computeWindow(data, now, windowSpanMs), [data, now, windowSpanMs])
   const live = data.live !== false
   const effectiveMsPerPx = msPerPx ?? fitMsPerPx(win.durationMs, Math.max(1, viewport.width))
   const tzOffsetMinutes = -new Date(now).getTimezoneOffset()
@@ -255,6 +295,8 @@ export function GanttChart(props: GanttChartProps): ReactNode {
   // can never be mapped one way while being drawn another way.
   const laneIdOf = useMemo(() => speakerLaneMapper(data.lanes), [data])
   const markerCount = data.lanes.reduce((total, lane) => total + (lane.messages?.length ?? 0), 0)
+  /** Only show the wait legend when the board actually has waits to explain. */
+  const waitBandCount = data.lanes.reduce((total, lane) => total + (lane.waits?.length ?? 0), 0)
   const userPaint = useMemo(() => ({ bar: lanePaint(USER_COLOR.bar), on: lanePaint(USER_COLOR.on) }), [])
   const systemPaint = useMemo(() => ({ bar: lanePaint(SYSTEM_COLOR.bar), on: lanePaint(SYSTEM_COLOR.on) }), [])
 
@@ -275,6 +317,7 @@ export function GanttChart(props: GanttChartProps): ReactNode {
           scrollTop: scroll.top,
           cull: true,
           messageMode,
+          windowSpanMs,
         },
       ),
     [data, now, effectiveMsPerPx, viewport.width, viewport.height, scroll.left, scroll.top, messageMode],
@@ -282,13 +325,16 @@ export function GanttChart(props: GanttChartProps): ReactNode {
 
   /* ------------------------------------------------- measurement + scroll */
 
-  const syncScroll = useCallback(() => {
-    const el = scrollRef.current
-    if (el === null) return
-    const top = el.scrollTop
-    const left = el.scrollLeft
-    setScroll((prev) => (prev.left === left && prev.top === top ? prev : { left, top }))
-  }, [])
+  const syncScroll = useCallback(
+    () => {
+      const el = scrollRef.current
+      if (el === null) return
+      const top = el.scrollTop
+      const left = el.scrollLeft
+      setScroll((prev) => (prev.left === left && prev.top === top ? prev : { left, top }))
+    },
+    [],
+  )
 
   useEffect(() => {
     const el = scrollRef.current
@@ -309,6 +355,33 @@ export function GanttChart(props: GanttChartProps): ReactNode {
     observer.observe(el)
     return () => observer.disconnect()
   }, [])
+
+  /**
+   * FOLLOW: keep the NOW line ~24px inside the right edge.
+   *
+   * With a time filter the scrollable range is short, so the same formula
+   * collapses to "park at the far right" — one code path for both cases. The
+   * decision itself is the exported pure function, so the behaviour is a truth
+   * table rather than a side effect nobody can test.
+   */
+  useEffect(() => {
+    if (follow !== true) return
+    const { scrollTo } = shouldFollowScroll({
+      follow: true,
+      live: isLiveBoard(data),
+      nowX: layout.nowX,
+      viewportWidth: viewport.width,
+      contentWidth: layout.contentWidth,
+      scrollLeft: scroll.left,
+    })
+    if (scrollTo === null) return
+    setScroll((previous) => (previous.left === scrollTo ? previous : { ...previous, left: scrollTo }))
+    const el = scrollRef.current
+    if (el !== null) {
+      el.scrollLeft = scrollTo
+      syncScroll()
+    }
+  }, [follow, data, layout.nowX, layout.contentWidth, viewport.width, scroll.left, syncScroll])
 
   const onScroll = useCallback(() => {
     if (frameRef.current !== 0) return
@@ -347,6 +420,8 @@ export function GanttChart(props: GanttChartProps): ReactNode {
     if (el === null || pending === null) return
     pendingScrollLeft.current = null
     el.scrollLeft = pending
+    // A zoom keeps the cursor's instant under the pointer; that is not the user
+    // scrolling, so it is not reported either.
     syncScroll()
   }, [effectiveMsPerPx, syncScroll])
 
@@ -382,6 +457,37 @@ export function GanttChart(props: GanttChartProps): ReactNode {
    * component renders the FROZEN end time under a different class and label —
    * so a reader never sees a moving "now" on an idle chart.
    */
+  /**
+   * The lane's `wait_agent` blocks. Placed on the message track, because that row
+   * already means "this agent is dealing with someone else"; the turn/step bars
+   * above it mean "working", which a wait is precisely not.
+   */
+  const waitBands = useMemo(() => {
+    const out: WaitBandRect[] = []
+    // Read the LAYOUT's window and scale, not a re-derivation: they already carry
+    // the time filter, and using anything else put every wait off the canvas.
+    const laneWindow = { start: layout.window.start, end: layout.window.end }
+    data.lanes.forEach((lane, index) => {
+      const waits = lane.waits
+      if (waits === undefined || waits.length === 0) return
+      out.push(
+        ...waitBandRects(waits, {
+          laneId: lane.id,
+          laneIndex: index,
+          windowStart: laneWindow.start,
+          windowEnd: laneWindow.end,
+          msPerPx: layout.msPerPx,
+          cull: true,
+          viewportWidth: Math.max(1, viewport.width),
+          scrollLeft: scroll.left,
+          laneY: DEFAULT_HEADER_HEIGHT + index * DEFAULT_LANE_HEIGHT,
+          laneHeight: DEFAULT_LANE_HEIGHT,
+        }),
+      )
+    })
+    return out
+  }, [data, layout.window.start, layout.window.end, layout.msPerPx, viewport.width, scroll.left])
+
   const endMarker = layout.endMarker
   const chartAria = `${uiLabel('chartAria', {
     lanes: layout.lanes.length,
@@ -448,6 +554,13 @@ export function GanttChart(props: GanttChartProps): ReactNode {
                   className={tick.major ? 'dtg-gridline dtg-gridline-major' : 'dtg-gridline'}
                   style={{ left: tick.x, height: layout.contentHeight }}
                 />
+              ))}
+              {/* Wait blocks sit UNDER the message markers: a wait is a period,
+                  a marker is an instant. Each one draws both ends: a filled cap at
+                  the start, and either a filled cap (it finished) or an open,
+                  dashed cap (it is still blocking) at the end. */}
+              {waitBands.map((band) => (
+                <WaitBand key={`wait:${band.laneId}:${band.start}:${band.end ?? 'open'}`} band={band} />
               ))}
               {/* Per-lane message rhythm: the TRUE first→last extent of every
                   message, so decimated markers can never shrink the reported
@@ -585,6 +698,12 @@ export function GanttChart(props: GanttChartProps): ReactNode {
               </span>
               {uiLabel('messageLegendReceived')}
             </span>
+            {waitBandCount === 0 ? null : (
+              <span className="dtg-legend-item" title={uiLabel('waitLegendHint')}>
+                <span className="dtg-legend-wait" aria-hidden="true" />
+                {uiLabel('waitLegend')}
+              </span>
+            )}
             {layout.droppedMessageCount === 0 ? null : (
               <span className="dtg-legend-item" title={uiLabel('messageDroppedHint')}>
                 {uiLabel('messageDropped', {
@@ -826,6 +945,58 @@ function SpanBar({ span, color }: { span: SpanRect; color?: LaneColorTokens | un
   return <span className={classes.join(' ')} style={style} title={spanTitle(span)} />
 }
 
+/**
+ * One `wait_agent` block: a low-saturation band with a cap at EACH end.
+ *
+ * Both ends are drawn because the user asked to see when a wait began and when
+ * it ended. The end cap differs by outcome:
+ *   - finished, and a peer arrived -> a solid cap;
+ *   - finished, timed out         -> a differently shaped cap (bar), so "nobody
+ *     ever came" is visible without reading the tooltip;
+ *   - still blocking              -> NO cap, and the band fades out, because that
+ *     end has not happened yet;
+ *   - outcome unreadable          -> a neutral cap, never a guess.
+ */
+function WaitBand({ band }: { band: WaitBandRect }): ReactNode {
+  const classes = ['dtg-wait']
+  if (band.open) classes.push('dtg-wait-open')
+  else if (band.timedOut === true) classes.push('dtg-wait-timeout')
+  else if (band.timedOut === false) classes.push('dtg-wait-woken')
+  else classes.push('dtg-wait-unknown')
+  const seconds = band.end === null ? null : Math.round((band.end - band.start) / 1000)
+  const outcome =
+    band.open
+      ? uiLabel('waitOutcomeOpen')
+      : band.timedOut === true
+        ? uiLabel('waitOutcomeTimedOut')
+        : band.timedOut === false
+          ? uiLabel('waitOutcomeWoken')
+          : uiLabel('waitOutcomeUnknown')
+  const from = formatDateTime(band.start, -new Date(band.start).getTimezoneOffset())
+  // An open wait states its outcome once, not twice: the duration IS "still
+  // blocking" there, so a separate duration phrase repeated the same words.
+  const label =
+    seconds === null
+      ? uiLabel('waitAriaOpen', { from, outcome })
+      : uiLabel('waitAria', { from, duration: uiLabel('waitSeconds', { count: seconds }), outcome })
+  return (
+    <span
+      className={classes.join(' ')}
+      style={{ left: band.x, top: band.y, width: band.w, height: band.h }}
+      title={label}
+      aria-label={label}
+      data-lane-wait={band.laneId}
+      data-wait-open={band.open ? 'true' : 'false'}
+      data-wait-outcome={band.open ? 'open' : band.timedOut === true ? 'timeout' : band.timedOut === false ? 'woken' : 'unknown'}
+    >
+      {/* start cap: always present, the wait definitively began */}
+      <span className="dtg-wait-cap dtg-wait-cap-start" aria-hidden="true" />
+      {/* end cap: only when the end exists */}
+      {band.open ? null : <span className="dtg-wait-cap dtg-wait-cap-end" aria-hidden="true" />}
+    </span>
+  )
+}
+
 function spanTitle(span: SpanRect): string {
   const head = span.open ? `${span.kind} · ${uiLabel('spanOpen')}` : span.kind
   const parts = [head]
@@ -850,6 +1021,159 @@ function speakerName(speaker: { kind: string; name: string } | undefined): strin
  * prompt, plus a solid vs dotted outline), because colour alone must not be the
  * only way to tell "I said this" from "a teammate said this".
  */
+/* ------------------------------------------------------------------ waits */
+
+/** Local finite-number guard, so wait geometry never depends on an unexported helper. */
+function finiteOr(value: number | null | undefined, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback
+}
+
+/** One `wait_agent` block, in content px. */
+export interface WaitBandRect {
+  laneId: string
+  laneIndex: number
+  /** Epoch ms the wait started. Never clamped away: the START is a fact. */
+  start: number
+  /** Epoch ms it returned, or `null` while it is still blocking (open end). */
+  end: number | null
+  /** `true` while `end` is null: drawn out to the NOW edge and left open. */
+  open: boolean
+  /**
+   * `true` / `false` from the tool result, or UNDEFINED when it could not be
+   * read. Undefined renders neutrally — guessing here would assert something
+   * about what an agent was doing that the log does not say.
+   */
+  timedOut: boolean | undefined
+  timeoutMs: number | undefined
+  x: number
+  w: number
+  /** Vertical placement on the message track. */
+  y: number
+  h: number
+  /**
+   * `true` when the wait began BEFORE this window: the band is clipped to x = 0,
+   * so its left edge is the window, not the real start.
+   */
+  clippedLeft: boolean
+  /** Left (start) and right (end) caps, so "begin and end" are both legible. */
+  capLeftX: number
+  capRightX: number
+  viewX: number
+  visible: boolean
+}
+
+/**
+ * Lay out a lane's `wait_agent` spans on the MESSAGE track.
+ *
+ * Deliberately not on the turn/step bars: those mean "working", a wait means
+ * "blocked, waiting for someone else" — the distinction the user asked for — and
+ * the message row is already where an agent's contact with others is drawn.
+ *
+ * @param waits - the lane's waits, in any order.
+ * @param input - the window and scale to project into content px.
+ */
+export function waitBandRects(
+  waits: readonly LaneWait[],
+  input: {
+    laneId: string
+    laneIndex: number
+    windowStart: number
+    windowEnd: number
+    msPerPx: number
+    cull?: boolean
+    viewportWidth?: number
+    scrollLeft?: number
+    /** Top of the lane row in content px; the band is placed on the message track. */
+    laneY?: number
+    /** Height of the lane row, used to size the band. */
+    laneHeight?: number
+  },
+): WaitBandRect[] {
+  const msPerPx = input.msPerPx > 0 ? input.msPerPx : 1
+  const width = input.viewportWidth ?? Number.POSITIVE_INFINITY
+  const scrollLeft = input.scrollLeft ?? 0
+  const toX = (time: number): number =>
+    (clamp(time, input.windowStart, input.windowEnd) - input.windowStart) / msPerPx
+  const out: WaitBandRect[] = []
+  for (const wait of waits) {
+    if (wait === null || typeof wait !== 'object') continue
+    const start = finiteOr(wait.start, Number.NaN)
+    if (!Number.isFinite(start)) continue
+    const resolvedEnd = finiteOr(wait.end ?? Number.NaN, Number.NaN)
+    const open = wait.end === null || wait.end === undefined || !Number.isFinite(resolvedEnd)
+    const end = open ? null : resolvedEnd
+    // Same window test the tasks and spans use, so a filtered board treats every
+    // kind of interval consistently: an interval entirely BEFORE the window is
+    // gone, one that straddles the left edge is kept and clipped to x = 0, and an
+    // open wait takes the window end as its right edge so it is always in view.
+    const effectiveEnd = end === null ? input.windowEnd : end
+    if (!inWindow(start, effectiveEnd, { start: input.windowStart, end: input.windowEnd })) continue
+    const clippedLeft = start < input.windowStart
+    const startX = toX(start)
+    const endX = end === null ? toX(input.windowEnd) : toX(end)
+    const x = Math.min(startX, endX)
+    // An open wait runs to the window edge; a closed one keeps its real duration.
+    const w = Math.max(1, Math.abs(endX - startX))
+    const viewX = x - scrollLeft
+    const visible = viewX + w >= 0 && viewX <= width
+    if (input.cull === true && !visible) continue
+    out.push({
+      laneId: input.laneId,
+      laneIndex: input.laneIndex,
+      start,
+      end,
+      open,
+      timedOut: wait.timedOut,
+      timeoutMs: wait.timeoutMs,
+      x,
+      w,
+      clippedLeft,
+      y: (input.laneY ?? 0) + MESSAGE_MARKER_TOP,
+      h: MESSAGE_MARKER_HEIGHT,
+      capLeftX: x,
+      capRightX: x + w,
+      viewX,
+      visible,
+    })
+  }
+  return out
+}
+
+/**
+ * Decide where the scroll container should be so the NOW edge stays in view.
+ *
+ * A pure truth table rather than "did we call scrollTo": what matters is the
+ * behaviour in each combination, not how many times something was invoked.
+ *
+ * - follow OFF: never move the container. The user's manual scroll position is
+ *   theirs; we do not fight it, and we never flip the toggle behind their back.
+ * - follow ON but not live (nobody working): nothing moves, so nothing to chase.
+ * - otherwise: put the NOW line at `viewportWidth - margin`, clamped to the
+ *   scrollable range. With a time filter the range is short, so this collapses to
+ *   "scroll to the far right" — one code path for both cases.
+ *
+ * @param input - the current follow flag, liveness and geometry.
+ * @returns the absolute `scrollLeft` to apply, or `null` to leave it alone.
+ */
+export function shouldFollowScroll(input: {
+  follow: boolean
+  live: boolean
+  nowX: number
+  viewportWidth: number
+  contentWidth: number
+  scrollLeft: number
+  margin?: number
+}): { scrollTo: number | null } {
+  if (!input.follow || !input.live) return { scrollTo: null }
+  const margin = input.margin ?? 24
+  const maxScroll = Math.max(0, input.contentWidth - input.viewportWidth)
+  if (maxScroll <= 0) return { scrollTo: null }
+  const target = clamp(input.nowX - (input.viewportWidth - margin), 0, maxScroll)
+  // Sub-pixel differences would otherwise fire on every tick for nothing.
+  if (Math.abs(target - input.scrollLeft) < 0.5) return { scrollTo: null }
+  return { scrollTo: target }
+}
+
 /**
  * The paint + direction a marker needs, resolved outside JSX so a test can
  * assert it (verify imports {@link markerPaint} rather than walking elements,

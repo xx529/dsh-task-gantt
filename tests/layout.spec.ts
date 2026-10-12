@@ -358,6 +358,181 @@ describe('layoutTimeline — geometry', () => {
   })
 })
 
+describe('layoutTimeline — the label never overflows the canvas', () => {
+  const data = liveResponse()
+  const task = (over: Partial<TimelineResponse['tasks'][number]> = {}): TimelineResponse['tasks'][number] => ({
+    id: 't', revision: 1, subject: 's', description: 'd', status: 'completed',
+    blockedBy: [], writeScopes: [], ready: true, writeScopeWarnings: [], laneId: 'lead',
+    history: [{ time: 2_000, action: 'created', sessionId: 's' }], ...over,
+  })
+
+  it('keeps every label rect inside [0, contentWidth]', () => {
+    // Measured defect: the borderless caption was 148px wide starting just past the box,
+    // so for a task at the right edge it reached 151px BEYOND the canvas. An absolutely
+    // positioned descendant contributes to its scroll container's scrollable overflow,
+    // so `scrollWidth` went 248 -> 399: a phantom horizontal scroll range, which also
+    // defeated the follow toggle.
+    for (const span of [1_000, 5_000, 40_000, 120_000]) {
+      const layout = layoutTimeline(
+        withTasks(data, [task({ history: [{ time: 19_000, action: 'created', sessionId: 's' }, { time: 19_000 + span, action: 'completed', sessionId: 's' }] })]),
+        VIEWPORT,
+        { now: 20_000, msPerPx: 100, tzOffsetMinutes: 0 },
+      )
+      const card = layout.tasks[0]
+      if (card === undefined) continue
+      expect(card.labelX, `span ${span}: label starts left of the canvas`).toBeGreaterThanOrEqual(0)
+      expect(
+        card.labelX + card.labelW,
+        `span ${span}: label (x=${card.labelX} w=${card.labelW}) overflows contentWidth ${layout.contentWidth}`,
+      ).toBeLessThanOrEqual(layout.contentWidth + 1e-6)
+    }
+  })
+
+  it('flips the label to the LEFT when the right side has no room', () => {
+    // The task ends exactly at the canvas edge, so there is no room to its right.
+    // The window is [1_000, 20_000] = 190px of canvas, so a task ending at the right
+    // edge must START late enough that 148px of label fits to its left.
+    const layout = layoutTimeline(
+      withTasks(data, [task({ history: [{ time: 16_100, action: 'created', sessionId: 's' }, { time: 20_000, action: 'completed', sessionId: 's' }] })]),
+      VIEWPORT,
+      { now: 20_000, msPerPx: 100, tzOffsetMinutes: 0 },
+    )
+    const card = layout.tasks[0]
+    expect(card?.labelPlacement).toBe('left')
+    expect((card?.labelX ?? -1) + (card?.labelW ?? 0)).toBeLessThanOrEqual((card?.x ?? 0) + 1e-6)
+  })
+
+  it('still prefers the right side when there IS room', () => {
+    const layout = layoutTimeline(
+      withTasks(data, [task({ history: [{ time: 2_000, action: 'created', sessionId: 's' }, { time: 3_000, action: 'completed', sessionId: 's' }] })]),
+      VIEWPORT,
+      { now: 20_000, msPerPx: 100, tzOffsetMinutes: 0 },
+    )
+    expect(layout.tasks[0]?.labelPlacement).toBe('right')
+    const card = layout.tasks[0]
+    expect(card?.labelX).toBeCloseTo((card?.x ?? 0) + (card?.w ?? 0) + TASK_CHIP_GAP, 5)
+  })
+})
+
+describe('layoutTimeline — the time-range filter', () => {
+  const data = liveResponse()
+  /** Same shape as the task-card factory; scoped here because that one is per-describe. */
+  const task = (overrides: Partial<TimelineResponse['tasks'][number]> = {}): TimelineResponse['tasks'][number] => ({
+    id: 'task-1',
+    revision: 1,
+    subject: 'subject',
+    description: 'description',
+    status: 'completed',
+    blockedBy: [],
+    writeScopes: [],
+    ready: true,
+    writeScopeWarnings: [],
+    laneId: 'lead',
+    history: [{ time: 2_000, action: 'created', revision: 1, sessionId: 'session-1' }],
+    ...overrides,
+  })
+
+  it('narrows the window from the LEFT, keeping the right edge at NOW', () => {
+    // "只看最近 N" moves the start, never the end. Keeping the end at `now` is what lets
+    // the follow toggle keep working while a range is selected.
+    const all = layoutTimeline(data, VIEWPORT, { now: 11_000, msPerPx: 100, tzOffsetMinutes: 0 })
+    const last5s = layoutTimeline(data, VIEWPORT, { now: 11_000, msPerPx: 100, tzOffsetMinutes: 0, windowSpanMs: 5_000 })
+    expect(all.window.end).toBe(last5s.window.end)
+    expect(last5s.window.start).toBe(all.window.end - 5_000)
+    expect(last5s.window.durationMs).toBe(5_000)
+    // ...and the whole x axis shrinks with it: 5s at 100ms/px is 50px, not 100.
+    expect(last5s.dataWidth).toBeCloseTo(50, 5)
+    expect(last5s.dataWidth).toBeLessThan(all.dataWidth)
+  })
+
+  it('never shows empty axis to the LEFT of the first datum', () => {
+    // A range wider than the log is clamped to the log's own start, so "3 hours" on a
+    // two-minute session shows those two minutes rather than an hour of nothing.
+    const huge = layoutTimeline(data, VIEWPORT, { now: 11_000, msPerPx: 100, tzOffsetMinutes: 0, windowSpanMs: 3 * 60 * 60 * 1000 })
+    const all = layoutTimeline(data, VIEWPORT, { now: 11_000, msPerPx: 100, tzOffsetMinutes: 0 })
+    expect(huge.window.start).toBe(all.window.start)
+    expect(huge.dataWidth).toBeCloseTo(all.dataWidth, 5)
+  })
+
+  it('a FROZEN board does not creep forward just because a range is selected', () => {
+    // The filter may not become a back door for the clock. A frozen window still ends at
+    // its last datum, whatever `now` says.
+    const frozen = { ...data, live: false, range: { start: 1_000, end: 6_000 } }
+    const a = layoutTimeline(frozen, VIEWPORT, { now: 11_000, msPerPx: 100, tzOffsetMinutes: 0, windowSpanMs: 2_000 })
+    const b = layoutTimeline(frozen, VIEWPORT, { now: 999_000, msPerPx: 100, tzOffsetMinutes: 0, windowSpanMs: 2_000 })
+    expect(a.window.end).toBe(6_000)
+    expect(b.window.end).toBe(6_000)
+    expect(a.window.start).toBe(b.window.start)
+  })
+
+  it('treats null / 0 / negative / NaN as "no filter" rather than as an empty window', () => {
+    const all = layoutTimeline(data, VIEWPORT, { now: 11_000, msPerPx: 100, tzOffsetMinutes: 0 })
+    for (const bad of [null, 0, -5_000, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const layout = layoutTimeline(data, VIEWPORT, { now: 11_000, msPerPx: 100, tzOffsetMinutes: 0, windowSpanMs: bad })
+      expect(layout.window.start, `windowSpanMs=${String(bad)}`).toBe(all.window.start)
+    }
+  })
+
+  it('drops a task that ended BEFORE the window instead of stubbing it at the edge', () => {
+    // Measured defect: with a 5-minute filter over a 30-minute log, a task that had ended
+    // 14 minutes before the window opened was still drawn as a 10px box clinging to the
+    // left edge — it said "something happened here" and nothing had. Clamping is what
+    // produced the plausible-looking stub, so the range test has to be explicit.
+    const early = withTasks(data, [
+      task({ status: 'completed', history: [{ time: 1_000, action: 'created', sessionId: 's' }, { time: 2_000, action: 'completed', sessionId: 's' }] }),
+    ])
+    const layout = layoutTimeline(early, VIEWPORT, { now: 20_000, msPerPx: 100, tzOffsetMinutes: 0, windowSpanMs: 5_000, cull: true })
+    // The window is [15_000, 20_000]; the task lived at [1_000, 2_000].
+    expect(layout.tasks).toHaveLength(0)
+  })
+
+  it('keeps a task that STARTED before the window and is still running inside it', () => {
+    // The other half of the same rule: clipping is legitimate, vanishing is not. This
+    // task must still be drawn, and must be flagged as continuing from before.
+    const spanning = withTasks(data, [
+      task({ status: 'completed', history: [{ time: 1_000, action: 'created', sessionId: 's' }, { time: 18_000, action: 'completed', sessionId: 's' }] }),
+    ])
+    const layout = layoutTimeline(spanning, VIEWPORT, { now: 20_000, msPerPx: 100, tzOffsetMinutes: 0, windowSpanMs: 5_000, cull: true })
+    const card = layout.tasks[0]
+    expect(card, 'a task still running inside the window must survive the filter').toBeDefined()
+    expect(card?.x).toBe(0)
+    expect(card?.clippedLeft).toBe(true)
+    // It ends 3s into the 5s window: 18_000 - 15_000 = 3_000ms at 100ms/px.
+    expect(card?.w).toBeCloseTo(30, 5)
+  })
+
+  it('does not draw a span stub for a span that ended before the window', () => {
+    // Same rule for the activity strips, which had the same 2px phantom. Checked with
+    // `cull: false` so the rect is still IN the array and its `visible` flag can be read
+    // directly — with `cull: true` it is dropped and the assertion would pass vacuously.
+    const layout = layoutTimeline(data, VIEWPORT, { now: 20_000, msPerPx: 100, tzOffsetMinutes: 0, windowSpanMs: 5_000, cull: false })
+    const closed = layout.spans.filter((span) => !span.open)
+    // Non-vacuity: the fixture carries a closed span at [2_000, 3_000], which is entirely
+    // before the [15_000, 20_000] window.
+    expect(closed.length, 'the fixture must contain a closed span to test this').toBeGreaterThan(0)
+    for (const span of closed) {
+      expect(span.visible, `closed span ${span.start}..${String(span.end)} is outside the window but drawn`).toBe(false)
+    }
+    // An OPEN span reaches `now`, so it IS in the window and must survive: dropping it
+    // would hide work that is still going on.
+    const open = layout.spans.filter((span) => span.open)
+    expect(open.length).toBeGreaterThan(0)
+    for (const span of open) expect(span.visible, 'an open span runs to now and belongs in the window').toBe(true)
+    // ...and with culling on, the out-of-range one is gone from the array entirely.
+    const culled = layoutTimeline(data, VIEWPORT, { now: 20_000, msPerPx: 100, tzOffsetMinutes: 0, windowSpanMs: 5_000, cull: true })
+    expect(culled.spans.every((span) => !span.open === false || span.start >= 15_000)).toBe(true)
+    expect(culled.spans.some((span) => span.start === 2_000 && !span.open)).toBe(false)
+  })
+
+  it('occupies the same axis as the unfiltered view, just less of it', () => {
+    // The point of filtering in the WINDOW rather than in the renderer: every downstream
+    // position is already relative to `win.start`, so the two views cannot disagree
+    // about what is in range. A datum at the very end sits at the same x in both.
+    const filtered = layoutTimeline(data, VIEWPORT, { now: 11_000, msPerPx: 100, tzOffsetMinutes: 0, windowSpanMs: 5_000 })
+    expect(filtered.nowX).toBeCloseTo(filtered.dataWidth, 5)
+  })
+})
+
 describe('layoutTimeline — task cards', () => {
   const data = liveResponse()
   const task = (overrides: Partial<TimelineResponse['tasks'][number]> = {}): TimelineResponse['tasks'][number] => ({
@@ -394,8 +569,14 @@ describe('layoutTimeline — task cards', () => {
     // The label chip is a separate rect: the bar itself is only 15px, so the
     // chip hangs to its right rather than stretching the bar.
     expect(card?.labelPlacement).toBe('right')
-    expect(card?.labelW).toBe(TASK_CHIP_WIDTH)
+    // The width is `min(TASK_CHIP_WIDTH, roomToTheRight)` — it USED to be exactly
+    // TASK_CHIP_WIDTH, which is what let a 148px label at the canvas edge overflow by
+    // 151px and hand the panel a phantom horizontal scroll range. In this fixture the
+    // canvas is only ~100px wide, so the clamp is what is being asserted.
+    expect(card?.labelW).toBe(Math.min(TASK_CHIP_WIDTH, layout.contentWidth - ((card?.x ?? 0) + (card?.w ?? 0) + TASK_CHIP_GAP)))
+    expect(card?.labelW).toBeLessThanOrEqual(TASK_CHIP_WIDTH)
     expect(card?.labelX).toBeCloseTo((card?.x ?? 0) + (card?.w ?? 0) + TASK_CHIP_GAP, 5)
+    expect((card?.labelX ?? 0) + (card?.labelW ?? 0)).toBeLessThanOrEqual(layout.contentWidth + 1e-6)
     expect(card?.y).toBe(DEFAULT_HEADER_HEIGHT + TASK_CARD_TOP)
     expect(card?.h).toBe(TASK_CARD_HEIGHT)
   })
@@ -482,7 +663,11 @@ describe('layoutTimeline — task cards', () => {
     // duration obeys (see the "1ms task is a hairline" test).
     expect(TASK_BAR_MIN_WIDTH).toBe(1)
     expect(card?.durationMs).toBe(0)
-    expect(card?.labelPlacement).toBe('right')
+    // The marker sits AT the canvas's right edge, so there is no room for a label to its
+    // right: the label now flips to the LEFT instead of starting past the edge and
+    // overflowing the canvas (the measured 151px phantom-scroll defect). It used to be
+    // pinned 'right', which is exactly what put it outside.
+    expect(card?.labelPlacement).toBe('left')
     // The MARKER sits at NOW — the right edge of the canvas — not 148px to its left.
     // It used to be offset by `TASK_CHIP_WIDTH` so that a fixed-width label chip would
     // fit inside the canvas; the label is no longer a fixed-width box, and pinning the

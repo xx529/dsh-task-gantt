@@ -352,6 +352,16 @@ export const TASK_CHIP_WIDTH = 148
  */
 export const TASK_CHIP_INSIDE_MIN_WIDTH = TASK_CHIP_WIDTH
 
+/**
+ * The narrowest a label may be and still be worth placing on a given side, in px.
+ *
+ * Deliberately NOT {@link TASK_CHIP_INSIDE_MIN_WIDTH}: "fits inside the box" needs the
+ * full 148px, but "there is room to sit BESIDE the box" only needs enough to read a
+ * truncated word. Using 148 for both made a canvas with 72px of room fall through to the
+ * clamp-anywhere branch, which then laid the label across the top of its own box.
+ */
+export const TASK_CHIP_MIN_SIDE_WIDTH = 48
+
 /* ---------------------------------------------------------------- zoom */
 
 /** 50 ms per px — the zoom-in floor (a 50ms step is half a percent of a 100px bar). */
@@ -471,6 +481,19 @@ export interface LayoutOptions {
   messageMinGapPx?: number
   /** Ceiling on rendered markers per lane, default {@link MESSAGE_MARKER_MAX}. */
   messageMaxPerLane?: number
+  /**
+   * The time-range filter: show only the last N ms of the window, or all of it.
+   *
+   * `null` / omitted / non-positive means "no filter". The window's END is untouched
+   * (it is still `now` for a live board), so filtering narrows the view without
+   * stopping the clock — which is what lets the follow toggle keep working while a
+   * range is selected.
+   *
+   * A range WIDER than the log is clamped to the log's own start, so selecting "3
+   * hours" on a two-minute session shows those two minutes rather than an hour of
+   * empty axis.
+   */
+  windowSpanMs?: number | null
 }
 
 export interface TimelineWindow {
@@ -578,7 +601,13 @@ export interface TaskCardRect {
    * A chip placed to the right NEVER moves `x`/`w`: the bar keeps its true
    * start and length.
    */
-  labelPlacement: 'inside' | 'right'
+  labelPlacement: 'inside' | 'right' | 'left'
+  /**
+   * True when the time-range filter cuts this task's START off, i.e. it began before the
+   * window and is still inside it. The UI should say "continues from before" rather than
+   * imply the task began at the window's edge.
+   */
+  clippedLeft?: boolean
   labelX: number
   labelY: number
   labelW: number
@@ -761,6 +790,28 @@ export function rectVisible(viewX: number, w: number, viewportWidth: number): bo
   return viewX + w > 0 && viewX < viewportWidth
 }
 
+/**
+ * Whether a rect INTERSECTS the selected time window at all.
+ *
+ * This is a different question from {@link rectVisible}: that one asks "is it on
+ * screen", this one asks "is it in the range the user selected". Both have to hold for a
+ * rect to be drawn.
+ *
+ * It exists because the two positions are CLAMPED into the window (`clamp(from, start,
+ * end)`), and clamping an out-of-range rect produces a plausible-looking stub at x=0
+ * rather than something obviously wrong. Measured with a 5-minute filter over a
+ * 30-minute log: a task that had ended 14 minutes before the window opened was still
+ * drawn as a 10px box clinging to the left edge, and a span that ended 20 minutes
+ * earlier became a 2px bar there. Both say "something happened here", and nothing did.
+ *
+ * @param from - the rect's start, epoch ms.
+ * @param to - the rect's end, epoch ms.
+ * @param win - the window in force.
+ */
+export function inWindow(from: number, to: number, win: { start: number; end: number }): boolean {
+  return to >= win.start && from <= win.end
+}
+
 function pad2(value: number): string {
   return value < 10 ? `0${value}` : `${value}`
 }
@@ -832,7 +883,7 @@ export function isLiveBoard(data: TimelineResponse): boolean {
 }
 
 /** See the WINDOW RESOLUTION table in the module doc. */
-export function computeWindow(data: TimelineResponse, now: number): TimelineWindow {
+export function computeWindow(data: TimelineResponse, now: number, windowSpanMs?: number | null): TimelineWindow {
   const fallback = num(now, 0)
   const rangeStart = num(data?.range?.start, fallback)
   const hasRangeEnd = typeof data?.range?.end === 'number' && Number.isFinite(data.range.end)
@@ -875,9 +926,26 @@ export function computeWindow(data: TimelineResponse, now: number): TimelineWind
   const right =
     endSource === 'now' ? Math.max(fallback, rawEnd) : endSource === 'range' ? Math.max(rangeEnd ?? rawEnd, rawEnd) : rawEnd
   const end = Math.max(right, start + 1)
+
+  // ---- the time-range filter -------------------------------------------
+  //
+  // "只看最近 N" is expressed by moving the LEFT edge to `end - N`, not by hiding
+  // rects in the renderer: every downstream position is already relative to
+  // `win.start`, so one number filters the axis, the bars, the markers and the ticks
+  // together, and they cannot disagree about what "in range" means.
+  //
+  // Clamped at `rawStart`: a filter WIDER than the whole log shows the whole log
+  // rather than empty space to the left of the first datum. A filter narrower than the
+  // log genuinely cuts, which is the point.
+  //
+  // `end` is deliberately NOT recomputed. For a live board it is still `now`, so the
+  // window keeps tracking the clock and the view can follow it; for a frozen board it
+  // is still the last datum, so filtering cannot make a stopped chart creep forward.
+  const span = typeof windowSpanMs === 'number' && Number.isFinite(windowSpanMs) && windowSpanMs > 0 ? windowSpanMs : null
+  const filteredStart = span === null ? start : Math.max(rawStart, end - span)
   // NOTE: the window keeps exactly its four original fields. `endSource` is a
   // layout-level field, so the (verified) window shape stays untouched.
-  return { start, end, durationMs: end - start, live }
+  return { start: filteredStart, end, durationMs: end - filteredStart, live }
 }
 
 /**
@@ -1499,7 +1567,7 @@ export function layoutTimeline(
       ? options.tzOffsetMinutes
       : -new Date(now).getTimezoneOffset()
 
-  const win = computeWindow(data, now)
+  const win = computeWindow(data, now, options.windowSpanMs)
   const dataWidth = win.durationMs / msPerPx
   const contentWidth = dataWidth
 
@@ -1791,6 +1859,9 @@ function spanRect(
   const w = Math.max(MIN_SPAN_PX, (x1 - x0) / msPerPx)
   const viewX = x - scrollLeft
   const isTurn = span.kind === 'turn'
+  // A span that lies wholly outside the selected range is not drawn at all: clamping
+  // would otherwise leave a `MIN_SPAN_PX` stub at the window's edge claiming activity.
+  const intersects = inWindow(startRaw, endRaw, win)
   return {
     laneId,
     laneIndex,
@@ -1803,7 +1874,7 @@ function spanRect(
     w,
     h: isTurn ? TURN_BAND_HEIGHT : STEP_BAR_HEIGHT,
     viewX,
-    visible: viewX + w >= 0 && viewX <= viewportWidth,
+    visible: intersects && viewX + w >= 0 && viewX <= viewportWidth,
     ...(span.turn === undefined ? {} : { turn: span.turn }),
     ...(span.step === undefined ? {} : { step: span.step }),
   }
@@ -1887,8 +1958,49 @@ function taskCardRect(
     w = TASK_MARKER_WIDTH
   }
   const viewX = x - scrollLeft
-  const labelPlacement: 'inside' | 'right' =
+  // Out of the selected range entirely => not drawn (see `inWindow`). `clippedLeft`
+  // records the other case, where the task STARTED before the window and is genuinely
+  // still running inside it, so the UI can say "continues from before" instead of
+  // implying the task began at the window's edge.
+  const intersects = inWindow(from, to, win)
+  const clippedLeft = intersects && from < win.start
+  /**
+   * Where the label goes when it cannot fit inside the box.
+   *
+   * It flips to the LEFT of the box when there is no room on the right, and its width is
+   * clamped to the room that side actually has. Both rules exist because of a measured
+   * defect: a borderless caption 148px wide, starting just past the box, reached 151px
+   * BEYOND the canvas for a task at the right edge. An absolutely-positioned descendant
+   * contributes to its scroll container's scrollable overflow, so that did not merely
+   * look wrong — it inflated `scrollWidth` from 248 to 399 and gave the panel a phantom
+   * horizontal scroll range, which in turn broke the follow toggle (there is no "keep NOW
+   * at the right edge" to do when the content already overflows by 151px).
+   *
+   * Priority: right, then left, then give up on the side and clamp inside the canvas.
+   * The last case keeps the label readable for a narrow canvas instead of letting it
+   * vanish or overflow — and it can never produce a rect outside `[0, contentWidth]`.
+   */
+  const contentWidth = win.durationMs / msPerPx
+  const roomRight = contentWidth - (x + w + TASK_CHIP_GAP)
+  const roomLeft = x - TASK_CHIP_GAP
+  let labelPlacement: 'inside' | 'right' | 'left' =
     anchor === 'history' && w >= TASK_CHIP_INSIDE_MIN_WIDTH ? 'inside' : 'right'
+  let labelX = x + w + TASK_CHIP_GAP
+  let labelW = TASK_CHIP_WIDTH
+  if (labelPlacement === 'right') {
+    if (roomRight >= TASK_CHIP_MIN_SIDE_WIDTH) {
+      labelW = Math.min(TASK_CHIP_WIDTH, roomRight)
+    } else if (roomLeft >= TASK_CHIP_MIN_SIDE_WIDTH) {
+      labelPlacement = 'left'
+      labelW = Math.min(TASK_CHIP_WIDTH, roomLeft)
+      labelX = x - TASK_CHIP_GAP - labelW
+    } else {
+      // No side has room. Keep it inside the canvas at all costs: an overflowing rect is
+      // worse than an overlapped one, because it corrupts the scroll geometry.
+      labelW = Math.min(TASK_CHIP_WIDTH, Math.max(0, contentWidth))
+      labelX = Math.max(0, Math.min(x + w + TASK_CHIP_GAP, contentWidth - labelW))
+    }
+  }
   return {
     laneId,
     laneIndex,
@@ -1906,12 +2018,13 @@ function taskCardRect(
     barY: laneY + TASK_CARD_TOP + TASK_BAR_TOP_OFFSET,
     barH: TASK_BAR_HEIGHT,
     viewX,
-    visible: viewX + w >= 0 && viewX <= viewportWidth,
+    visible: intersects && viewX + w >= 0 && viewX <= viewportWidth,
+    clippedLeft,
     live: live || anchor === 'live',
     labelPlacement,
-    labelX: labelPlacement === 'inside' ? x : x + w + TASK_CHIP_GAP,
+    labelX: labelPlacement === 'inside' ? x : labelX,
     labelY: laneY + TASK_CARD_TOP,
-    labelW: labelPlacement === 'inside' ? w : TASK_CHIP_WIDTH,
+    labelW: labelPlacement === 'inside' ? w : labelW,
     labelH: TASK_CARD_HEIGHT,
   }
 }

@@ -83,7 +83,10 @@
  *
  * ============================================================================
  */
-import type { ActivitySpan, MemberPhase, TaskEvent, TaskStatus } from '../shared/contract.ts'
+import { WAIT_TOOL_NAME } from '../shared/contract.ts'
+import type { ActivitySpan, LaneWait, MemberPhase, TaskEvent, TaskStatus } from '../shared/contract.ts'
+
+export { WAIT_TOOL_NAME }
 
 /**
  * One raw session-log event; every field is untrusted.
@@ -214,6 +217,12 @@ export interface FoldedSession {
   toolCalls: ToolCallTransition[]
   /** Message exchanges + the human's prompts carried by this log. */
   messages: FoldedMessages
+  /**
+   * `wait_agent` blocks carried by this log: the time this agent spent blocked on its
+   * peers rather than working. A fifth orthogonal fold, for the same reason the other
+   * four are separate — a wait is not activity, not a task transition and not a message.
+   */
+  waits: LaneWait[]
 }
 
 /** A status value the board can publish. */
@@ -993,6 +1002,135 @@ function parseToolArguments(value: unknown): Record<string, unknown> | undefined
 }
 
 /**
+ * Fold one session log into the blocks where it was WAITING, not working.
+ *
+ * A wait is a `tool/call` named {@link WAIT_TOOL_NAME} paired with the `tool/result`
+ * that satisfied it. The pairing is by `toolCallId`, which lives in a different place
+ * on the two events — `data.callId` on the call, `data.message.toolCallId` on the
+ * result — so both spellings are read and neither is assumed.
+ *
+ * Verified against the real logs on this machine: 24 `wait_agent` calls in one session,
+ * 24 of 24 paired, durations 2.4s to 300s, and the result body is
+ * `{"timedOut":true|false}`.
+ *
+ * The rules that matter, all of which are the "never guess" rule wearing different hats:
+ *
+ * - an unpaired call yields `end: null`, i.e. STILL WAITING — never an invented end,
+ *   because an invented end would claim the agent stopped waiting when it did not;
+ * - a result whose `timedOut` cannot be read yields `timedOut: undefined`, never
+ *   `false`. "A peer arrived" and "I could not tell" are different claims, and the
+ *   chart draws them differently;
+ * - a call with no `toolCallId` is dropped rather than paired by position. Two waits
+ *   can overlap, so position is not identity.
+ *
+ * @param events - raw events of ONE session, any order.
+ * @param sessionId - the session the log belongs to (the waiting agent).
+ * @returns ascending waits, each with its own `sessionId`.
+ */
+export function foldWaitSpans(events: readonly unknown[], sessionId: string): LaneWait[] {
+  const indexed = indexEvents(events)
+  /** Ends by callId, so the pairing is by identity and not by order. */
+  const ends = new Map<string, { time: number; timedOut: boolean | undefined; seq: number | undefined }>()
+  const starts: { callId: string; time: number; timeoutMs: number | undefined; seq: number | undefined }[] = []
+
+  for (const item of indexed) {
+    const type = eventType(item)
+    const time = item.time
+    if (time === undefined) continue
+    const data = eventData(item)
+    if (data === undefined) continue
+
+    if (type === 'tool/call') {
+      if (asText(data.name) !== WAIT_TOOL_NAME) continue
+      const callId = asText(data.callId)
+      // No id, no pairing: a wait matched by position would attach one agent's end to
+      // another's start as soon as two waits overlap.
+      if (callId === undefined) continue
+      const args = parseToolArguments(data.arguments)
+      starts.push({
+        callId,
+        time,
+        timeoutMs: args === undefined ? undefined : asPositiveInt(args.timeout_ms),
+        seq: item.seq,
+      })
+      continue
+    }
+
+    if (type === 'tool/result') {
+      const message = asRecord(data.message)
+      if (message === undefined) continue
+      const source = asRecord(message.source)
+      const callId = asText(message.toolCallId) ?? (source === undefined ? undefined : asText(source.callId))
+      if (callId === undefined) continue
+      // KEEP THE EARLIEST RESULT FOR THIS CALL, NOT THE LAST.
+      //
+      // A single call can carry more than one result, and on this machine it always
+      // does: the real one, and then a much later re-append from the compaction
+      // machinery whose body is `[dsh-jev-compaction] Historical tool output pruned…`.
+      // Measured on a real log, every one of the 24 waits had exactly two, the second
+      // landing up to 51 minutes later with an unreadable body — so "last wins" gave
+      // every wait a wildly wrong duration AND lost every outcome. The earliest result
+      // is when the call actually returned; a later duplicate is bookkeeping.
+      //
+      // Order-independent on purpose: this compares time (and seq) rather than relying
+      // on the input being sorted, because a reordered log must not change the answer.
+      const previous = ends.get(callId)
+      const timedOut = parseTimedOut(message.content)
+      if (
+        previous === undefined ||
+        time < previous.time ||
+        (time === previous.time && (item.seq ?? 0) < (previous.seq ?? 0))
+      ) {
+        ends.set(callId, { time, timedOut, seq: item.seq })
+      }
+    }
+  }
+
+  starts.sort((a, b) => a.time - b.time || (a.seq ?? 0) - (b.seq ?? 0))
+  return starts.map((call) => {
+    const result = ends.get(call.callId)
+    const row: LaneWait = {
+      start: call.time,
+      // Still open when nothing came back: `null`, not `call.time`.
+      end: result === undefined ? null : result.time,
+      sessionId,
+    }
+    if (call.timeoutMs !== undefined) row.timeoutMs = call.timeoutMs
+    if (result !== undefined && result.timedOut !== undefined) row.timedOut = result.timedOut
+    return row
+  })
+}
+
+/**
+ * Read `timedOut` out of a `wait_agent` result body.
+ *
+ * The body is a message whose `content` is a list of text parts holding JSON. Anything
+ * unexpected — no parts, no JSON, a different key, a non-boolean — returns `undefined`
+ * so the caller can leave the field ABSENT. Returning `false` here would turn "I could
+ * not read it" into the positive claim "a peer arrived", which is exactly the kind of
+ * silent falsehood this file exists to avoid.
+ */
+function parseTimedOut(content: unknown): boolean | undefined {
+  if (!Array.isArray(content)) return undefined
+  for (const part of content) {
+    const record = asRecord(part)
+    if (record === undefined) continue
+    const text = asText(record.text)
+    if (text === undefined) continue
+    try {
+      const parsed = asRecord(JSON.parse(text))
+      if (parsed === undefined) continue
+      const value = parsed.timedOut
+      if (typeof value === 'boolean') return value
+    } catch {
+      // Not JSON: keep looking at the other parts.
+      continue
+    }
+  }
+  return undefined
+}
+
+/**
  * Fold one session log into the dated `team_task_*` tool calls it performed.
  *
  * Undated calls, unparseable `arguments`, and calls whose tool name is not a
@@ -1176,6 +1314,7 @@ export function foldSessionEvents(events: readonly unknown[], sessionId: string)
     team: foldTeamEvents(events, sessionId),
     toolCalls: foldToolCallTransitions(events, sessionId),
     messages: foldMessageRecords(events),
+    waits: foldWaitSpans(events, sessionId),
   }
 }
 

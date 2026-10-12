@@ -398,6 +398,114 @@ export const BOARD_CSS = `
   outline-offset: 1px;
 }
 
+/* --- wait blocks (wait_agent) ------------------------------------------- */
+
+/* A wait is a PERIOD, drawn on the message row: it means "blocked, waiting for a
+   teammate", which is the opposite of the turn/step bars above it ("working").
+   Distinguished from a message marker by TEXTURE, not by a new hue: the band is
+   a faint identity-coloured wash with diagonal stripes cut out of it by a mask,
+   so the stripe gradient carries no colour of its own. */
+.dtg-wait {
+  position: absolute;
+  border-radius: 2px;
+  background: var(--dsw-alias-label-tertiary);
+  opacity: 0.45;
+}
+.dtg-wait::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  /* The mask is what makes the stripes: repeating diagonal bands of transparent
+     and opaque. No colour value is involved, so it survives every skin. */
+  -webkit-mask-image: repeating-linear-gradient(
+    135deg,
+    transparent 0 2px,
+    var(--dsw-alias-bg-layer-1) 2px 4px
+  );
+  mask-image: repeating-linear-gradient(
+    135deg,
+    transparent 0 2px,
+    var(--dsw-alias-bg-layer-1) 2px 4px
+  );
+}
+/* Outcome is carried by the END cap plus the band's texture, never by hue:
+   - still blocking: no end cap, and the band fades out because that end has not
+     happened yet;
+   - timed out: the end cap is a tall bar ("the clock ran out");
+   - a peer arrived: the end cap is a compact tick. */
+.dtg-wait-open::after {
+  -webkit-mask-image: repeating-linear-gradient(
+    135deg,
+    transparent 0 2px,
+    var(--dsw-alias-bg-layer-1) 2px 4px
+  );
+  mask-image: repeating-linear-gradient(
+    135deg,
+    transparent 0 2px,
+    var(--dsw-alias-bg-layer-1) 2px 4px
+  );
+}
+.dtg-wait-open {
+  -webkit-mask-image: linear-gradient(to right, var(--dsw-alias-bg-layer-1) 55%, transparent 100%);
+  mask-image: linear-gradient(to right, var(--dsw-alias-bg-layer-1) 55%, transparent 100%);
+}
+.dtg-wait-timeout { opacity: 0.6; }
+.dtg-wait-unknown { opacity: 0.3; }
+/* The two ends the user asked to see. */
+.dtg-wait-cap {
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  width: 2px;
+  background: var(--dsw-alias-label-primary);
+  border-radius: 1px;
+}
+.dtg-wait-cap-start { left: 0; }
+.dtg-wait-cap-end { right: 0; }
+/* A timed-out wait gets a taller end bar, so "nobody came" is visible at a
+   glance and not only in the tooltip. */
+.dtg-wait-timeout .dtg-wait-cap-end { top: -3px; bottom: -3px; width: 3px; }
+.dtg-wait-woken .dtg-wait-cap-end { width: 2px; }
+
+/* Legend swatch for a wait block: the same striped band the chart draws, with
+   its start cap visible so the legend explains both ends. */
+.dtg-legend-wait {
+  display: inline-block;
+  width: 16px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--dsw-alias-label-tertiary);
+  opacity: 0.55;
+  position: relative;
+}
+.dtg-legend-wait::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: -2px;
+  bottom: -2px;
+  width: 2px;
+  background: var(--dsw-alias-label-primary);
+}
+/* Controls in the toolbar: the range picker and the follow toggle. */
+.dtg-control { display: inline-flex; align-items: center; gap: 3px; min-width: 0; }
+.dtg-control-label { color: var(--dsw-alias-label-tertiary); font: var(--dsw-font-xxxs-11); }
+.dtg-select {
+  max-width: 72px;
+  padding: 1px 2px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 3px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxxs-11);
+  -webkit-app-region: no-drag;
+}
+/* Follow ON reads as active by SHAPE weight, not only by hue. */
+.dtg-btn-on {
+  font: var(--dsw-font-xxs-strong-12);
+  color: var(--dsw-alias-label-primary);
+}
+
 /* --- message detail view ------------------------------------------------ */
 
 .dtg-message-details { max-height: 60%; }
