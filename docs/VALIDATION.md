@@ -494,6 +494,33 @@ ui-2 自查出：他曾在自检里打印**手写的** `when=00:00:00` 当作证
 
 **踩到的一个坑（记录）**：我第一版单调性用例写了 `expect(widths[0]).toBeLessThan(1)`，把**画出来的宽度**当成**真实宽度**比较 —— 发丝下限让它是 1。教训同"断言要盯住正确的量"，已改为断言 `truths[0] < 1` 且 `widths[0] === TASK_BAR_MIN_WIDTH`。
 
+## 1.22 更正：verify 连报两次的"产物身份不一致"是假警报（取样口径错，非第二个构建）
+
+> 编号说明（Lead）：verify 原稿把它编为 `## 1.16`，但该编号已存在（见本文件后部"1.16 第二轮真机反馈"），
+> 会出现两个 `## 1.16`。正文一字未改，只把编号改为下一个可用号 `1.22`。
+
+**我此前的两次断言（都在消息里报过）**：task-16 报「8791 服务的 `917fceca…` ≠ 仓库 `lib/client.js` 的 `ffbdbbc4…`」；task-18 报「8791 服务的 `cddc946a…` ≠ 你点名的 `947b2666…`」。Lead 指出这是**取样口径**问题：服务文件前面拼了 **2 行 loader shim**，整文件 md5 必然与仓库 `lib/client.js` 不同。
+
+**我逐值复验（两个都做了）**：
+```
+task-18：8791 服务文件 cddc946af84222859d8251f01a9b658c  151310 B
+         tail -n +3 → 947b266681dca6352a8fe16cb65e4fc0  151189 B
+         diff(去 shim, 仓库 lib/client.js) → IDENTICAL
+         仓库 lib/client.js 947b266681dca6352a8fe16cb65e4fc0  151189 B
+task-16：8791 服务文件 917fceca426dbe57216cb66b9bc1ea53  151057 B
+         tail -n +3 → ffbdbbc466aeda18f71946d81e4fde80  150936 B  ← 当时仓库 lib 的 md5，逐字相符
+两轮字节差均 = 121 B = 那两行 shim：
+  window.__DTG_FACTORY__ = null;
+  window.__ModuleLoader__ = { load: function (o) { window.__DTG_FACTORY__ = o.factory; } };
+```
+⇒ **只有一个构建**。我两次都把「部署脚本拼了 shim 的文件」当成「另一个构建」。
+
+**固定口径（写死，避免第三次）**：比较插件产物身份时，
+1. **先剥掉服务文件的前两行 shim**，再 `md5`，再与仓库 `lib/client.js` 比；
+2. 或直接逐字节：`diff <(tail -n +3 served.js) <repo>/lib/client.js` —— 这次就是这一步给出 `IDENTICAL`；
+3. **绝不用整文件 md5 与仓库 `lib/client.js` 比较**（永远不可能相等，差值恒为 121 B 的 shim）。
+这条与我此前的教训同族（"两个测量不齐先找测量对象差异，而不是先判谁错"）：这次差异来自**我的取样对象**（含 shim 的部署文件）而不是被测代码。**已把两次假警报都记为我的错误**，不删不改原文，只在此更正。
+
 ## 2. 环境（实测值）
 
 | 事实 | 值 | 怎么测的 |
