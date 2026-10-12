@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.2.8 — 2026-10-12
+
+**A dark-skin defect that had been invisible because there was no dark demo**
+
+- Found while closing the standing ❓ "the dark-skin token values were never measured on a
+  live page". The way in was already in the tree: the demo's theme sheet carries BOTH skins
+  (`:root` from the shipped theme plus a `[data-ds-dark-theme]` override), so setting that
+  attribute renders with the theme's REAL dark values rather than an approximation. The
+  measured values confirm every value the verification track had DERIVED
+  (`label-secondary` #cfd3d6, `label-primary` #f9fafb, `label-primary-inverted` #353638,
+  `bg-layer-1` #232324).
+- **The defect**: the lane NAME pill and the task box used
+  `--dsw-alias-label-primary-inverted` as their ink. That alias FLIPS with the skin — white
+  in the light one, `#353638` in the dark one — and all seven lane fills are saturated and
+  dark-ish in BOTH skins, so their text has to be light in both. Measured: `#353638` on
+  `--dsw-static-blue-600` is **2.34:1**, i.e. dark grey on blue, on the two elements that
+  identify a lane and its task.
+- **The fix**: the ink on a saturated fill is now `--dsw-static-neutral-bluish-00`, a
+  STATIC white that does not flip. All seven fills clear 4.5:1 against white in both skins
+  (5.17 / 7.05 / 4.56 / 4.52 / 4.55 / 4.51 / 4.51). Two places had also hardcoded an ink
+  and are fixed: `styles.ts`'s `.dtg-head-name` wrote the flipping alias directly (so it
+  never used the payload's `on` at all), and `LaneHead` inlined only `background` and not
+  `color`. Fill and ink now both come from the payload.
+- **Why the existing test missed it**: the palette test asserted each fill against a literal
+  `#ffffff`. The FILLS were fine; the INK was not, so that assertion stayed green through
+  the whole thing. It now resolves the CONFIGURED ink in BOTH skins and asserts 4.5:1.
+  Calibrated in reverse: restoring the old alias makes it fail with
+  `is only 2.34:1 in the dark skin`, and restoring the fix makes it pass.
+- Verified in a real browser on the dark skin: name pill `rgb(37,99,235)` with
+  `rgb(255,255,255)` text, task box likewise, wait band `rgb(173,178,184)`, arrows red.
+
+Also: the standing `❓` ledger in docs/VALIDATION.md had two entries that had gone STALE
+against the code — the palette was described as five tokens with a wrap-around (it is now
+seven composed hues) and the label placement as two cases (it now has three, plus a
+side-width floor). Both are marked as superseded with a pointer to the section that
+replaced them, rather than quietly rewritten.
+
+The footer build identity is now `v0.2.8 · skin-safe-lane-ink`.
+
 ## 0.2.7 — 2026-10-12
 
 Three additions, and the two defects that measuring them turned up.

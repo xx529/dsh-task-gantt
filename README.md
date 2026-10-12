@@ -25,7 +25,7 @@ and task bars whose length is the task's real duration](docs/screenshots/panel-v
 
 | | |
 |---|---|
-| Version | `0.2.7` |
+| Version | `0.2.8` |
 | Frozen contract (`src/shared/contract.ts`) | done |
 | Host data layer (`src/host/**`) | in progress |
 | Sidebar tab registration (`src/client/index.ts`) | done |

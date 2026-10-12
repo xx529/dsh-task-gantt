@@ -827,7 +827,12 @@ function LaneHead({
         <span
           className="dtg-head-name"
           title={lane.name}
-          style={color === undefined ? undefined : { background: color.bar }}
+          // BOTH the fill and the ink come from the payload. The ink must, because the
+          // theme's "text on a saturated fill" ALIAS flips with the skin (white in the
+          // light one, `#353638` in the dark one) and on a blue fill that is 2.34:1. The
+          // host sends a static white for exactly this reason; hardcoding the alias here
+          // or in the stylesheet would put dark grey text on a blue pill in the dark skin.
+          style={color === undefined ? undefined : { background: color.bar, color: lanePaint(color.on) }}
         >
           {lane.name}
         </span>

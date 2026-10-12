@@ -77,10 +77,23 @@
 import type { LaneColorTokens } from '../shared/contract.ts'
 
 /**
- * The ink for a DARK fill, i.e. the token the theme uses for text on a
- * saturated surface. Flips to `#353638` in the dark skin.
+ * The ink for a saturated fill.
+ *
+ * Deliberately a `--dsw-static-*` token, NOT `--dsw-alias-label-primary-inverted`.
+ *
+ * The alias is the theme's own "text on a saturated surface" token, and it is right in
+ * the light skin (`#ffffff`). But it FLIPS: in the dark skin it is `#353638`, a dark
+ * grey. Measured on the real dark skin, that put the lane NAME — dark grey text on a
+ * saturated blue pill — at **2.34:1**, and the same ink is on the task box. Every one of
+ * the seven lane fills is a saturated, dark-ish colour in BOTH skins, so its text has to
+ * be LIGHT in both; an alias that flips cannot be that.
+ *
+ * Measured: `--dsw-static-neutral-bluish-00` is `#ffffff` in the light skin AND in the
+ * dark skin (static tokens do not flip), and all seven fills clear 4.5:1 against white —
+ * 5.17 / 7.05 / 4.56 / 4.52 / 4.55 / 4.51 / 4.51. A test pins that for every fill in
+ * BOTH skins, so this cannot regress to a flipping alias.
  */
-const ON_DARK_FILL = '--dsw-alias-label-primary-inverted'
+const ON_DARK_FILL = '--dsw-static-neutral-bluish-00'
 
 /**
  * The ink for a LIGHT fill. `--dsw-alias-label-primary` is the ink the theme

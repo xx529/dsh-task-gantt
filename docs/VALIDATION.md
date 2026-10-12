@@ -684,11 +684,34 @@ ui-2 自查出：他曾在自检里打印**手写的** `when=00:00:00` 当作证
 13. ❓**`hasHistory` 目前是二态**（host-data：日志读到 **且** 折出 ≥1 个 span 才为 true；契约写的是 "false = live/**empty**"）。我在集成用例里确实观察到「journal 认识该成员 + 假持久化返回空事件」→ `hasHistory:false` + 空 spans + `source:'log'`，按契约判定一致、未报缺陷。若要区分「无日志 / 有日志但无活动 / 有活动」三态，需要 Lead 改冻结契约（host-data 说已挂在 Lead 决策清单上）。
 14. ❓**实时增量刷新与 live `agentTeams` 投影路径从未被观察到**：Lead 在 scratch 组合里启动过最小 team，但**没有观察到新 team 形成**，所以「面板随时间推进自动出现新泳道/新任务卡」这条路径**不计入已实测**（构造 fixture 的集成用例覆盖的是数据推导，不是真机实时刷新）。
 15. ❓**token 快照会随宿主主题升级而过期**：`tests/fixtures/dsw-theme-tokens.json` 是 2026-10-11 从 DSH 0.2.0-rc.2 的 `@deepseek-ai/dsh-client-ui-theme` 提取的 408 个名字。若宿主改名/删名，我的「令牌存在性」守护会**误报红**（把仍然合法的 DSH 新版 token 判为不存在）；若宿主**新增**名字而插件用了它，本机这份旧快照也会误报。重新生成方式见 §7；这条守护的价值是抓「拼错/编造」，不保证跨版本前向兼容。
-16. ✅（**曾是真缺陷 F9，已修并验证**）**「lead 与每个 teammate 都要有一种颜色」**：旧实现 `hash(id) % 5` 在实测 9 泳道下多对同色，Lead 拍板为真缺陷；host-data-2 已改为**按位置**分配 + 5 色真实饱和调色板（`lead` 固定 `PALETTE[0]`）。新语义：`lead` 永远同色 / 同一 teammate 在 **roster 顺序不变**时同色 / 顺序变化时可能变色（有意的取舍）。**已知上限**：第 5 个 teammate 起调色板回绕、颜色重复 —— 5 个真实饱和填充就是上限（`brand-primary` 与正文同色、`onboarding-accent` 属 onboarding 流程），这是诚实上限而非 bug。守护：前 N 条（N=调色板长度）两两不同色 + `laneColorTokens` 位置语义直测 + 全部 token 在 408 定义表内，详见 §5 F9。仍未验证的部分：**跨会话 roster 顺序变化导致 teammate 变色**这一取舍只由文档与注释固定，**没有真机观察**（真机冒烟时 roster 顺序未变）。
+16. ✅（**曾是真缺陷 F9，已修并验证**）**「lead 与每个 teammate 都要有一种颜色」**：旧实现 `hash(id) % 5` 在实测 9 泳道下多对同色，Lead 拍板为真缺陷；host-data-2 已改为**按位置**分配 + 5 色真实饱和调色板（`lead` 固定 `PALETTE[0]`）。新语义：`lead` 永远同色 / 同一 teammate 在 **roster 顺序不变**时同色 / 顺序变化时可能变色（有意的取舍）。**⚠️ 该条已过时，见 §1.19/§1.21**：调色板后来换成**7 个合成色相**（红橙黄绿青蓝紫，由 `color-mix()` 从主题四族合成），所以"5 色回绕"不再是当前实现；当前上限是**四族色相 + 明度变体**，理由与实测见 §1.19。原文保留：已知上限：第 5 个 teammate 起调色板回绕、颜色重复 —— 5 个真实饱和填充就是上限（`brand-primary` 与正文同色、`onboarding-accent` 属 onboarding 流程），这是诚实上限而非 bug。守护：前 N 条（N=调色板长度）两两不同色 + `laneColorTokens` 位置语义直测 + 全部 token 在 408 定义表内，详见 §5 F9。仍未验证的部分：**跨会话 roster 顺序变化导致 teammate 变色**这一取舍只由文档与注释固定，**没有真机观察**（真机冒烟时 roster 顺序未变）。
 17. ❓**面板每次请求到底走哪条读路径未在真机确认**：`src/` 无文件/zstd 代码 ⇒ 请求走宿主服务；服务返回内存事件时约 19 ms（host-data-2 实测），但若落到 `sessionPersistence.open().read()` 之类磁盘回退通道，**冷读一次 ≈1.0 秒**（我实测，§4 事实 17）。删掉 1.5s 跨请求缓存的安全性依赖前者成立——建议真机冒烟时顺带测一次「冷启动后第一次打开面板」的耗时（§1.2 未含此项）。
-18. ❓**暗色皮肤下这三个 token 的活页面解析值从未实测**：`label-secondary` / `label-primary` / `label-primary-inverted`。我给出的暗色值（`#cfd3d6` / `#f9fafb` / `#353638`）**全部是定义源推导**（主题 bundle 的第二个皮肤块 + static 字面量），Lead 的 `getComputedStyle` 只在浅色皮肤下做过。这正是「双环 vs 单层」之争唯一缺的一手数据 —— 建议真机冒烟时切到暗色皮肤各读一次这三条（并记下面板 `bg-layer-1` 的实际值），就能把 §5 F8/§1.5 里所有推导换成实测。
+18. ✅（**已闭环，Lead 2026-10-12 一手实测 —— 并因此抓到一个真缺陷**）**暗色皮肤下的活页面解析值**。
+    做法：demo 的主题表里本来就同时含**两份皮肤**（`:root` 来自宿主 bundle + `[data-ds-dark-theme]` 覆盖），
+    所以给 `documentElement` 加上 `data-ds-dark-theme` 就能用**真实的暗色令牌值**渲染，不需要另造一个近似主题。
+    实测解析值（与 verify 之前的**定义源推导值逐条一致**，推导由此升级为实测）：
+    ```
+    --dsw-alias-label-secondary        rgb(207,211,214)   #cfd3d6   对面板 10.42:1
+    --dsw-alias-label-primary          rgb(249,250,251)   #f9fafb   对面板 15.03:1
+    --dsw-alias-label-primary-inverted rgb(53,54,56)      #353638   对面板  1.30:1
+    --dsw-alias-bg-layer-1             rgb(35,35,36)      #232324
+    --dsw-alias-bg-layer-2             rgb(44,44,46)      #2c2c2e
+    ```
+    **由此发现的真缺陷**：泳道名称药丸与任务框原本用 `--dsw-alias-label-primary-inverted` 作墨色。
+    该别名**随皮肤翻转**：浅色皮肤 `#ffffff`，暗色皮肤 `#353638`。而七个泳道填充在**两种皮肤下都是饱和偏暗**的，
+    所以文字必须在**两种皮肤下都是亮的** —— 一个会翻转的别名做不到。
+    实测 `#353638` 对 `--dsw-static-blue-600` 只有 **2.34:1**（深灰字压蓝底），名称与任务框在暗色皮肤下不可读。
+    **改法**：填充上的墨色改用 **`--dsw-static-neutral-bluish-00`（静态白，不随皮肤翻转）**；
+    七个填充对白的对比度实测 5.17 / 7.05 / 4.56 / 4.52 / 4.55 / 4.51 / 4.51，**两种皮肤一致**。
+    同时修掉两处"硬编码墨色"：`styles.ts` 的 `.dtg-head-name` 曾写死该别名（**根本没用 payload 的 `on`**），
+    以及 `GanttChart.tsx` 只内联了 `background` 而没内联 `color`。现在 fill 与 ink **都来自 payload**。
+    **回归锁**：`tests/host-integration.spec.ts` 的调色板测试改成断言**配置的墨色**在**两种皮肤**下都 ≥4.5:1
+    （原来断言的是字面 `#ffffff`，**所以整件事它一直是绿的**——填充没问题，出问题的是墨色）。
+    反向标定：把 `ON_DARK_FILL` 换回旧别名后该测试**确实红**，报 `is only 2.34:1 in the dark skin`，再换回即绿。
+    真机复核（暗色）：名称药丸 `bg rgb(37,99,235) / color rgb(255,255,255)`、任务框同色；等待条 `rgb(173,178,184)`；箭头红。
+    仍未实测：暗色皮肤下的**原生 `<select>` 下拉菜单**样式（平台绘制），以及暗色下的整体目视美感。
 19. ❓（**已知上限，Lead 裁定本轮不改**）`MESSAGE_MARKER_MIN_GAP_PX`(9) < `MESSAGE_MARKER_WIDTH`(11)：抽稀只保证标记**位置**间距 ≥9px，保留的两个标记仍可重叠 2px。我在 `tests/layout.spec.ts` 中只断言 gap 下限、**不**断言 `gap >= width`（那会刻意为红）；若后续把它改成 ≥12，把那条断言补上即可。
-20. ❓（**已知启发式 + 显式保留项，Lead 裁定本轮不改**，ui-2 要求记档以免收尾时被当成新 bug）chip 的 `inside` 阈值 `TASK_CHIP_INSIDE_MIN_WIDTH = 148px`：`labelPlacement === 'inside'` 仅当**条宽 ≥ chip 宽**，语义是"条装得下完整文字才内嵌，否则右侧挂靠"。148 是**与 chip 等宽的启发式**而非实测最优值——任何更窄的条一律右侧挂靠（例如 100px 的条不内嵌文字）。`tests/layout.spec.ts` 因此只断言结构（两条轨道不相交、`TASK_CARD_TOP === task 轨 y`、`TASK_CARD_HEIGHT <= TASK_TRACK_HEIGHT`）与 `labelPlacement` 的**两端情形**，**不**断言 148 这个魔数；若日后改为自适应，请同步更新 `labelPlacement` 的断言口径。（同批显式保留项还有 ❓19：`MESSAGE_MARKER_MIN_GAP_PX(9) < WIDTH(11)` 可重叠 2px；以及真机目视项：条高 10 / chip 36 / `dtg-msg-out` 命中数 / `data-build`，归 Lead。）
+20. ❓（**已知启发式 + 显式保留项，Lead 裁定本轮不改**，ui-2 要求记档以免收尾时被当成新 bug）**⚠️ 该条已部分过时，见 §1.21**：`labelPlacement` 现在有**三种**取值（`inside` / `right` / `left`），因为贴右缘的标签会**溢出画布 151px**（幽灵横向滚动）；另新增 `TASK_CHIP_MIN_SIDE_WIDTH = 48` 作为"这一侧放得下标签"的下限，并把宽度**夹到该侧可用空间**。以下原文的 148 阈值仍适用于 `inside` 的判定：chip 的 `inside` 阈值 `TASK_CHIP_INSIDE_MIN_WIDTH = 148px`：`labelPlacement === 'inside'` 仅当**条宽 ≥ chip 宽**，语义是"条装得下完整文字才内嵌，否则右侧挂靠"。148 是**与 chip 等宽的启发式**而非实测最优值——任何更窄的条一律右侧挂靠（例如 100px 的条不内嵌文字）。`tests/layout.spec.ts` 因此只断言结构（两条轨道不相交、`TASK_CARD_TOP === task 轨 y`、`TASK_CARD_HEIGHT <= TASK_TRACK_HEIGHT`）与 `labelPlacement` 的**两端情形**，**不**断言 148 这个魔数；若日后改为自适应，请同步更新 `labelPlacement` 的断言口径。（同批显式保留项还有 ❓19：`MESSAGE_MARKER_MIN_GAP_PX(9) < WIDTH(11)` 可重叠 2px；以及真机目视项：条高 10 / chip 36 / `dtg-msg-out` 命中数 / `data-build`，归 Lead。）
 21. ✅（**已裁决：不做**，Lead 2026-10-12）是否给 `user-prompt` 补 `to` —— **不做**。理由：用户只要求"我本人发起的对话用固定颜色"，而当前"prompt 挂在其承载泳道上"的语义已经正确（读作 `incoming`，即"我收到了你的话"，符合 §18.7 规则 4）；补 `to` 属于**行为变更**，且会让人类发言在视觉上**翻倍**（同一句话出现在两条泳道上）。我的守护两种形态都已覆盖，因此这条裁决不产生任何断言改动。
 22. ❓（**已知缺口：不刷新，未实现；Lead 2026-10-12 明确本轮不派活**）`BoardView` 只在 `visible` 翻转时取数，**没有任何刷新机制**，所以"面板开着不动 → 看不到新消息"。这条也是 Lead 最初误判方向 bug 的诱因之一（他看的是打开瞬间的快照）。host-data-2 给的三个选项 + Lead 的倾向：**①手动刷新按钮 + ②仅在 `live === true` 时低频轮询**（`live` 是现成且语义可靠的字段；`live === false` 时确实没有新事件，轮询纯浪费）；③未记录。**状态：不影响数据正确性，只影响新鲜度；未实现，未经 Lead 派活不得改。**
     关于"要不要现在加回归锁"我的评估：**不建议在实现前加**。原因是可以落的那条断言在现有测试环境里必然是假绿 —— `tests/stubs/react.ts` 的 `useEffect` 是 no-op（我们刻意不装 renderer），所以"live 为真时取数函数被调用 > 1 次"这类断言**根本跑不到任何 effect**，只会给出一个通过但无意义的绿灯。将来若实现，正确的锁是**把"该不该轮询/该不该刷新"抽成纯函数**（例如 `shouldPoll(data)`：`live === true → true`、否则 `false`），在 `tests/**` 里断言这个纯函数的真值表；真实节奏（间隔、停止条件）留给真机冒烟（可并入 §1.2 增加一项"开着面板 30s，`data-msg-direction` 计数是否增长"）。

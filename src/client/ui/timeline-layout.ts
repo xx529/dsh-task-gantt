@@ -1278,7 +1278,9 @@ export function laneColorIndex(
 ): LaneColorTokens {
   const given = lane.color
   if (given !== undefined && typeof given.bar === 'string' && given.bar !== '') {
-    return { bar: lanePaint(given.bar), on: lanePaint(given.on ?? '--dsw-alias-label-primary-inverted') }
+    // A payload with no `on` at all gets the STATIC white, i.e. the same ink the
+    // palette uses for a saturated fill — never the flipping alias. See ON_DARK_FILL.
+    return { bar: lanePaint(given.bar), on: lanePaint(given.on ?? ON_DARK_FILL) }
   }
   const palette: readonly LaneColorTokens[] = LANE_COLOR_FALLBACKS
   const pick = (slot: number): LaneColorTokens => {
@@ -1360,8 +1362,15 @@ export function messageMarkerPaint(
 }
 
 /** Fallback lane tokens, for a payload that predates `lane.color`. */
-/** The ink for a dark fill; see `LaneColorTokens.on`. */
-const ON_DARK_FILL = '--dsw-alias-label-primary-inverted'
+/**
+ * The ink for a saturated fill; see `LaneColorTokens.on` in the contract.
+ *
+ * A STATIC white, not the flipping `--dsw-alias-label-primary-inverted`: in the dark
+ * skin that alias resolves to `#353638`, which put the lane-name pill at 2.34:1 on a
+ * blue fill. Static tokens are the same colour in both skins, which is what a saturated
+ * fill needs.
+ */
+const ON_DARK_FILL = '--dsw-static-neutral-bluish-00'
 /** The ink for a pale fill; see `LaneColorTokens.onLight`. */
 const ON_LIGHT_FILL = '--dsw-alias-label-primary'
 

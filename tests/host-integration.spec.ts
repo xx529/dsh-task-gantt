@@ -582,11 +582,33 @@ describe('buildTimeline over the real Lead journal', () => {
       if (fill === null) continue
       const chroma = Math.max(...fill) - Math.min(...fill)
       expect(chroma, `${entry.bar} = rgb(${fill.join(',')}) is achromatic — a grey lane identifies nobody`).toBeGreaterThan(40)
-      const ratio = contrast(fill, white)
-      expect(
-        ratio,
-        `${entry.bar} = rgb(${fill.join(',')}) is only ${ratio.toFixed(2)}:1 against white; the lane NAME is white text on this fill`,
-      ).toBeGreaterThanOrEqual(4.5)
+      // Assert the CONFIGURED ink, resolved in BOTH skins — not a literal white.
+      //
+      // This is the regression lock for a real defect found on the dark skin: the name
+      // pill and the task box used `--dsw-alias-label-primary-inverted`, which is white in
+      // the light skin but `#353638` in the dark one. On the blue fill that is 2.34:1 —
+      // dark grey on blue — and neither the palette's author nor its reviewer could see
+      // it, because there was no dark demo. Testing a literal `#ffffff` would have stayed
+      // green through the whole thing, because the FILL was fine and only the INK was not.
+      for (const skin of ['light', 'dark'] as const) {
+        const ink = (values.inks as Record<string, { light: string; dark: string } | undefined>)[entry.on]
+        // A static ink is the same colour in both skins; an alias flips.
+        const inkHex = ink !== undefined ? ink[skin] : (values.statics as Record<string, string | undefined>)[entry.on]
+        expect(inkHex, `the ink ${entry.on} must be a documented alias or a static token`).toBeDefined()
+        if (inkHex === undefined) continue
+        const ratio = contrast(fill, rgbOf(inkHex))
+        expect(
+          ratio,
+          `the ink ${entry.on} on ${entry.bar} is only ${ratio.toFixed(2)}:1 in the ${skin} skin — the lane NAME and the task box would be unreadable`,
+        ).toBeGreaterThanOrEqual(4.5)
+      }
+      // The ink must additionally be WHITE-ish in both skins: a saturated fill needs light
+      // text, and an alias that flips to a dark grey cannot provide it.
+      const inkLight = (values.inks as Record<string, { light: string } | undefined>)[entry.on]
+      if (inkLight === undefined) {
+        const staticHex = (values.statics as Record<string, string | undefined>)[entry.on] ?? ''
+        expect(rgbOf(staticHex), `${entry.on} must be white for a saturated fill`).toEqual(rgbOf('#ffffff'))
+      }
       // Hue, so "seven DISTINCT hues" is checked as a spread rather than as seven
       // different RGB triples (two blues would pass the latter and fail the request).
       const [r, g, b] = fill.map((v) => v / 255) as [number, number, number]

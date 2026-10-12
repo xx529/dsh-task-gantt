@@ -137,8 +137,13 @@ export const BOARD_CSS = `
   text-overflow: ellipsis;
   white-space: nowrap;
   font: var(--dsw-font-xxs-strong-12);
-  /* White ink on the identity fill, in either skin. */
-  color: var(--dsw-alias-label-primary-inverted);
+  /* A FALLBACK only — the real ink arrives INLINE from LaneColorTokens.on.
+     A saturated lane fill needs the same light ink in both skins, and every theme alias
+     that means "text on a fill" flips with the theme: the label-primary-inverted token is
+     white in the light skin and a dark grey (fifty-three, fifty-four, fifty-six) in the
+     dark one, which measured 2.34:1 on the blue fill — dark grey on blue. The static white
+     does not flip, so it is both the ink the host sends and this default. */
+  color: var(--dsw-static-neutral-bluish-00);
 }
 /* One fact per line. As a single flex row, role + status + task count + message
    count were squeezed into one line and then cut with an ellipsis, so the user
