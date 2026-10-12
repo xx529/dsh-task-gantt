@@ -26,7 +26,9 @@ import {
   STEP_BAR_HEIGHT,
   TASK_CARD_HEIGHT,
   TASK_CARD_TOP,
+  TASK_BAR_HEIGHT,
   TASK_BAR_MIN_WIDTH,
+  TASK_MARKER_WIDTH,
   TASK_CHIP_GAP,
   TASK_CHIP_WIDTH,
   TASK_CHIP_INSIDE_MIN_WIDTH,
@@ -363,7 +365,12 @@ describe('layoutTimeline — task cards', () => {
     revision: 1,
     subject: 'subject',
     description: 'description',
-    status: 'pending',
+    // `completed` by DEFAULT, deliberately. A card's span is only a MEASURED interval
+    // when the task is terminal; an open task now stretches to `now` (see the
+    // "unfinished" tests below), so a fixture that meant to pin the measured span would
+    // otherwise be pinning the stretch instead. Tests that want the open behaviour say
+    // so explicitly.
+    status: 'completed',
     blockedBy: [],
     writeScopes: [],
     ready: true,
@@ -467,16 +474,64 @@ describe('layoutTimeline — task cards', () => {
     const live = withTasks(data, [task({ history: [] })])
     const layout = layoutTimeline(live, VIEWPORT, { now: 11_000, msPerPx: 100, tzOffsetMinutes: 0 })
     const card = layout.tasks[0]
-    expect(card).toMatchObject({ anchor: 'live', historyIndex: -1, live: true, at: 11_000, durationMs: 0, w: TASK_BAR_MIN_WIDTH })
-    // An unknown duration must be a HAIRLINE, not a bar: `TASK_BAR_MIN_WIDTH` is
-    // 1px (it was 2px, which rounded the length up — see issue 3).
-    expect(card?.w).toBe(TASK_BAR_MIN_WIDTH)
+    expect(card).toMatchObject({ anchor: 'live', historyIndex: -1, live: true, at: 11_000, durationMs: 0, w: TASK_MARKER_WIDTH })
+    // A task with no history has NO duration, so its width is a fixed marker rather
+    // than a rounded-up bar — there is nothing for the width to misrepresent.
+    expect(card?.w).toBe(TASK_MARKER_WIDTH)
+    // The DURATION floor is still a single device pixel: that is the rule a real
+    // duration obeys (see the "1ms task is a hairline" test).
     expect(TASK_BAR_MIN_WIDTH).toBe(1)
     expect(card?.durationMs).toBe(0)
     expect(card?.labelPlacement).toBe('right')
-    // Right-aligned to NOW, but never pushed off the left edge of the canvas.
-    expect(card?.x).toBe(Math.max(0, layout.dataWidth - TASK_CHIP_WIDTH))
-    expect(card?.x).toBe(0)
+    // The MARKER sits at NOW — the right edge of the canvas — not 148px to its left.
+    // It used to be offset by `TASK_CHIP_WIDTH` so that a fixed-width label chip would
+    // fit inside the canvas; the label is no longer a fixed-width box, and pinning the
+    // mark 148px away from the instant it marks was the cost of that. A live task's
+    // last known moment is NOW, so that is where the mark goes.
+    expect(card?.x).toBe(layout.dataWidth - TASK_MARKER_WIDTH)
+    // ...and it is still never pushed off the left edge of the canvas.
+    const narrow = layoutTimeline(withTasks(data, [task({ history: [] })]), { ...VIEWPORT, width: 1 }, { now: 11_000, msPerPx: 10_000, tzOffsetMinutes: 0 })
+    expect(narrow.tasks[0]?.x).toBe(0)
+  })
+
+  it('an UNFINISHED task keeps growing: the box spans creation to NOW', () => {
+    // The user's ask: "当任务未完成时候，应该是跟随时间线不停拖动拉长任务框，这样才代表任务
+    // 进行中". Only the creation is dated, so `max(history.time)` is the creation itself —
+    // the old code drew a 1px mark and said the task lasted no time, which is the
+    // opposite of what an open task means.
+    const open = withTasks(data, [task({ status: 'in_progress', history: [{ time: 2_000, action: 'created', sessionId: 's' }] })])
+    const at11 = layoutTimeline(open, VIEWPORT, { now: 11_000, msPerPx: 100, tzOffsetMinutes: 0 }).tasks[0]
+    expect(at11?.durationMs).toBe(9_000)
+    expect(at11?.w).toBeCloseTo(90, 5)
+    expect(at11?.live, 'a still-growing box must be flagged live').toBe(true)
+    // It GROWS with the clock, which is the whole point.
+    const at15 = layoutTimeline(open, VIEWPORT, { now: 15_000, msPerPx: 100, tzOffsetMinutes: 0 }).tasks[0]
+    expect(at15?.durationMs).toBe(13_000)
+    expect(at15?.w).toBeCloseTo(130, 5)
+    expect(at15?.w ?? 0).toBeGreaterThan(at11?.w ?? 0)
+    // `pending` counts as unfinished too: created and never claimed has no end either.
+    const pending = withTasks(data, [task({ status: 'pending', history: [{ time: 2_000, action: 'created', sessionId: 's' }] })])
+    expect(layoutTimeline(pending, VIEWPORT, { now: 11_000, msPerPx: 100, tzOffsetMinutes: 0 }).tasks[0]?.durationMs).toBe(9_000)
+  })
+
+  it('a COMPLETED task does NOT grow: its span is a measured fact', () => {
+    const done = withTasks(data, [
+      task({ status: 'completed', history: [{ time: 2_000, action: 'created', sessionId: 's' }, { time: 3_000, action: 'completed', sessionId: 's' }] }),
+    ])
+    // Moving `now` must not move a finished bar — otherwise the chart would claim the
+    // task was still running.
+    const at11 = layoutTimeline(done, VIEWPORT, { now: 11_000, msPerPx: 100, tzOffsetMinutes: 0 }).tasks[0]
+    const at99 = layoutTimeline(done, VIEWPORT, { now: 99_000, msPerPx: 100, tzOffsetMinutes: 0 }).tasks[0]
+    expect(at11?.durationMs).toBe(1_000)
+    expect(at99?.durationMs).toBe(1_000)
+    expect(at11?.live).toBe(false)
+  })
+
+  it('the card slot is exactly the box plus its transition rail', () => {
+    // The slot height is a literal so the track block can be declared before the box
+    // constants; this is what stops the two drifting apart.
+    expect(TASK_BAR_HEIGHT + 2 + 10).toBe(TASK_CARD_HEIGHT)
+    expect(TASK_TRACK_HEIGHT).toBe(TASK_CARD_HEIGHT)
   })
 
   it('never draws a history card past the canvas, and keeps a floored card reachable', () => {

@@ -412,7 +412,11 @@ describe('the direction cue does not depend on colour', () => {
     // the arrow points the other way AND one is filled while the other is outlined.
     const source = readFileSync(resolve(ROOT, 'src/client/ui/GanttChart.tsx'), 'utf8')
     expect(source).toContain("direction={outgoing ? 'out' : 'in'}")
-    expect(source).toContain('filled={outgoing && !isUser}')
+    expect(source).toContain("filled={outgoing}")
+    // The human's own prompt is a BUBBLE, not an arrow: an arrow in the punched-out disc
+    // read as "一个白色框黑心的东西" and said nothing about who spoke.
+    expect(source).toContain('function BubbleIcon')
+    expect(source).toContain('<BubbleIcon className="dtg-msg-bubble"')
     expect(source).toContain('function ArrowIcon')
     // The aim: one path, mirrored for the incoming direction.
     expect(source).toContain("transform={direction === 'out' ? undefined : 'scale(-1,-1)'}")

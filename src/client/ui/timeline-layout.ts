@@ -223,7 +223,7 @@ export const STEP_BAR_HEIGHT = 8
  */
 export const ACTIVITY_TRACK_HEIGHT = TURN_BAND_HEIGHT
 export const MESSAGE_TRACK_HEIGHT = 11
-export const TASK_TRACK_HEIGHT = 36
+export const TASK_TRACK_HEIGHT = 32
 /** Vertical gap between two tracks. */
 export const TRACK_GAP = 3
 /** Space under the last track, so a lane never ends flush against its bar. */
@@ -257,8 +257,19 @@ export function laneTracks(laneIndex: number, laneHeight: number = DEFAULT_LANE_
 /** Vertical gap between the turn band and the card row. */
 export const TASK_CARD_GAP = 4
 export const TASK_CARD_TOP = LANE_PAD_Y + ACTIVITY_TRACK_HEIGHT + TRACK_GAP + MESSAGE_TRACK_HEIGHT + TRACK_GAP
-/** Two token-sized text lines (12px/18px + 11px/14px) plus 4px of padding. */
-export const TASK_CARD_HEIGHT = 36
+/**
+ * The card SLOT: the task box plus the transition rail that hangs under it.
+ *
+ * 20px box + 2px gap + 10px rail. The slot is what the lane has to fit, not the box,
+ * so this stays the number that guards `DEFAULT_LANE_HEIGHT` (see the geometry note at
+ * the top of the file).
+ *
+ * Declared as a literal rather than derived from {@link TASK_BAR_HEIGHT}, because the
+ * track block above it is read before the box constants are declared. A test asserts
+ * `TASK_BAR_HEIGHT + 2 + 10 === TASK_CARD_HEIGHT`, so the two cannot drift apart
+ * silently — which a literal would otherwise allow.
+ */
+export const TASK_CARD_HEIGHT = 32
 /** A span shorter than this still gets a visible mark. */
 export const MIN_SPAN_PX = 2
 /**
@@ -280,26 +291,64 @@ export const MIN_SPAN_PX = 2
  * Exported for the tests that pin both ends of this decision.
  */
 export const TASK_BAR_MIN_WIDTH = 1
+
+/**
+ * Width of the marker drawn for a task with NO dated history, in px.
+ *
+ * A fixed size is honest HERE and nowhere else: this task has no duration at all, so
+ * there is nothing for a width to misrepresent — the shape says "known to exist at this
+ * instant, never observed starting". It is not a floor on a duration; a real duration
+ * still gets `TASK_BAR_MIN_WIDTH` and an honest hairline. Without it the marker was a
+ * single pixel and effectively invisible.
+ */
+export const TASK_MARKER_WIDTH = 9
 /**
  * Height of the DURATION BAR (px).
  *
- * Deliberately its own constant, NOT `TASK_CARD_HEIGHT`: the bar says "how long
- * did this take" and the chip says "what was it", so they must not share a
- * height. Reusing 36px rendered the bar as a 2-7px x 36px blob — a colour chip
- * floating in front of the text — instead of a Gantt bar. Same order of
- * magnitude as {@link STEP_BAR_HEIGHT}, which is what makes it read as a bar.
+ * THE TASK BOX *IS* THE DURATION — there is no separate bar any more.
+ *
+ * The previous revision drew TWO objects per task: a thin 10px bar whose length was
+ * the real duration, and a 36px card BOX that held the label at a FIXED
+ * `TASK_CHIP_WIDTH` of 148px. The user read the box as "the task" and reported the
+ * consequence: "如果时间线的长度比任务框固定最小的长度少的时候会出现问题，任务框的长度应该
+ * 是按实际时间线来，而不是有个最小固定长度大小（这样意义上不合理）". They were right — a
+ * 5-second task and a 5-minute task drew the same 148px box, so the box carried no
+ * information and directly contradicted the bar beside it.
+ *
+ * There is now ONE element per task: a box that spans exactly its duration and holds
+ * the label. Its fill is the lane's identity colour with the lane's `on` ink, which is
+ * the same treatment the lane NAME gets, so "the coloured box is the task" is a single
+ * consistent idea instead of two.
+ *
+ * 20px is one line of 12px text plus padding, and stays clear of
+ * {@link STEP_BAR_HEIGHT} so the two never read as the same kind of object.
  */
-export const TASK_BAR_HEIGHT = 10
-/** Vertical offset of the bar inside its card box: the bar is centred on it. */
-export const TASK_BAR_TOP_OFFSET = (TASK_CARD_HEIGHT - TASK_BAR_HEIGHT) / 2
-/** Horizontal gap between the bar's right edge and an outside label chip. */
-export const TASK_CHIP_GAP = 3
-/** Width of the label chip (two readable text lines need it). */
-export const TASK_CHIP_WIDTH = 148
+export const TASK_BAR_HEIGHT = 20
+
 /**
- * A label chip sits INSIDE the bar at or above this bar width, and hangs to the
- * right of it below. 148px is the narrowest width at which the two lines of text
- * (12px/18px + 11px/14px) plus padding still read.
+ * Vertical offset of the task box inside its card slot.
+ *
+ * Zero: the box starts at the top of the slot. (It used to be centred inside a taller
+ * 36px card, which no longer exists.)
+ */
+export const TASK_BAR_TOP_OFFSET = 0
+
+/** Horizontal gap between the task box and a label that has to sit outside it. */
+export const TASK_CHIP_GAP = 3
+
+/**
+ * Preferred width of the label when it cannot fit inside the box.
+ *
+ * This is the LABEL's width, not a floor on the task's. A short task draws a short box
+ * and its label hangs outside as plain text, which is why the number no longer
+ * misrepresents any duration.
+ */
+export const TASK_CHIP_WIDTH = 148
+
+/**
+ * The label stays INSIDE the box at or above this width, and hangs outside below it.
+ * 148px is the narrowest width at which one line of subject plus one of description
+ * still reads without being cut to nothing.
  */
 export const TASK_CHIP_INSIDE_MIN_WIDTH = TASK_CHIP_WIDTH
 
@@ -1776,6 +1825,16 @@ function taskCardRect(
   let from = win.end
   let to = win.end
   let x = 0
+  /**
+   * Whether this task is still elapsing, i.e. its duration is not yet a fact.
+   *
+   * `pending` counts: a task that was created and never claimed has no end either, and
+   * the user's rule is "当任务未完成时候" — not completed, so it grows. Only a terminal
+   * transition stops the box.
+   */
+  const stillRunning = task.status === 'pending' || task.status === 'in_progress'
+  /** A box that is still growing must be shown as live, not as a measured interval. */
+  let live = false
   // Unknown/live width: a HAIRLINE, never a readability width. See
   // {@link TASK_BAR_MIN_WIDTH}.
   let w = TASK_BAR_MIN_WIDTH
@@ -1791,6 +1850,22 @@ function taskCardRect(
       const time = num(event.time, from)
       if (time > to) to = time
     }
+    // AN UNFINISHED TASK KEEPS GROWING.
+    //
+    // Its duration is not known yet — it is still elapsing — so the box stretches from
+    // its creation to `now` and keeps stretching on every render. The user's ask:
+    // "当任务未完成时候，应该是跟随时间线不停拖动拉长任务框，这样才代表任务进行中". Drawing
+    // it as a zero-length mark at the creation instant (what `max(history.time)` gave,
+    // since the only event so far IS the creation) said "this lasted no time", which is
+    // the opposite of what an open task means.
+    //
+    // `win.end` is `now` for a live window (see `computeWindow`), so this follows the
+    // clock without this function reading a clock itself — the layout stays a pure
+    // function of its inputs, and a frozen window never grows.
+    if (stillRunning) {
+      to = Math.max(to, win.end)
+      live = true
+    }
     const x0 = clamp(from, win.start, win.end)
     const x1 = clamp(to, win.start, win.end)
     x = (x0 - win.start) / msPerPx
@@ -1803,12 +1878,13 @@ function taskCardRect(
     // the user reported it as "任务框的长度给了最少值…会有错觉" (issue 3).
     w = Math.max(TASK_BAR_MIN_WIDTH, (x1 - x0) / msPerPx)
   } else {
-    // No dated history: the duration is UNKNOWN, so no duration bar is drawn at
-    // all — only a minimum-size marker pinned to the right edge, where a live
-    // task's last known moment is. Drawing a long bar here would be inventing a
-    // duration, which is the one thing this panel may never do.
-    x = Math.max(0, win.durationMs / msPerPx - TASK_CHIP_WIDTH)
-    w = TASK_BAR_MIN_WIDTH
+    // No dated history: the duration is UNKNOWN, so no duration box is drawn — only a
+    // hairline mark pinned to `now`, which is the last moment this task is known to
+    // exist. Drawing a long box here would be inventing a START, which is the one thing
+    // this panel may never do (the stretching above is allowed to invent an END,
+    // because "still open" is exactly the claim being made).
+    x = Math.max(0, win.durationMs / msPerPx - TASK_MARKER_WIDTH)
+    w = TASK_MARKER_WIDTH
   }
   const viewX = x - scrollLeft
   const labelPlacement: 'inside' | 'right' =
@@ -1831,7 +1907,7 @@ function taskCardRect(
     barH: TASK_BAR_HEIGHT,
     viewX,
     visible: viewX + w >= 0 && viewX <= viewportWidth,
-    live: anchor === 'live',
+    live: live || anchor === 'live',
     labelPlacement,
     labelX: labelPlacement === 'inside' ? x : x + w + TASK_CHIP_GAP,
     labelY: laneY + TASK_CARD_TOP,

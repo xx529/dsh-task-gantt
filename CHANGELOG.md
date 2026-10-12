@@ -1,5 +1,60 @@
 # Changelog
 
+## 0.2.6 — 2026-10-12
+
+Four issues from the first look at the panel in the real app.
+
+**A task's box is now exactly its duration, with no fixed minimum**
+
+- There were TWO objects per task: a thin bar whose length was the real elapsed time, and
+  a 36px card at a FIXED 148px that held the label. The user read the fixed one as "the
+  task" and reported the consequence: "任务框的长度应该是按实际时间线来，而不是有个最小固定长度
+  大小（这样意义上不合理）". They were right — a 5-second task and a 5-minute task drew the
+  same 148px box, so the box carried no information and directly contradicted the bar
+  beside it.
+- There is now ONE element per task: a box whose LENGTH is the duration and which holds
+  the label. Its fill is the lane's identity colour with the lane's own `on` ink — the
+  same treatment the lane NAME gets, so "the coloured box is the task" is one idea instead
+  of two.
+- When the box is too narrow to hold its label, the label hangs outside as plain
+  TEXT — no background, no border — so the only bordered rectangle on a task row is the
+  one whose length means something.
+- A task with no dated history has no duration at all, so it draws a small fixed marker
+  rather than a width that would misrepresent nothing: there is nothing to be honest
+  about, and a 1px marker was invisible.
+
+**An unfinished task keeps growing, to NOW**
+
+- A task that is `pending` or `in_progress` has a duration that is still elapsing, so its
+  box runs from its creation to `now` and grows on every render. Its right edge is drawn
+  dashed, because that end is not a fact yet.
+- It used to draw `max(history.time)` — and for a task whose only event so far IS the
+  creation, that is the creation itself, so an open task was a 1px mark and the chart said
+  it had lasted no time. The user: "当任务未完成时候，应该是跟随时间线不停拖动拉长任务框，
+  这样才代表任务进行中".
+- `win.end` is `now` for a live window, so the layout still reads no clock of its own and
+  a frozen window never grows. Verified in a real browser: the open box's right edge is
+  exactly the NOW line (measured offset 0px) and the completed boxes keep their measured
+  lengths (140px and 91px for different durations).
+
+**The lane's role badge is gone**
+
+- It was a bordered chip printing the role, and for the Lead it printed "Lead" directly
+  under a name pill that already said the same word: "下面多了一个白色框+ agent名称，这个已经
+  是多余的了". Removing it also returned 16px to a head column that had zero margin. The
+  role still reaches the user through the row's tooltip and accessible name.
+
+**The human's prompt is a speech bubble**
+
+- It was a punched-out white disc with a two-tone ring and an arrow inside — which the
+  user described exactly: "变成一个白色框黑心的东西". Three shapes competing in 11px, and
+  the dark glyph in the white ring said nothing about who spoke.
+- It is now a single outlined bubble, in the panel's own primary ink with the same surface
+  halo every other marker carries, so it is readable over any lane colour in either skin
+  and cannot be confused with the arrows that mean "this lane sent / received".
+
+The footer build identity is now `v0.2.6 · duration-box+growing-tasks`.
+
 ## 0.2.5 — 2026-10-12
 
 Four requests from using the panel on a real screen: mark each task's state changes,

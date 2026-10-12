@@ -675,6 +675,7 @@ function LaneHead({
     : uiLabel('laneAria', { name: lane.name, status: statusText(status), tasks: drawnTasks, spans })
   const detail = [
     lane.name,
+    roleText(lane.role),
     statusText(status),
     lane.model ?? '',
     lane.createdAt === undefined ? '' : formatDateTime(lane.createdAt, tzOffsetMinutes),
@@ -716,7 +717,11 @@ function LaneHead({
         </span>
       </div>
       <div className="dtg-head-meta">
-        <span className={`dtg-head-role ${ink}`}>{roleText(lane.role)}</span>
+        {/* NO role badge here. It was a bordered chip printing the role, and for the Lead
+            it printed "Lead" directly under a name pill that already said the same word
+            — the user's "下面多了一个白色框+ agent名称，这个已经是多余的了". Removing it
+            also frees 16px of the head column, which was at zero margin.
+            The role is not lost: it stays in the row's tooltip and accessible name. */}
         <span className="dtg-head-meta-text">{statusText(status)}</span>
         {drawnTasks > 0 ? (
           <span className="dtg-head-meta-text">{`${drawnTasks} ${uiLabel('tasksLabel')}`}</span>
@@ -957,30 +962,25 @@ function MessageMarker({
     top: marker.y,
     width: marker.w,
     height: marker.h,
-    ...(isUser
-      ? {
-          background: 'var(--dsw-alias-bg-layer-1)',
-          boxShadow: `0 0 0 2px var(${UR_MARKER_RING_TOKENS[0]})`,
-          color: `var(${UR_MARKER_RING_TOKENS[0]})`,
-        }
-      : {
-          background: 'transparent',
-          color: arrowInk,
-        }),
+    background: 'transparent',
+    // The human's bubble is drawn in the panel's own primary ink, which flips with the
+    // skin, and carries the SAME surface halo as every other marker. It used to be a
+    // punched-out white disc with a two-tone ring and a dark glyph inside, which the
+    // user described exactly: "变成一个白色框黑心的东西". A disc plus a ring plus a dark
+    // centre is three shapes at 11px; the bubble alone is one, and it says what it means.
+    color: isUser ? 'var(--dsw-alias-label-primary)' : arrowInk,
   }
   /**
-   * A hairline of the PANEL SURFACE behind the arrow.
+   * A hairline of the PANEL SURFACE behind every marker.
    *
-   * The arrow is a solid block in the counterpart's lane colour, and a lane colour
-   * is only guaranteed legible against its OWN fill — the arrow sits on the PANEL.
-   * Measured: `--dsw-static-green-500` (#22c55e) appears at 2.28:1 on the light
-   * panel, below the 3:1 graphical minimum, so a bare green arrow would be a
-   * smudge. Punching a hairline of the surface out behind the icon makes the
-   * arrow's own edge readable while leaving its middle the lane colour — the same
-   * layering the human's marker already uses, and the reason the marker still needs
-   * no plate or frame.
+   * A lane colour is only guaranteed legible against its OWN fill — the marker sits on
+   * the PANEL. Measured: `--dsw-static-green-500` (#22c55e) appears at 2.28:1 on the
+   * light panel, below the 3:1 graphical minimum, so a bare green arrow would be a
+   * smudge. The same is true of the human's ink on a dark skin. Punching a hairline of
+   * the surface out behind the icon makes its own edge readable while leaving its
+   * middle the ink colour, and it is why no marker needs a plate or a frame.
    */
-  if (!isUser) style.boxShadow = '0 0 0 1.5px var(--dsw-alias-bg-layer-1)'
+  style.boxShadow = '0 0 0 1.5px var(--dsw-alias-bg-layer-1)'
   // A BUTTON, so the body is reachable by mouse and keyboard. The long body is
   // deliberately NOT in `title` (browser tooltips truncate and cannot scroll):
   // the tooltip stays the one-line summary, and the detail view carries the text.
@@ -1003,13 +1003,15 @@ function MessageMarker({
     >
       {marker.kind === 'turn' ? (
         <span className="dtg-msg-glyph" aria-hidden="true">▸</span>
+      ) : isUser ? (
+        // The human's own prompt is not a lane transfer, so it does not get an arrow.
+        // It used to draw the same arrow in the punched-out disc, which the user read as
+        // "变成一个白色框黑心的东西" — a dark glyph inside a white ring says nothing about
+        // WHO spoke. A speech bubble is the shape everyone already reads as "a person
+        // typed this", and it is unmistakable next to the arrows.
+        <BubbleIcon className="dtg-msg-bubble" ink={`var(${UR_MARKER_RING_TOKENS[0]})`} />
       ) : (
-        <ArrowIcon
-          className="dtg-msg-arrow"
-          direction={outgoing ? 'out' : 'in'}
-          filled={outgoing && !isUser}
-          ink={arrowInk}
-        />
+        <ArrowIcon className="dtg-msg-arrow" direction={outgoing ? 'out' : 'in'} filled={outgoing} ink={arrowInk} />
       )}
       {marker.droppedBefore > 0 ? <span className="dtg-msg-count" aria-hidden="true">{`+${marker.droppedBefore}`}</span> : null}
     </Tag>
@@ -1075,6 +1077,31 @@ function ArrowIcon({
       transform={direction === 'out' ? undefined : 'scale(-1,-1)'}
     >
       <path d={ARROW_PATH} />
+    </svg>
+  )
+}
+
+
+/**
+ * The speech bubble that marks the human's own prompt.
+ *
+ * A rounded rectangle with a tail, drawn as an OUTLINE. Solid would put a dark blob in
+ * the marker position, which is the "白色框黑心的东西" the user was describing; an outline
+ * reads as a bubble at 11px and still cannot be confused with the lane arrows that mean
+ * "this lane sent / received a message". One path, one `currentColor`.
+ */
+function BubbleIcon({ className, ink }: { className: string; ink: string }): ReactNode {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 12 12"
+      width={11}
+      height={11}
+      aria-hidden="true"
+      focusable="false"
+      style={{ fill: 'none', stroke: ink, strokeWidth: 1.4, strokeLinejoin: 'round' }}
+    >
+      <path d="M2.4 1.8 H9.6 A1.6 1.6 0 0 1 11.2 3.4 V7 A1.6 1.6 0 0 1 9.6 8.6 H6.1 L3.4 10.9 V8.6 H2.4 A1.6 1.6 0 0 1 0.8 7 V3.4 A1.6 1.6 0 0 1 2.4 1.8 Z" />
     </svg>
   )
 }
@@ -1275,7 +1302,7 @@ function TaskCard({
     anchor: selection,
   })
   // The tooltip carries the same endpoints + elapsed time as the details panel,
-  // so a user can check "why is this bar this long" on hover, without clicking.
+  // so a user can check "why is this box this long" on hover, without clicking.
   const elapsed = taskDurationLine(task, (time) => formatDateTime(time, tzOffsetMinutes), {
     created: uiLabel('taskCreatedAt'),
     finished: uiLabel('taskFinishedAt'),
@@ -1294,51 +1321,48 @@ function TaskCard({
       onSelectTask(null)
     }
   }
-  const labelStyle: CSSProperties = {
-    left: rect.labelX,
-    top: rect.labelY,
-    width: rect.labelW,
-    height: rect.labelH,
-    ...(color === undefined ? {} : { borderLeftColor: color.bar }),
+  /**
+   * The task box IS the duration. There is no separate bar and no fixed-width chip.
+   *
+   * The previous revision drew two objects per task: a thin bar whose length was the
+   * real duration, and a 36px card at a FIXED 148px that held the label. The user read
+   * the fixed one as "the task" and reported it: "任务框的长度应该是按实际时间线来，而不是
+   * 有个最小固定长度大小（这样意义上不合理）". A box that is 148px for a 5-second task and
+   * 148px for a 5-minute one carries no information, and it contradicted the bar drawn
+   * beside it.
+   *
+   * The fill is the lane's identity colour with the lane's `on` ink — the same
+   * treatment the lane NAME gets, so "the coloured box is the task" is one idea.
+   */
+  const boxStyle: CSSProperties = {
+    left: rect.x,
+    top: rect.barY,
+    width: rect.w,
+    height: rect.barH,
+    ...(color === undefined ? {} : { background: color.bar, color: lanePaint(color.on) }),
   }
+  /**
+   * The label, when it does not fit inside the box.
+   *
+   * Deliberately NOT a box: no background, no border, so the only bordered rectangle on
+   * a task row is the one whose LENGTH means something. A fixed-width label BOX was
+   * exactly what the user objected to; label text may be any width it likes precisely
+   * because it no longer looks like the task.
+   */
+  const captionStyle: CSSProperties = {
+    left: rect.labelX,
+    top: rect.barY,
+    width: rect.labelW,
+    height: rect.barH,
+  }
+  const inside = rect.labelPlacement === 'inside'
+  const subject = task.subject === '' ? '—' : task.subject
   return (
     <span className="dtg-task-wrap" data-task-id={task.id}>
-      {/* The BAR: its length is the task's real elapsed time, floored only at the
-          visual minimum. Never widened to fit the label — that is what made every
-          task look equally long. A duration-less task draws a marker, not a bar. */}
-      <span
-        className={`dtg-task-bar dtg-task-bar-${rect.anchor}${rect.live ? ' dtg-task-bar-live' : ''}`}
-        style={{
-          left: rect.x,
-          // Centred inside the card box, at TASK_BAR_HEIGHT tall — a bar, not a
-          // 36px blob (that is what read as "a colour chip floating by the text").
-          top: rect.barY,
-          width: rect.w,
-          height: rect.barH,
-          ...(color === undefined ? {} : { background: color.bar }),
-        }}
-        aria-hidden="true"
-      />
-      {/* Every dated transition the task has, at its own real time. */}
-      <TaskEventMarks
-        rect={rect}
-        msPerPx={msPerPx}
-        ink={color === undefined ? 'var(--dsw-alias-label-secondary)' : lanePaint(color.bar)}
-        tzOffsetMinutes={tzOffsetMinutes}
-      />
-      {/* The LABEL chip, decoupled: inside the bar when it fits, otherwise hung to
-          its right with a hairline anchor back to the bar's end. */}
-      {rect.labelPlacement === 'right' && !rect.live ? (
-        <span
-          className="dtg-task-anchor"
-          style={{ left: rect.x + rect.w, top: rect.y + rect.h / 2, width: Math.max(TASK_CHIP_GAP, rect.labelX - (rect.x + rect.w)) }}
-          aria-hidden="true"
-        />
-      ) : null}
       <button
         type="button"
-        className={`dtg-task dtg-ink-${task.status}${rect.live ? ' dtg-task-live' : ''}${rect.labelPlacement === 'right' ? ' dtg-task-outside' : ''}`}
-        style={labelStyle}
+        className={`dtg-task dtg-ink-${task.status}${rect.live ? ' dtg-task-live' : ''}${inside ? '' : ' dtg-task-outside'}`}
+        style={boxStyle}
         title={full}
         aria-label={aria}
         aria-pressed={selected}
@@ -1347,10 +1371,29 @@ function TaskCard({
         data-task-anchor={rect.anchor}
         data-label-placement={rect.labelPlacement}
       >
-        <span className="dtg-task-subject">{task.subject === '' ? '—' : task.subject}</span>
-        {task.description === '' ? null : <span className="dtg-task-desc">{task.description}</span>}
+        {inside ? <span className="dtg-task-subject">{subject}</span> : null}
         {rect.live ? <span className="dtg-task-flag">{uiLabel('liveBadge')}</span> : null}
       </button>
+      {inside ? null : (
+        // `aria-hidden`: the button above already carries the whole accessible name, and
+        // this is the same control's mouse affordance, so the text is not read twice.
+        <span
+          className="dtg-task-caption"
+          style={captionStyle}
+          aria-hidden="true"
+          onClick={() => onSelectTask(selected ? null : task.id)}
+        >
+          <span className="dtg-task-subject">{subject}</span>
+          {task.description === '' ? null : <span className="dtg-task-desc">{task.description}</span>}
+        </span>
+      )}
+      {/* Every dated transition, at its own real time, on a rail under the box. */}
+      <TaskEventMarks
+        rect={rect}
+        msPerPx={msPerPx}
+        ink={color === undefined ? 'var(--dsw-alias-label-secondary)' : lanePaint(color.bar)}
+        tzOffsetMinutes={tzOffsetMinutes}
+      />
     </span>
   )
 }

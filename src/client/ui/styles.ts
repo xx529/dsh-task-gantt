@@ -157,20 +157,11 @@ export const BOARD_CSS = `
    keeps it readable, whereas an ellipsis hides information the user asked for.
    overflow-wrap keeps a long unbroken token (a model name) inside the lane. */
 .dtg-head-meta-text { white-space: normal; overflow-wrap: anywhere; }
-/* The role badge is drawn with an INSET RING rather than a border. A border adds
-   2px to this line's height (and 2px to its width), which pushed the meta block
-   one pixel past the lane's content box; the ring paints the same outline without
-   contributing to layout, keeping the badge inside the lane's height budget
-   instead of raising that budget for one line of chrome. */
-.dtg-head-role {
-  flex: 0 0 auto;
-  padding: 0 3px;
-  border: 0;
-  border-radius: 3px;
-  box-shadow: inset 0 0 0 1px var(--dsw-alias-border-l2);
-  color: var(--dsw-alias-label-tertiary);
-  font: var(--dsw-font-xxxs-11);
-}
+/* NOTE: there is deliberately no .dtg-head-role rule. The role badge was removed —
+   for the Lead it printed the same word as the name pill directly beneath it (the
+   user's "下面多了一个白色框+ agent名称，这个已经是多余的了"), and removing it also
+   returned 16px to a head column that had zero margin. The role still reaches the
+   user through the row's tooltip and accessible name. */
 
 /* Status ink: the dot and the glyph take currentColor, so the colour rule
  * below is the single source of the status colour (never colour alone — the
@@ -263,87 +254,85 @@ export const BOARD_CSS = `
 /* One absolutely-positioned wrapper per task, so the BAR and its LABEL chip are
    laid out independently: bar length = duration, chip = readable text. The
    wrapper has no size of its own; both children carry their own geometry. */
+/* The task WRAP is a zero-sized positioning context for one task: its box, an optional
+   outside label, and the transition rail. */
 .dtg-task-wrap { position: absolute; left: 0; top: 0; width: 0; height: 0; }
-/* The duration bar. Its width is set inline from the real elapsed time; it gets
-   no padding and no text, so nothing about a label can stretch it. */
-.dtg-task-bar {
-  position: absolute;
-  /* A Gantt bar: 10px tall (TASK_BAR_HEIGHT), rounded, so it reads as duration
-     rather than as a colour chip in front of the label. */
-  border-radius: 3px;
-  background: var(--dsw-alias-label-tertiary);
-  opacity: 0.85;
-}
-/* A task with no dated history has no knowable duration: a marker, not a bar. */
-.dtg-task-bar-live {
-  border-radius: 50%;
-  opacity: 1;
-  box-shadow: 0 0 0 2px var(--dsw-alias-bg-layer-1);
-}
-/* Hairline from the bar's end to a chip that had to hang outside it. */
-.dtg-task-anchor {
-  position: absolute;
-  height: 0;
-  border-top: 1px dashed var(--dsw-alias-label-dimmed);
-}
-/* The chip sits at the geometry the layout computed (inside the bar, or to its
-   right); position:absolute keeps it out of normal flow so it can never
-   influence the bar. */
+
+/* THE box. Its width is set inline from the real elapsed time and it has NO padding
+   floor and NO minimum, so nothing about a label can stretch it.
+
+   There used to be two objects here: a thin duration bar whose length was the elapsed
+   time, and a label card at a FIXED 148px. The user read the fixed one as the task:
+   "任务框的长度应该是按实际时间线来，而不是有个最小固定长度大小".
+   A fixed width carries no information and contradicted the bar beside it, so there is
+   now one box: its LENGTH is the duration, and its fill is the lane identity colour
+   with the lane's own ink — the same treatment the lane NAME gets. */
 .dtg-task {
   position: absolute;
   display: flex;
-  flex-direction: column;
-  justify-content: center;
-  gap: 1px;
-  padding: 2px 6px 2px 8px;
+  align-items: center;
+  gap: 4px;
+  padding: 0 5px;
   margin: 0;
   text-align: left;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-left-width: 3px;
-  border-left-color: currentColor;
-  border-radius: 4px;
-  background: var(--dsw-alias-bg-layer-2);
-  color: var(--dsw-alias-label-primary);
+  border: 0;
+  border-radius: 3px;
+  background: var(--dsw-alias-label-tertiary);
+  color: var(--dsw-alias-label-primary-inverted);
   cursor: pointer;
   overflow: hidden;
   font: var(--dsw-font-xxxs-11);
   -webkit-app-region: no-drag;
 }
-/* The hover tint is painted as an INSET SHADOW, never by replacing the
-   background.
-   Why it matters: the duration bar (.dtg-task-bar) is tinted at opacity .85 and
-   sits EARLIER in the DOM than its card, so an opaque card hides it — which is
-   the intended reading. --dsw-alias-interactive-bg-hover is SEMI-TRANSPARENT
-   (measured in a real browser as a black tint at six percent alpha; the very
-   existence of a separate
-   --dsw-alias-interactive-bg-hover-solid token in the host's palette is the
-   contract telling us the normal one is not opaque). Replacing the background
-   with it punched a hole through the card and let the bar show through, which is
-   the "hovering a task puts a colour bar across its middle" defect.
-   An inset shadow paints ABOVE the element's own background and BELOW its
-   content, so a translucent token still tints (same look as before) while an
-   opaque one simply covers — and in neither case does anything show through.
-   It also leaves the box model and text contrast untouched. */
+/* The hover tint is painted as an INSET SHADOW, never by replacing the background.
+   --dsw-alias-interactive-bg-hover is SEMI-TRANSPARENT (measured in a real browser at a
+   black tint of six percent alpha), so replacing the background punched a hole through
+   the box and let whatever sat behind show through — the "hovering a task puts a colour
+   bar across its middle" defect. An inset shadow paints above the element's own
+   background and below its content, so a translucent token tints and an opaque one
+   covers, with no hole in either case. */
 .dtg-task:hover { box-shadow: inset 0 0 0 999px var(--dsw-alias-interactive-bg-hover); }
 .dtg-task:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary); outline-offset: 1px; }
 .dtg-task[aria-pressed='true'] { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }
-.dtg-task-outside {
-  /* An outside chip is anchored to the bar by a connector, not by overlap. */
-  border-left-width: 2px;
-}
+
+/* An OPEN task: its right edge is not a fact yet, so the box is squared off there and
+   the edge is dashed. The fill stays the lane colour — a live task is still that lane's
+   task — and the dash is what says "this end is still moving". */
 .dtg-task-live {
-  border-style: dashed;
-  border-left-style: solid;
-  background: var(--dsw-alias-bg-layer-1);
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+  border-right: 2px dashed currentColor;
 }
-/* Room for the live flag inside the subject line. */
-.dtg-task-live .dtg-task-subject { padding-right: 22px; }
+/* A task with no dated history has no duration at all: a small solid marker, fixed
+   width, so it is visible and clickable without pretending to be a span of time. */
+.dtg-task[data-task-anchor='live'] {
+  border-radius: 3px;
+  justify-content: center;
+  padding: 0;
+}
+
+/* The label when it does not fit inside the box. Deliberately NOT a box: no background
+   and no border, so the only bordered rectangle on a task row is the one whose LENGTH
+   means something. A label may be any width it likes precisely because it no longer
+   looks like the task. */
+.dtg-task-caption {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+  padding: 0;
+  overflow: hidden;
+  color: var(--dsw-alias-label-primary);
+  cursor: pointer;
+}
 .dtg-task-subject {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font: var(--dsw-font-xxs-strong-12);
+  font: var(--dsw-font-xxxs-strong-11);
 }
+.dtg-task-caption .dtg-task-subject { font: var(--dsw-font-xxs-strong-12); }
 .dtg-task-desc {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -351,6 +340,7 @@ export const BOARD_CSS = `
   color: var(--dsw-alias-label-tertiary);
   font: var(--dsw-font-xxxs-11);
 }
+/* The live badge, inside the box. */
 .dtg-task-flag {
   position: absolute;
   top: 1px;
@@ -486,6 +476,17 @@ export const BOARD_CSS = `
   background: var(--dsw-alias-label-dimmed);
   opacity: 0.35;
 }
+/* The human's own prompt is a speech BUBBLE, not an arrow.
+   It used to draw the lane arrow inside the punched-out disc, which the user read as
+   "变成一个白色框黑心的东西": a dark glyph in a white ring says nothing about who spoke.
+   A filled bubble is the shape everyone already reads as "a person typed this", and it
+   cannot be confused with the arrows that mean "this lane sent / received". */
+.dtg-msg-bubble {
+  display: block;
+  flex: 0 0 auto;
+  color: inherit;
+}
+
 /* The marker is an ARROW, and ONLY an arrow.
    Every earlier revision wrapped the glyph in something — first a 11px disc, then
    a solid/hollow plate — and the user's complaint was always the same: "外面还有个
@@ -533,19 +534,16 @@ export const BOARD_CSS = `
   bottom: -5px;
   left: -5px;
 }
-/* The human's own prompt: a punched-out disc with a TWO-TONE ring, never a hue.
-   This is the one marker that KEEPS a shape, because a prompt must never read as
-   a lane transfer and because no single hue is legible on both skins (measured:
-   the previously-used markdown-citation token scored 1.16:1 on a light panel).
-   The ring paints BOTH ends of the ink pair, so whichever skin is active one of
-   the two layers contrasts with the surface — no theme detection, and no reliance
-   on either token flipping. Do not collapse this to one token. */
+/* The human's own prompt keeps NO disc and NO ring: the bubble IS the marker.
+   It used to be a punched-out white disc with a two-tone ring and an arrow inside, which
+   the user described as "变成一个白色框黑心的东西" — three shapes competing at 11px, and
+   the dark glyph in the white ring said nothing about who spoke. The bubble's own outline
+   supplies the contrast, and the shared surface halo (set inline, like every other
+   marker) keeps it readable over any lane colour. */
 .dtg-msg-user {
-  background: var(--dsw-alias-bg-layer-1);
-  border-radius: 50%;
-  box-shadow:
-    0 0 0 2px var(--dsw-alias-label-primary),
-    0 0 0 3.5px var(--dsw-alias-label-primary-inverted);
+  background: none;
+  border-radius: 0;
+  box-shadow: none;
 }
 /* A turn marker is a context tick, not a message: it keeps the small flat glyph
    so it is never mistaken for a person's arrow. */

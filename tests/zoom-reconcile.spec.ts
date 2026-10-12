@@ -85,7 +85,10 @@ function taskWith(from: number, to: number): TimelineResponse {
         revision: 1,
         subject: 'subject',
         description: 'description',
-        status: 'pending',
+        // `completed`, so these fixtures describe a MEASURED interval. An open task now
+        // stretches to `now` (a separate behaviour, pinned in layout.spec.ts), and
+        // these tests are about the width being exactly `duration / msPerPx`.
+        status: 'completed',
         blockedBy: [],
         writeScopes: [],
         ready: true,
