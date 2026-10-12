@@ -387,12 +387,11 @@ export function GanttChart(props: GanttChartProps): ReactNode {
   }, [])
 
   /**
-   * FOLLOW: keep the NOW line ~24px inside the right edge.
+   * FOLLOW: advance to the edge, then snap back to 3/4.
    *
-   * With a time filter the scrollable range is short, so the same formula
-   * collapses to "park at the far right" — one code path for both cases. The
-   * decision itself is the exported pure function, so the behaviour is a truth
-   * table rather than a side effect nobody can test.
+   * The decision is the exported pure function, so the cycle is a truth table rather
+   * than a side effect nobody can test. Inside the viewport it returns `null` and this
+   * effect writes nothing, which is what lets `now` drift instead of being pinned.
    */
   useEffect(() => {
     if (follow !== true) return
@@ -1285,22 +1284,33 @@ export function shouldFollowScroll(input: {
   margin?: number
 }): { scrollTo: number | null } {
   if (!input.follow || !input.live) return { scrollTo: null }
-  /**
-   * In follow mode `now` targets 3/4 of the viewport, with the remaining quarter as
-   * blank headroom, so the timeline is not pinned to the right border:
-   *
-   *   scrollLeft = nowX - viewportWidth * (1 - FOLLOW_GUTTER_RATIO)
-   *
-   * The layout widens the canvas by exactly that quarter (see {@link FOLLOW_GUTTER_RATIO}),
-   * so at the END of the content this target CLAMPS to `contentWidth - viewportWidth`
-   * and `nowX - scrollLeft` is exactly `viewportWidth * 3/4`. One number, one place:
-   * the margin is no longer an independent 24px that disagreed with the gutter.
-   */
-  const gutter = input.margin ?? input.viewportWidth * FOLLOW_GUTTER_RATIO
   const maxScroll = Math.max(0, input.contentWidth - input.viewportWidth)
   if (maxScroll <= 0) return { scrollTo: null }
+  /**
+   * HYSTERESIS, not a pin.
+   *
+   * 0.2.19 pinned `now` to 3/4 by re-targeting on EVERY call, which is not what was
+   * asked for. The user corrected it:
+   *
+   *   > 他不是永远停在 3/4 位置，而是条到这个位置后，时间线往后推，推到边缘位置又再回到
+   *   > 3/4，这个意思
+   *
+   * So the cycle is: snap `now` to 3/4, then LEAVE THE SCROLL ALONE while time advances
+   * (the line drifts right on its own and eats the headroom), and only when it reaches
+   * the right edge snap it back to 3/4 again.
+   *
+   * Therefore: a target is returned ONLY when `now` has reached or passed the right
+   * edge. Anywhere inside the viewport this returns `null`, which is what makes the
+   * drift observable — the scroll container is not touched at all.
+   *
+   * The tail tolerance is half a pixel so a sub-pixel overshoot does not skip the
+   * trigger; it is far smaller than the ~1/4 viewport the snap moves.
+   */
+  const nowViewX = input.nowX - input.scrollLeft
+  if (nowViewX < input.viewportWidth - 0.5) return { scrollTo: null }
+  const gutter = input.margin ?? input.viewportWidth * FOLLOW_GUTTER_RATIO
   const target = clamp(input.nowX - (input.viewportWidth - gutter), 0, maxScroll)
-  // Sub-pixel differences would otherwise fire on every tick for nothing.
+  // Already where the snap would put it: do nothing rather than write the same value.
   if (Math.abs(target - input.scrollLeft) < 0.5) return { scrollTo: null }
   return { scrollTo: target }
 }

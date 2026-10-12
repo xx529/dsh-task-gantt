@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.2.20 — 2026-10-12
+
+**Follow mode advances to the edge and then snaps back to 3/4 — it is a cycle, not a pin**
+
+0.2.19 read the request as "keep `now` at 3/4 always" and pinned it there. The user corrected the
+semantics: "他不是永远停在 3/4 位置，而是条到这个位置后，时间线往后推，推到边缘位置又再回到 3/4".
+So: snap to 3/4, then do NOT scroll while time advances and let `now` drift right on its own, and only
+when it REACHES the right edge snap it back to 3/4.
+
+`shouldFollowScroll` is now a hysteresis rule — it returns a target ONLY once `now` has reached the
+right edge (`nowViewX >= viewportWidth - 0.5`, the half-pixel tolerance being far smaller than the
+~1/4-viewport jump it guards) and `null` (no scrolling at all) while `now` is inside the viewport. The
+1/4 gutter is unchanged and still essential: without content beyond `now`, scrolling `now` back to 3/4
+would lie beyond the scroll maximum.
+
+MEASURED in the browser with the clock driven forward (the demo's own clock is too slow to watch): over
+8 consecutive renders `scrollLeft` stayed at **693** with a per-render delta of 0 while `now`'s viewport
+position drifted **185.63 → 220.98**, i.e. **0.7485 → 0.8910 of the viewport width** — the headroom being
+eaten, which is exactly the behaviour 0.2.19 lacked. The snap then lands at the maximum scroll position
+at both widths tested: viewport 348 → `nowViewX 261.02` against `3/4 x 348 = 261`, and viewport 168 →
+`125.66` against `126`; the residual ≤0.34px is the browser rounding `scrollLeft` to an integer, since
+the layout-level arithmetic `nowX - target` equals `3/4 x viewportWidth` exactly. The pure-function
+truth table covers 0.60 / 0.99 vw → `null`, 1.00 vw / sub-pixel overflow / 2.00 vw → the snap target,
+follow off → `null`, both clamps, and idempotence (a second call after the snap returns `null` instead
+of re-writing the scroll).
+
+The four 0.2.19 locks were RE-BASED, not deleted, and every one is reported old → new in the task
+record; the ratio lock is untouched, and one stronger lock was added (follow off must not scroll even
+in the state that would otherwise snap).
+
+Recorded as not verified: the continuous animation at true second-scale time (the drift was sampled by
+stepping a clock offset and polling), and the 适应窗口 button's interaction with follow, which does not
+go through `shouldFollowScroll`.
+
+The footer build identity is now `v0.2.20 · follow-snap`.
+
 ## 0.2.19 — 2026-10-12
 
 **Follow mode keeps `now` at 3/4 of the viewport, with blank headroom to its right**

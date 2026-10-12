@@ -1569,39 +1569,78 @@ describe('decimation keeps every direction that has data', () => {
   })
 })
 
-describe('follow mode keeps `now` at 3/4 of the viewport', () => {
+describe('follow mode advances to the edge then snaps back to 3/4', () => {
   /**
-   * The user: "跟随时间线情况下，如果时间线已经去到最右边了，应该自动延长空白部分，让时间线
-   * 回到整屏的 3/4 位置（左边3 右边1）这样就不用一直贴着边往前".
+   * RE-BASED for 0.2.20. The 0.2.19 version of this block asserted a PERMANENT PIN —
+   * that every call returned the 3/4 target — which was the wrong semantic. The user:
+   *
+   *   > 他不是永远停在 3/4 位置，而是条到这个位置后，时间线往后推，推到边缘位置又再回到
+   *   > 3/4，这个意思
+   *
+   * So this is a HYSTERESIS cycle, and the load-bearing half is the SILENCE:
+   *
+   *   1. snap `now` to 3/4;
+   *   2. while `now` is inside the viewport the function returns `null`, so nothing
+   *      scrolls and the line drifts right on its own (the old version re-targeted
+   *      every call, which is exactly the pin the user rejected);
+   *   3. once `now` reaches the right edge, snap it back to 3/4.
    *
    * The gutter is CONTENT px produced by the layout, so it is asserted here rather than
    * inferred from a CSS spacer. `now` must NOT move: `win.end` still IS `now`, which is
    * why an open task's box still ends at `nowX`.
    */
-  const base = { follow: false, live: true, nowX: 900, viewportWidth: 320, contentWidth: 900, scrollLeft: 0 }
+  const base = { follow: true, live: true, nowX: 900, viewportWidth: 320, contentWidth: 900, scrollLeft: 0 }
 
-  it('adds exactly a quarter-viewport of content in follow mode, and nothing when off', () => {
-    const off = shouldFollowScroll({ ...base, follow: false })
-    expect(off.scrollTo, 'follow off must never scroll').toBeNull()
+  it('snaps only at the right edge, and stays silent inside the viewport', () => {
+    const viewportWidth = base.viewportWidth
+    const contentWidth = base.nowX + viewportWidth * FOLLOW_GUTTER_RATIO
+    // Where the snap put it: now sits at 3/4, scrollLeft = 900 - 240 = 660.
+    const snapped = base.nowX - viewportWidth * (1 - FOLLOW_GUTTER_RATIO)
+    expect(snapped).toBe(660)
+
+    // `now` inside the viewport -> NO scrolling, at both stated points.
+    for (const fraction of [0.6, 0.99]) {
+      const scrollLeft = base.nowX - viewportWidth * fraction
+      const inside = shouldFollowScroll({ ...base, contentWidth, scrollLeft })
+      expect(inside.scrollTo, `nowViewX ${fraction}v must not scroll`).toBeNull()
+    }
+    // Exactly AT the edge already fires (the tolerance is half a pixel, not a fraction).
+    const atEdge = shouldFollowScroll({ ...base, contentWidth, scrollLeft: base.nowX - viewportWidth })
+    expect(atEdge.scrollTo).toBeCloseTo(snapped, 6)
+    // A sub-pixel overshoot must not skip the trigger.
+    const overshoot = shouldFollowScroll({ ...base, contentWidth, scrollLeft: base.nowX - viewportWidth - 0.2 })
+    expect(overshoot.scrollTo).toBeCloseTo(snapped, 6)
+    // ...and past the edge (follow turned on while `now` is off-screen) still snaps.
+    const offscreen = shouldFollowScroll({ ...base, contentWidth, scrollLeft: base.nowX - viewportWidth * 2 })
+    expect(offscreen.scrollTo).toBeCloseTo(snapped, 6)
+    expect(base.nowX - (offscreen.scrollTo ?? 0)).toBeCloseTo(viewportWidth * (3 / 4), 6)
   })
 
-  it('puts now at 3/4 of the viewport, with the rest as blank headroom', () => {
+  it('clamps the snap target to both ends of the scrollable range', () => {
     const viewportWidth = base.viewportWidth
-    // The layout widens the canvas by the same quarter, so at the END of the content
-    // the target clamps to `contentWidth - viewportWidth`.
     const contentWidth = base.nowX + viewportWidth * FOLLOW_GUTTER_RATIO
-    const atStart = shouldFollowScroll({ ...base, contentWidth, follow: true })
-    expect(atStart.scrollTo).toBeCloseTo(base.nowX - viewportWidth * (1 - FOLLOW_GUTTER_RATIO), 6)
-    expect(base.nowX - (atStart.scrollTo ?? 0)).toBeCloseTo(viewportWidth * (3 / 4), 6)
-
     const maxScroll = contentWidth - viewportWidth
-    const atEnd = shouldFollowScroll({ ...base, contentWidth, follow: true, scrollLeft: maxScroll - 50 })
+    // At the END of the content the target clamps to contentWidth - viewportWidth, and
+    // that clamped position is exactly where `now` lands at 3/4.
+    const atEnd = shouldFollowScroll({ ...base, contentWidth, scrollLeft: base.nowX - viewportWidth })
     expect(atEnd.scrollTo).toBeCloseTo(maxScroll, 6)
     expect(base.nowX - maxScroll).toBeCloseTo(viewportWidth * (3 / 4), 6)
+    // Never negative, even for a `now` sitting before the viewport.
+    const early = shouldFollowScroll({ ...base, nowX: 10, contentWidth, scrollLeft: 0 })
+    expect(early.scrollTo === null || early.scrollTo >= 0).toBe(true)
+  })
+
+  it('never scrolls when follow is off', () => {
+    const viewportWidth = base.viewportWidth
+    const contentWidth = base.nowX + viewportWidth * FOLLOW_GUTTER_RATIO
+    expect(shouldFollowScroll({ ...base, follow: false, contentWidth }).scrollTo).toBeNull()
+    // ...even in the state that WOULD snap with follow on.
+    const edge = { ...base, follow: false, contentWidth, scrollLeft: base.nowX - viewportWidth }
+    expect(shouldFollowScroll(edge).scrollTo).toBeNull()
   })
 
   it('keeps the ratio a single shared number', () => {
-    // The gutter and the scroll target must not drift apart: one constant feeds both.
+    // The gutter and the snap target must not drift apart: one constant feeds both.
     expect(FOLLOW_GUTTER_RATIO).toBe(1 / 4)
   })
 })
