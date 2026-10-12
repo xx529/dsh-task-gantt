@@ -12,7 +12,7 @@
  *     at 82 and the task cards at 12. If someone ever "fixes" the toggle in the data
  *     layer, the restore-exactness and the shared data would both silently change.
  *  2..4. SOURCE PROXIES (labelled: node/vitest has no DOM) for the parts that only
- *     exist in the renderer: the activity layer is gated on `messageMode`, the task
+ *     exist in the renderer: the task
  *     popover carries NO description while its title is ellipsised, and the lane
  *     filter has exactly ONE application point.
  *
@@ -117,13 +117,31 @@ describe('renderer-side facts that only a DOM could otherwise show (PROXIES)', (
   const styles = readFileSync(resolve(ROOT, 'src/client/ui/styles.ts'), 'utf8')
   const board = readFileSync(resolve(ROOT, 'src/client/ui/BoardView.tsx'), 'utf8')
 
-  it('PROXY: the activity layers are gated on messageMode === both', () => {
-    // The toggle's whole effect lives here; ui-2's measured before/after is the
-    // authority, this just stops the gate from being dropped in a refactor.
-    // The gate is written as the NEGATIVE (`messageMode === 'markers'`), one per
-    // activity layer: steps, turns and wait bands.
-    const gates = [...chart.matchAll(/messageMode === 'markers'/g)].length
-    expect(gates, 'the step, turn and wait layers must all be behind the gate').toBeGreaterThanOrEqual(3)
+  it('the 活动+消息 toggle is GONE, and cannot creep back', () => {
+    // REPLACED, not deleted. The old lock asserted the opposite — that the activity
+    // layers were gated on `messageMode === 'markers'` at least three times — which
+    // guarded a switch the user has since asked to remove:
+    //   > 活动+消息这个开关感觉意义不大，取消这个功能吧
+    // The property worth protecting is now the inverse: neither the state, nor the
+    // button, nor its three labels may return. The activity track and the messages are
+    // simply always drawn (the old 'both' behaviour), so there is no gate to count.
+    expect(chart, 'the messageMode state and its gate must be gone').not.toContain('messageMode')
+    expect(chart, 'the toggle button must be gone').not.toContain('setMessageMode')
+    // The labels are gone from BOTH locales — the zh/en parity test would not catch a
+    // stale key on its own, since deleting from one map fails that other test while a
+    // leftover in both maps would pass it.
+    const labels = readFileSync(resolve(ROOT, 'src/client/ui/labels.ts'), 'utf8')
+    for (const key of ['messageModeBoth', 'messageModeMarkers', 'messageModeHint']) {
+      expect(labels, `${key} must be deleted from both locales`).not.toContain(key)
+    }
+    // ...and the layers really are drawn unconditionally now: the step and turn passes
+    // are each a plain `layout.spans.map`, with no short-circuit in front of them.
+    const stepPass = chart.indexOf("span.kind === 'step'")
+    const turnPass = chart.indexOf("span.kind === 'turn'")
+    expect(stepPass, 'the step pass must still exist').toBeGreaterThan(-1)
+    expect(turnPass, 'the turn pass must still exist').toBeGreaterThan(-1)
+    expect(chart.slice(stepPass - 400, stepPass)).not.toContain('? null')
+    expect(chart.slice(turnPass - 400, turnPass)).not.toContain('? null')
   })
 
   it('PROXY: the TASK popover body is title + time only, and its title is ellipsised', () => {

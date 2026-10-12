@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.2.16 — 2026-10-12
+
+**A filtered teammate's messages are hidden, not greyed — and the 活动+消息 toggle is gone**
+
+**1 — "如果过滤掉的 teammate，收发信息的标识就不要打灰色了，直接隐藏就行了".** The grey turned out NOT
+to be a `laneColorFor` fallback: measured `rgb(225,229,238)`, which is exactly
+`--dsw-alias-label-dimmed`, reached through the "the peer resolves to no lane" branch
+(`peerMatched === false` in `markerPaint`). Filtering is now done at the DATA layer instead: the pure
+filter also drops each surviving lane's messages whose peer is a lane the user HID.
+
+The distinction that had to survive: a peer that was NEVER in the roster (a finished member, another
+team) is legitimate and stays drawn on the sender's lane — measured, after hiding all three
+teammates, `markers 8 → 1` with `peers ["你"]` and `greys: 0`, while roster-outside peers are kept.
+
+The first attempt at this was WRONG and the browser caught it: it only inspected `message.to`, so an
+INCOMING reply whose sender was the hidden lane kept its grey marker. Both endpoints have to be
+checked — a lane carries what it sends AND what it receives. Two regression locks were added for
+exactly that (`drops a hidden peer even when its SESSION id differs from its LANE id`, and `drops a
+message whose SENDER was hidden (an incoming reply)`), and they were calibrated for teeth: reverting
+the implementation to compare only `message.to` makes precisely those two fail (13 passed / 2 failed),
+and 15/15 pass restored.
+
+**2 — "活动+消息这个开关感觉意义不大，取消这个功能吧".** The button, the `messageMode` state, its use in
+the layout call and the three gated render sites are all gone; the activity track and the messages are
+simply always drawn. The three labels (`messageModeBoth` / `messageModeMarkers` / `messageModeHint`)
+were deleted from BOTH locales, leaving 95 keys in each. The old lock that asserted the gating was
+REPLACED — not deleted — by one asserting the toggle and its labels can never come back, since a lock
+written for a removed feature asserts the opposite of the code.
+
+Leftover, deliberately not swept up here: `timeline-layout.ts` still accepts a `messageMode` option
+and one verifier lock still exercises it, because that option is a property of the layout API and is
+still true. Nothing in the UI passes it any more, so it is dead but not misleading — worth a small
+cleanup round rather than a rushed one.
+
+The footer build identity is now `v0.2.16 · filter-hides`.
+
 ## 0.2.15 — 2026-10-12
 
 **A teammate filter, a toggle that finally does something, and a popover that fits**

@@ -249,7 +249,6 @@ export function GanttChart(props: GanttChartProps): ReactNode {
    * bars so the message layer can be read on its own. The switch only changes
    * what is drawn — never any timestamp.
    */
-  const [messageMode, setMessageMode] = useState<'both' | 'markers'>('both')
 
   /**
    * The task card under the pointer or keyboard focus. The ELEMENT is kept rather
@@ -344,11 +343,10 @@ export function GanttChart(props: GanttChartProps): ReactNode {
           scrollLeft: scroll.left,
           scrollTop: scroll.top,
           cull: true,
-          messageMode,
           windowSpanMs,
         },
       ),
-    [data, now, effectiveMsPerPx, viewport.width, viewport.height, scroll.left, scroll.top, messageMode],
+    [data, now, effectiveMsPerPx, viewport.width, viewport.height, scroll.left, scroll.top],
   )
 
   /* ------------------------------------------------- measurement + scroll */
@@ -597,15 +595,9 @@ export function GanttChart(props: GanttChartProps): ReactNode {
                   a marker is an instant. Each one draws both ends: a filled cap at
                   the start, and either a filled cap (it finished) or an open,
                   dashed cap (it is still blocking) at the end. */}
-              {/* The wait band goes WITH the bars: since 0.2.13 it is drawn on the
-                  activity track, so leaving it behind would strand a grey stripe in
-                  an empty row and make the switch look half-applied. The layer is one
-                  visual object — "the activity track" — and it is hidden as one. */}
-              {messageMode === 'markers'
-                ? null
-                : waitBands.map((band) => (
-                    <WaitBand key={`wait:${band.laneId}:${band.start}:${band.end ?? 'open'}`} band={band} />
-                  ))}
+              {waitBands.map((band) => (
+                <WaitBand key={`wait:${band.laneId}:${band.start}:${band.end ?? 'open'}`} band={band} />
+              ))}
               {/* Per-lane message rhythm: the TRUE first→last extent of every
                   message, so decimated markers can never shrink the reported
                   span of when a lane was talking. */}
@@ -628,29 +620,19 @@ export function GanttChart(props: GanttChartProps): ReactNode {
                 />
               ))}
               {/* Two passes so every faint turn band paints UNDER every solid
-                  step bar, whatever order the host folded the spans in.
-                  Both passes are the ACTIVITY layer, and the legend switch next to
-                  the "turn 区间 / step 区间" keys hides exactly that layer: measured
-                  before the fix, toggling it changed NOTHING (step 3, turn 1, msg 8,
-                  wait 5 on both settings) because it only ever touched marker
-                  decimation — `'markers'` merely DREW turn-kind message markers that
-                  `'both'` folded into a "+N". The label promised bars, so the bars
-                  are what it now hides. `layout.spans` holds only `turn`/`step`
-                  ({@link SpanRect}), so the whole array is the layer. */}
-              {messageMode === 'markers'
-                ? null
-                : layout.spans.map((span, index) =>
-                    span.kind === 'turn' ? (
-                      <SpanBar key={`turn:${index}:${spanKey(span)}`} span={span} color={laneColors.get(span.laneId)} />
-                    ) : null,
-                  )}
-              {messageMode === 'markers'
-                ? null
-                : layout.spans.map((span, index) =>
-                    span.kind === 'step' ? (
-                      <SpanBar key={`step:${index}:${spanKey(span)}`} span={span} color={laneColors.get(span.laneId)} />
-                    ) : null,
-                  )}
+                  step bar, whatever order the host folded the spans in. These are
+                  ALWAYS drawn: the 活动+消息 switch that could hide this layer was
+                  removed on request ("这个开关感觉意义不大，取消这个功能吧"). */}
+              {layout.spans.map((span, index) =>
+                span.kind === 'turn' ? (
+                  <SpanBar key={`turn:${index}:${spanKey(span)}`} span={span} color={laneColors.get(span.laneId)} />
+                ) : null,
+              )}
+              {layout.spans.map((span, index) =>
+                span.kind === 'step' ? (
+                  <SpanBar key={`step:${index}:${spanKey(span)}`} span={span} color={laneColors.get(span.laneId)} />
+                ) : null,
+              )}
               {/* Message markers paint ON TOP of the bars: they are the finest
                   detail on the chart and must stay legible. */}
               {layout.messages.map((marker) => (
@@ -763,17 +745,6 @@ export function GanttChart(props: GanttChartProps): ReactNode {
           })}
         </span>
         <span className="dtg-spacer" />
-        {markerCount === 0 ? null : (
-          <button
-            type="button"
-            className="dtg-btn"
-            onClick={() => setMessageMode((mode) => (mode === 'both' ? 'markers' : 'both'))}
-            title={uiLabel('messageModeHint')}
-            aria-pressed={messageMode === 'markers'}
-          >
-            {messageMode === 'markers' ? uiLabel('messageModeMarkers') : uiLabel('messageModeBoth')}
-          </button>
-        )}
         <span className="dtg-legend-item">
           <span className="dtg-legend-turn" />
           {uiLabel('turnLegend')}

@@ -33,6 +33,7 @@ import type { TimelineLane, TimelineTask } from '../../shared/contract.ts'
 export function filterTimelineLanes<T extends { lanes: TimelineLane[]; tasks: TimelineTask[] }>(
   data: T,
   hidden: ReadonlySet<string>,
+  allLanes: readonly TimelineLane[] = data.lanes,
 ): T {
   if (hidden.size === 0) return data
   const lanes = data.lanes.filter((lane) => isPinnedLane(lane) || !hidden.has(lane.id))
@@ -41,7 +42,17 @@ export function filterTimelineLanes<T extends { lanes: TimelineLane[]; tasks: Ti
   // row to belong to, and the task count in the toolbar would still include them.
   const visible = new Set(lanes.map((lane) => lane.id))
   const tasks = data.tasks.filter((task) => visible.has(task.laneId))
-  return { ...data, lanes, tasks }
+  // Peer ids in messages are SESSION ids while lanes are keyed by LANE id, and on the
+  // Lead's lane those differ (lane `lead`, session `session-…`). So the resolver walks
+  // the same two hops the chart uses; matching the raw ids would silently miss the
+  // Lead — and, as measured, every peer whose session id is not its lane id.
+  const laneBySpeaker = new Map<string, string>()
+  for (const candidate of allLanes) {
+    laneBySpeaker.set(candidate.id, candidate.id)
+    for (const key of speakerKeysOf(candidate)) laneBySpeaker.set(key, candidate.id)
+  }
+  const laneIdOf = (speakerId: string): string | null => laneBySpeaker.get(speakerId) ?? null
+  return { ...data, lanes: lanes.map((lane) => dropHiddenPeerMessages(lane, hidden, laneIdOf)), tasks }
 }
 
 /**
@@ -56,4 +67,82 @@ export function filterTimelineLanes<T extends { lanes: TimelineLane[]; tasks: Ti
  */
 export function isPinnedLane(lane: Pick<TimelineLane, 'id' | 'role'>): boolean {
   return lane.role === 'lead' || lane.id === 'lead'
+}
+
+/**
+ * Remove a surviving lane's messages whose counterpart the user hid.
+ *
+ * ── WHY (measured, not assumed) ─────────────────────────────────────────────
+ * Filtering a lane out of `data.lanes` removes that lane's ROW, but the messages it
+ * exchanged are recorded on the OTHER lane too. Those left behind had no counterpart
+ * to borrow a colour from, so `messageMarkerPaint` fell through to the neutral
+ * `SYSTEM_COLOR` — measured on the demo as `rgb(225, 229, 238)`, exactly
+ * `--dsw-alias-label-dimmed`. The user saw those grey markers on the surviving lanes
+ * and asked for them to be HIDDEN instead ("就不要打灰色了，直接隐藏就行了"). Fixing
+ * that by re-colouring would have left a marker for a teammate who is not on screen,
+ * so it is fixed here, at the data layer.
+ *
+ * ── THE DISTINCTION THAT MUST NOT BREAK ─────────────────────────────────────
+ * A peer that was NEVER in the roster — a finished or failed member, a member of
+ * another team — is legitimate, and the host draws it on the sender's lane alone
+ * ("no lane was invented for them"). So a message is dropped ONLY when its peer is a
+ * lane id the user actually HID. `allLanes` (the UNFILTERED list) is what makes that
+ * test possible: "is in the hidden set" is not enough, because `hidden` may carry
+ * stale ids that match no lane at all.
+ *
+ * @param lane - a lane that survived the filter.
+ * @param hidden - the hidden lane ids.
+ * @param allLanes - the lane list BEFORE filtering, to tell a hidden peer from an
+ *   off-roster one.
+ */
+function dropHiddenPeerMessages(
+  lane: TimelineLane,
+  hidden: ReadonlySet<string>,
+  laneIdOf: (speakerId: string) => string | null,
+): TimelineLane {
+  if (hidden.size === 0 || lane.messages.length === 0) return lane
+  const messages = lane.messages.filter((message) => {
+    // ── BOTH ENDS, not just the recipient ─────────────────────────────────────
+    // A lane carries the messages it SENT and the ones it RECEIVED, so the hidden
+    // teammate can be either end. Measured live: after hiding every teammate, the
+    // surviving Lead lane still showed a grey marker whose `to` was the Lead and whose
+    // `from` was the hidden `lane-a` — an incoming reply. Filtering only `to` is what
+    // left it behind on the first attempt.
+    for (const endpoint of [message.to, message.from]) {
+      if (endpoint === undefined || endpoint === null || endpoint.id === '') continue
+      // Resolve into LANE space first, then ask whether that lane is hidden.
+      //
+      // This is the distinction that must not break: an endpoint with NO lane
+      // (`laneIdOf` returns null) was never on the roster — the human, a finished or
+      // failed member, another team — and the host draws those on the sender's lane
+      // alone, so they are KEPT. Only an endpoint resolving to a lane the user HID is
+      // dropped.
+      const endpointLane = laneIdOf(endpoint.id)
+      if (endpointLane !== null && hidden.has(endpointLane)) return false
+    }
+    return true
+  })
+  if (messages.length === lane.messages.length) return lane
+  return { ...lane, messages }
+}
+
+/**
+ * Every SPEAKER id that maps to this lane.
+ *
+ * A message records its addressee as a session id, while a lane is keyed by its lane
+ * id — and on the Lead's lane those differ (measured earlier this project:
+ * `lane.id === 'lead'` but its speaker id is `session-…`). So BOTH must be treated as
+ * the lane's identity: matching on only one would let a hidden teammate's messages
+ * survive whenever the two id spaces disagree, which is the normal case for the Lead.
+ *
+ * @param lane - the lane to describe.
+ */
+function speakerKeysOf(lane: TimelineLane): string[] {
+  const keys = [lane.id]
+  const navigation = lane.navigation
+  if (navigation !== undefined && navigation !== null) {
+    if (navigation.type === 'session' && typeof navigation.value === 'string') keys.push(navigation.value)
+    else if (navigation.type === 'address' && typeof navigation.value.sessionId === 'string') keys.push(navigation.value.sessionId)
+  }
+  return keys
 }
