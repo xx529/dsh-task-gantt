@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.2.21 — 2026-10-12
+
+**The footer diagnostics block is gone from the UI**
+
+"界面中这段内容不需要显示" — the 提示 line (unique message counts, per-lane copies, turn spans, runtime
+injections) no longer renders at any width. The HOST contract is untouched: the payload still carries
+`notes` (measured `notes.length === 3` with `noticeCount === 0`), this was a UI decision.
+
+The block's only render site turned out to be BoardView.tsx, not GanttChart.tsx — the Lead's file list
+was a guess and wrong, so the change had to land there; the task record says so rather than pretending
+the scope held.
+
+Two things the removal did NOT do, because measurement said they were not dead code: `.dtg-notice` is
+still used by four other sites (error, failure, the message-truncated hint and an error sub-view) and
+`notesLabel` is still used by the TaskDetails write-scope row. Deleting them would have broken three
+other notices, so the count of CSS rules and label keys removed here is ZERO — reported as a deviation
+from the task rather than done silently.
+
+Measured in the same bundle, by re-inserting the removed block once and taking it out again:
+`chart 767 / legend h46 / build bottom 813` after vs `chart 689 / notice h79` with it present — the
+block was 79px, the legend's height is unchanged at 46, the build label still sits at the bottom, and
+the chart GROWS into the freed space rather than being pushed. Same at 480 / 380 / 300px:
+`noticeCount 0`, none of 提示 / unique message / runtime injections in the body, legend and build both
+rendering, footer bottom constant.
+
+No test needed changing: `grep -rn "dtg-notice" tests/` has no hits, so nothing ever asserted that the
+block renders (the fixture's `notes: []` is data, not a render assertion).
+
+The footer build identity is now `v0.2.21 · no-notice`.
+
 ## 0.2.20 — 2026-10-12
 
 **Follow mode advances to the edge and then snaps back to 3/4 — it is a cycle, not a pin**

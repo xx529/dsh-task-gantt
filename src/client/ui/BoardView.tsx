@@ -555,11 +555,13 @@ export function BoardView({ sessionId, visible, routeBase, navigate }: BoardView
       {shownData.failure === undefined ? null : (
         <div className="dtg-notice dtg-notice-error">{`${uiLabel('failureLabel')}: ${shownData.failure}`}</div>
       )}
-      {shownData.notes.length === 0 ? null : (
-        <div className="dtg-notice" title={shownData.notes.join('\n')}>
-          {`${uiLabel('notesLabel')}: ${shownData.notes.join(' · ')}`}
-        </div>
-      )}
+      {/*
+        The host's `notes` are deliberately NOT rendered.
+        The user, pointing at the footer diagnostic line: "界面中这段内容不需要显示".
+        The payload still CARRIES them (the host-side computation is untouched) — this is
+        a UI decision, not a data one. Do not reinstate a shorter version of the same
+        diagnostic: the request was to remove the block, not to compress it.
+      */}
       {/*
         Build identity, ALWAYS rendered and deliberately NOT translated: the
         browser half is served from /plugins/<id>/client.js&rev=<hash of
