@@ -1,5 +1,79 @@
 # Changelog
 
+## 0.2.2 — 2026-10-12
+
+Five defects reported from live use of the panel. Each one was reproduced and
+measured in a real browser before it was fixed; the measurements are quoted
+below because three of the five had a root cause that did not look like the
+symptom.
+
+**Clicking a message icon did nothing (the body never opened)**
+
+- The marker `<button>` computed to `pointer-events: none`: it inherited the
+  value from the decorative `.dtg-layer`, which disables hit-testing for its
+  children so the lane background, gridlines and bands never swallow a click.
+  The marker is the one interactive child of that layer and had no re-enable, so
+  **0 of 11 markers were hit-testable** — `elementFromPoint` at a marker's centre
+  returned the lane-head button underneath it. Not a React problem, and not
+  fixable in the marker's own handler: a CSS cascade defect that made a real
+  `<button>` inert while it still looked and focused like a button.
+- The marker now re-enables `pointer-events` and grows a transparent `::before`
+  hit area outward, so the arrow's own centre still marks the exact instant the
+  message happened (the layout positions it from the message's real time).
+  Measured after: `8/8` markers hit-testable and clickable.
+
+**Message markers froze in place and stacked up after zooming**
+
+- A message is folded onto BOTH its sender's and its recipient's lane and keeps
+  its `messageId`, but the marker key was the bare `messageId`. The same key
+  therefore occurred twice in one `layout.messages` array; React logged
+  `Encountered two children with the same key, msg:m2` and reconciled against a
+  duplicate, leaving markers from an earlier layout pass on screen. The key is
+  now lane-qualified (`<laneId>:<messageId>`) — the lane is part of a marker's
+  identity regardless, since the same message paints and points differently per
+  lane. The details view resolves the same key, and prefers the LAST lane that
+  carries a message, matching the layout's own order.
+- `visible` was computed in CONTENT space (`x + w >= 0 && x <= viewportWidth`)
+  for message markers and density bands — contradicting the contract documented
+  at the top of the module. Everything inside the first `viewportWidth` pixels of
+  the canvas was therefore reported visible wherever the user had scrolled, and
+  markers reappeared only once the scroll passed the viewport width. All four
+  rect families (spans, task cards, markers, bands) now share one exported
+  `rectVisible(viewX, …)` helper, so they cannot drift apart again.
+
+**A task's bar was floored at a minimum width**
+
+- The bar's width floor was `MIN_SPAN_PX` (2px), so at a coarse zoom a 1ms task
+  and a 1.9s task both drew 2px: the chart told the reader they lasted the same.
+  The floor is now a single device pixel with no other job than keeping a
+  zero-width rect renderable, so the bar's length is its real duration and its
+  left edge is always the task's real start. The activity spans keep their 2px
+  floor: a span is an instant, a bar is a duration that a floor can distort.
+
+**Hovering a task drew a colour bar across its middle**
+
+- The duration bar sits at exactly the card's own position and is drawn under it,
+  so an opaque card hides it completely. `:hover` replaced that opaque card
+  background with `--dsw-alias-interactive-bg-hover`, which is **translucent**,
+  and the bar showed straight through. Measured: with the pointer off the card
+  the card region contained **zero** saturated pixels; with the pointer on it,
+  rows 100–109 across the card's full width became solid `rgb(135,82,225)`.
+  The hover tint is now painted as an inset shadow, which composes over the
+  element's own background instead of replacing it, so the card stays opaque in
+  both states. Measured after: hover changes the card to a uniform tint and the
+  saturated rows are gone.
+
+**Message markers redesigned**
+
+- The disc is gone. Each marker is now the diagonal arrow itself: solid for a
+  message this lane sent, hollow for one it received, so direction is carried by
+  shape as well as by the counterpart's colour. The circle, and the plate around
+  the glyph that made the two directions differ mainly by hue, were the visual
+  noise the report called out.
+- The footer build identity is now
+  `v0.2.2 · arrow-icons+exact-bars+clickable`; read it to confirm which build is
+  actually loaded.
+
 ## 0.2.1 — 2026-10-12
 
 Follow-up to 0.2.0 from the first pass of live testing of the message details.

@@ -132,8 +132,9 @@
  * A card with no dated history is therefore anchored at the window's right edge
  * (i.e. the NOW marker) and flagged `live: true` — the UI must label it as live
  * state, never as a measured interval. A history card spans the first to the
- * last dated transition, width-clamped to
- * floored at {@link TASK_BAR_MIN_WIDTH} (a 30s task and a 300s task differ by 10x).
+ * last dated transition exactly, floored only at the single-pixel hairline
+ * {@link TASK_BAR_MIN_WIDTH} (a 30s task and a 300s task differ by 10x, and a
+ * 1ms task really is a hairline rather than a 2px rule).
  * The LABEL is a separate chip — inside the bar when the bar is at least
  * {@link TASK_CHIP_INSIDE_MIN_WIDTH} wide, otherwise hung to its right — so
  * label text and bar length are decoupled.
@@ -142,6 +143,11 @@
  * `cull: false` (default) returns every rect with `visible` computed.
  * `cull: true` drops the non-visible span/task rects from the arrays (rect count
  * in the DOM, not correctness). Lanes are always returned.
+ *
+ * `visible` is decided in VIEW space by {@link rectVisible} for every rect
+ * family (spans, task cards, message markers, message bands): a rect that has
+ * been scrolled out of the band is not visible, and one scrolled into it is —
+ * regardless of how far into the content it sits.
  *
  * Every numeric input is sanitized, never trusted: a non-finite or out-of-range
  * `msPerPx` falls back to {@link DEFAULT_MS_PER_PX} then clamps into
@@ -251,15 +257,24 @@ export const TASK_CARD_HEIGHT = 36
 /** A span shorter than this still gets a visible mark. */
 export const MIN_SPAN_PX = 2
 /**
- * Floor for the TASK BAR's width, in px.
+ * Technical hairline floor for the TASK BAR's width, in px.
  *
- * A bar's length is its real elapsed time, so the floor only exists to keep a
- * very short task visible; it must stay at the visual minimum (the same 2px
- * {@link MIN_SPAN_PX} that a short activity span gets). It must NEVER be a text
- * width: clamping the bar to fit a label is what made every task look the same
- * length, which is precisely the reading this chart exists to communicate.
+ * The bar's length IS its real elapsed time (`(to - from) / msPerPx`), so this
+ * floor is NOT a readability minimum and must stay at a single device pixel:
+ * at a coarse zoom a two-minute task is legitimately narrower than a pixel, and
+ * rounding it up to a visible 2px rule would move both its edges and tell the
+ * reader it lasted longer than it did. The previous value was
+ * `MIN_SPAN_PX` (2px), which put a floor on the LENGTH — the user reported
+ * exactly that as "视图粒度很大的时候…任务框的长度给了最少值，这样会有错觉"
+ * (issue 3). Its left edge must always be the task's real start, so the bar may
+ * only ever be a sub-pixel short of its real end, never wider than reality.
+ *
+ * The ACTIVITY spans keep {@link MIN_SPAN_PX}: a span is an instant with no
+ * measurable width to distort, while a bar is a duration that does.
+ *
+ * Exported for the tests that pin both ends of this decision.
  */
-export const TASK_BAR_MIN_WIDTH = MIN_SPAN_PX
+export const TASK_BAR_MIN_WIDTH = 1
 /**
  * Height of the DURATION BAR (px).
  *
@@ -483,7 +498,7 @@ export interface TaskCardRect {
   y: number
   /** CARD box height ({@link TASK_CARD_HEIGHT}); the chip uses this. */
   h: number
-  /** BAR width: the task's real elapsed time, floored at the visual minimum. */
+  /** BAR width: the task's real elapsed time, floored only at the 1px hairline. */
   w: number
   /**
    * Top of the BAR: `y + TASK_BAR_TOP_OFFSET`. The bar is centred inside the
@@ -667,6 +682,29 @@ function num(value: number | null | undefined, fallback: number): number {
 function positive(value: number | undefined, fallback: number): number {
   const v = num(value, Number.NaN)
   return Number.isFinite(v) && v > 0 ? v : fallback
+}
+
+/**
+ * Whether a horizontally-positioned rect intersects the visible band.
+ *
+ * `viewX` must be the VIEW-space left edge (`x - scrollLeft`), never the
+ * content-space `x`. Measuring visibility in content space silently declares
+ * everything inside the first `viewportWidth` pixels of the CANVAS to be
+ * visible, no matter where the user has scrolled to — so a rect scrolled off
+ * the left stayed in the DOM, and (whenever the content is wider than the
+ * viewport) a rect scrolled INTO view could be culled. Both are the same
+ * mistake, and this helper exists so the four call sites cannot drift apart
+ * again. It matches the contract documented at the top of this module.
+ *
+ * `TASK_BAR_MIN_WIDTH` no longer enters here: the floor is a hairline, and a
+ * rect is either on screen or it is not.
+ *
+ * @param viewX - left edge in view space (`x - scrollLeft`).
+ * @param w - the rect's width in px (may be sub-pixel).
+ * @param viewportWidth - the visible width in px.
+ */
+export function rectVisible(viewX: number, w: number, viewportWidth: number): boolean {
+  return viewX + w > 0 && viewX < viewportWidth
 }
 
 function pad2(value: number): string {
@@ -1528,7 +1566,7 @@ export function layoutTimeline(
         w,
         h: MESSAGE_BAND_HEIGHT,
         viewX,
-        visible: x + w >= 0 && x <= width,
+        visible: rectVisible(viewX, w, width),
       }
       if (!cull || band.visible) messageBands.push(band)
     }
@@ -1565,7 +1603,15 @@ export function layoutTimeline(
         from: message.from,
         to: message.to,
         preview: message.preview,
-        key: message.messageId ?? `${lane.id}:${message.kind}:${time}:${keptIndex}`,
+        // LANE-QUALIFIED, always. One message is folded onto BOTH the sender's
+        // and the recipient's lane and keeps its `messageId`, so a bare
+        // `messageId` key occurred twice in this one array. React then logged
+        // "Encountered two children with the same key" and reconciled the list
+        // against a duplicate key, which left markers from an EARLIER layout
+        // pass frozen on screen after a zoom (issue 2: "缩放后 icon 定在那里
+        // 不动并叠加"). The lane is part of the identity here regardless, since
+        // the same message paints and points differently per lane.
+        key: `${lane.id}:${message.messageId ?? `${message.kind}:${time}:${keptIndex}`}`,
         messageIndex: keptIndex,
         droppedBefore,
         x,
@@ -1573,7 +1619,7 @@ export function layoutTimeline(
         w: MESSAGE_MARKER_WIDTH,
         h: MESSAGE_MARKER_HEIGHT,
         viewX,
-        visible: x + MESSAGE_MARKER_WIDTH >= 0 && x <= width,
+        visible: rectVisible(viewX, MESSAGE_MARKER_WIDTH, width),
       }
       if (!cull || rect.visible) messages.push(rect)
     }
@@ -1701,6 +1747,8 @@ function taskCardRect(
   let from = win.end
   let to = win.end
   let x = 0
+  // Unknown/live width: a HAIRLINE, never a readability width. See
+  // {@link TASK_BAR_MIN_WIDTH}.
   let w = TASK_BAR_MIN_WIDTH
   if (history.length > 0) {
     anchor = 'history'
@@ -1717,8 +1765,13 @@ function taskCardRect(
     const x0 = clamp(from, win.start, win.end)
     const x1 = clamp(to, win.start, win.end)
     x = (x0 - win.start) / msPerPx
-    // THE BAR LENGTH IS THE DURATION. No label-derived clamp: a 30s task and a
-    // 300s task must differ by 10x at the same zoom, not by 1.1x.
+    // THE BAR LENGTH IS THE DURATION — exactly, with no readability floor.
+    //
+    // The floor is now a single device pixel (`TASK_BAR_MIN_WIDTH`), so at a
+    // coarse zoom a 1s task really is a hairline and a 1h task really is 3600x
+    // wider. It previously reused `MIN_SPAN_PX` (2px), which meant a 1ms task
+    // and a 1.9s task both drew 2px: the reader was told they were equal, and
+    // the user reported it as "任务框的长度给了最少值…会有错觉" (issue 3).
     w = Math.max(TASK_BAR_MIN_WIDTH, (x1 - x0) / msPerPx)
   } else {
     // No dated history: the duration is UNKNOWN, so no duration bar is drawn at

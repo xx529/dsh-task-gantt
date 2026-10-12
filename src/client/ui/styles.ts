@@ -285,7 +285,22 @@ export const BOARD_CSS = `
   font: var(--dsw-font-xxxs-11);
   -webkit-app-region: no-drag;
 }
-.dtg-task:hover { background: var(--dsw-alias-interactive-bg-hover); }
+/* The hover tint is painted as an INSET SHADOW, never by replacing the
+   background.
+   Why it matters: the duration bar (.dtg-task-bar) is tinted at opacity .85 and
+   sits EARLIER in the DOM than its card, so an opaque card hides it — which is
+   the intended reading. --dsw-alias-interactive-bg-hover is SEMI-TRANSPARENT
+   (measured in a real browser as a black tint at six percent alpha; the very
+   existence of a separate
+   --dsw-alias-interactive-bg-hover-solid token in the host's palette is the
+   contract telling us the normal one is not opaque). Replacing the background
+   with it punched a hole through the card and let the bar show through, which is
+   the "hovering a task puts a colour bar across its middle" defect.
+   An inset shadow paints ABOVE the element's own background and BELOW its
+   content, so a translucent token still tints (same look as before) while an
+   opaque one simply covers — and in neither case does anything show through.
+   It also leaves the box model and text contrast untouched. */
+.dtg-task:hover { box-shadow: inset 0 0 0 999px var(--dsw-alias-interactive-bg-hover); }
 .dtg-task:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary); outline-offset: 1px; }
 .dtg-task[aria-pressed='true'] { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }
 .dtg-task-outside {
@@ -405,21 +420,47 @@ export const BOARD_CSS = `
   background: var(--dsw-alias-label-dimmed);
   opacity: 0.35;
 }
+/* The marker is an ARROW ICON, not a disc.
+   A filled/hollow plate around a 9px glyph was visual noise (the user's words:
+   "圆圈+箭头不干净"), and it made the two directions differ mainly by hue. Now the
+   arrow itself carries the direction twice over — pointing ↗ or ↙ AND filled or
+   hollow — and the counterpart's colour is the ink, so it stays legible on any
+   lane colour under either skin. */
 .dtg-msg {
   position: absolute;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 50%;
-  /* Filled = a delivery from that lane; the outline keeps the dot visible on
-     any bar colour underneath. */
-  background: var(--dsw-alias-label-tertiary);
-  box-shadow: 0 0 0 1px var(--dsw-alias-bg-layer-1);
+  border-radius: 0;
+  /* The decorative layer above is pointer-events: none so the lane background,
+     gridlines, bands and spans never swallow a click. The marker is the one
+     INTERACTIVE child, so it re-enables hit-testing here. Without this line the
+     computed style inherits none, elementFromPoint never returns the marker,
+     and clicking a "button" silently does nothing. */
+  pointer-events: auto;
 }
+/* A comfortable hit target that does NOT move the arrow: the layout positions
+   this box from the message's real time, so an offset would lie about when the
+   message happened. An absolutely-positioned, transparent pseudo-element grows
+   the clickable area outward without taking part in layout. */
+.dtg-msg[type='button']::before {
+  content: '';
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  bottom: -5px;
+  left: -5px;
+}
+/* Outgoing: SOLID — the plate is the counterpart's colour, the arrow is cut out
+   of it in the inverted ink. */
+.dtg-msg-out { background: var(--dsw-alias-label-tertiary); }
+/* Incoming: HOLLOW — no plate at all, the counterpart's colour becomes an
+   outline plus the arrow's own ink. */
+.dtg-msg-in { background: transparent; }
 /* The human's own prompt: a punched-out dot with a TWO-TONE ring, never a hue.
    Single tokens are invisible on one theme or the other (measured: the
    previously-used markdown-citation token scored 1.16:1 on a light panel), and
-   app switches themes without any attribute we could read. So the ring paints
+   the app switches themes without any attribute we could read. So the ring paints
    BOTH ends of the ink pair: whichever skin is active, one of the two layers
    contrasts with the surface. Do not collapse this to one token — a single
    candidate measures below the 3:1 graphical minimum on one skin or the other,
@@ -427,25 +468,32 @@ export const BOARD_CSS = `
    stays the panel surface so the dot reads as a punched-out hole. */
 .dtg-msg-user {
   background: var(--dsw-alias-bg-layer-1);
-  border: 0;
   box-shadow:
     0 0 0 2px var(--dsw-alias-label-primary),
     0 0 0 3.5px var(--dsw-alias-label-primary-inverted);
 }
-.dtg-msg-agent { border: 0; }
-.dtg-msg-turn { border-radius: 1px; }
-/* Direction is carried by SHAPE, not only colour: outgoing rides in a squared
-   dot, incoming in a ringed round one, and the glyph itself points the way
-   (↗ vs ↙). "Did I send this or receive it" therefore survives a colour-blind
-   reader. The colour is always the COUNTERPART's lane colour. */
-.dtg-msg-out { border-radius: 2px; }
-.dtg-msg-in { border-style: solid; }
-.dtg-msg .dtg-msg-glyph { font-size: 9px; }
+/* Turn markers are a context tick, not a message: keep them a quiet solid plate
+   so they are not mistaken for a human prompt. */
+.dtg-msg-turn { background: var(--dsw-alias-label-dimmed); }
+.dtg-msg .dtg-msg-glyph { font-size: 10px; line-height: 1; }
 .dtg-legend-arrow {
-  display: inline-block;
-  font: var(--dsw-font-xxxs-11);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 11px;
+  height: 11px;
+  border-radius: 1px;
+  font: var(--dsw-font-xxxs-strong-11);
   line-height: 1;
-  color: var(--dsw-alias-label-secondary);
+}
+/* Solid = outgoing, hollow = incoming: the same shape contrast the markers use. */
+.dtg-legend-arrow-solid {
+  background: var(--dsw-alias-label-tertiary);
+  color: var(--dsw-alias-label-primary-inverted);
+}
+.dtg-legend-arrow-hollow {
+  border: 1px solid var(--dsw-alias-label-tertiary);
+  color: var(--dsw-alias-label-tertiary);
 }
 
 .dtg-msg-glyph {

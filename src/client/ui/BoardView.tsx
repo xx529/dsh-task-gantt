@@ -196,25 +196,39 @@ export function BoardView({ sessionId, visible, routeBase, navigate }: BoardView
   const selectedMessage = useMemo(() => {
     if (data === null || selectedMessageKey === null) return null
     const laneIdOf = speakerLaneMapper(data.lanes)
+    // The SAME message is carried by its sender's lane AND its recipient's lane,
+    // so a bare `messageId` is not unique across this payload. The layout keys a
+    // marker as `<laneId>:<messageId>`; resolving a persisted key into a message
+    // must accept any lane that carries it and prefer the LAST one, because the
+    // layout culls on scroll and the last matching lane is the deepest one still
+    // in the array. Resolving the FIRST match would jump the detail panel to a
+    // different lane's copy of the same message than the marker that was clicked.
+    let found: {
+      laneId: string
+      laneName: string
+      message: MessageSpan
+      direction: 'outgoing' | 'incoming'
+    } | null = null
     for (const lane of data.lanes) {
       const list = lane.messages ?? []
       for (let index = 0; index < list.length; index += 1) {
         const message = list[index]
         if (message === undefined) continue
-        const key = message.messageId ?? `${lane.id}:${message.kind}:${message.time}:${index}`
-        if (key === selectedMessageKey) {
-          return {
-            laneId: lane.id,
-            // The lane's display name, so a missing recipient can be named
-            // instead of printed as "unknown".
-            laneName: lane.name !== '' ? lane.name : lane.id,
-            message,
-            direction: resolveMessageDirection(message, lane.id, laneIdOf).direction,
-          }
+        // Same construction the layout uses, so a key a marker carries can always
+        // be resolved back to exactly that marker.
+        const key = `${lane.id}:${message.messageId ?? `${message.kind}:${message.time}:${index}`}`
+        if (key !== selectedMessageKey) continue
+        found = {
+          laneId: lane.id,
+          // The lane's display name, so a missing recipient can be named
+          // instead of printed as "unknown".
+          laneName: lane.name !== '' ? lane.name : lane.id,
+          message,
+          direction: resolveMessageDirection(message, lane.id, laneIdOf).direction,
         }
       }
     }
-    return null
+    return found
   }, [data, selectedMessageKey])
 
   /* Esc closes whichever detail is open (task or message). */

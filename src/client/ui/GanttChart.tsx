@@ -537,12 +537,15 @@ export function GanttChart(props: GanttChartProps): ReactNode {
         </span>
         {markerCount === 0 ? null : (
           <>
+            {/* The legend uses the SAME two shapes as the markers (solid ↗ vs
+                hollow ↙), so it explains the cue the reader actually sees rather
+                than approximating it. */}
             <span className="dtg-legend-item" title={uiLabel('messageLegendHint')}>
-              <span className="dtg-legend-arrow" aria-hidden="true">↗</span>
+              <span className="dtg-legend-arrow dtg-legend-arrow-solid" aria-hidden="true">↗</span>
               {uiLabel('messageLegendSent')}
             </span>
             <span className="dtg-legend-item" title={uiLabel('messageLegendHint')}>
-              <span className="dtg-legend-arrow" aria-hidden="true">↙</span>
+              <span className="dtg-legend-arrow dtg-legend-arrow-hollow" aria-hidden="true">↙</span>
               {uiLabel('messageLegendReceived')}
             </span>
             {layout.droppedMessageCount === 0 ? null : (
@@ -863,19 +866,33 @@ function MessageMarker({
   const peerNote = paint.peerMatched ? '' : ` · ${uiLabel('messagePeerUnknown')}`
   const dropped = marker.droppedBefore > 0 ? ` · ${uiLabel('messageOmitted', { count: marker.droppedBefore })}` : ''
   const label = uiLabel('messageAria', { time: when, route, preview: marker.preview ?? '' })
+  const counterpart = color === undefined ? undefined : color.bar
+  const solidInk = color === undefined ? 'var(--dsw-alias-label-primary-inverted)' : color.on
+  /**
+   * The plates and inks for one marker.
+   *
+   * - outgoing: a SOLID plate in the counterpart's colour, arrow cut out of it;
+   * - incoming: NO plate, the counterpart's colour as outline + arrow ink;
+   * - the human's own prompt: the surface fill with the two-tone ring, because a
+   *   hue cannot be legible on both skins (one candidate measured 1.16:1 on the
+   *   light surface). That ring is the reason this branch must win over the
+   *   incoming styling: a prompt IS incoming, but it is not a lane transfer.
+   * - a turn marker: a quiet solid plate, never mistaken for a person's message.
+   */
+  const shape: 'solid' | 'hollow' = outgoing ? 'solid' : 'hollow'
   const style: CSSProperties = {
     left: marker.x,
     top: marker.y,
     width: marker.w,
     height: marker.h,
-    ...(color === undefined ? {} : { background: color.bar }),
-    // Two layers are what make the human's dot legible on BOTH skins (the fill is
-    // deliberately the surface colour): whichever skin is active, one of the two
-    // rings contrasts with the surface. Also a class-level rule; this inline copy
-    // exists so a culled render still carries it.
     ...(isUser
-      ? { boxShadow: `0 0 0 2px var(${UR_MARKER_RING_TOKENS[0]}), 0 0 0 3.5px var(${UR_MARKER_RING_TOKENS[1]})` }
-      : {}),
+      ? {
+          background: 'var(--dsw-alias-bg-layer-1)',
+          boxShadow: `0 0 0 2px var(${UR_MARKER_RING_TOKENS[0]})`,
+        }
+      : outgoing
+        ? { background: counterpart ?? 'var(--dsw-alias-label-tertiary)', color: solidInk }
+        : { background: 'transparent', ...(counterpart === undefined ? {} : { border: `1px solid ${counterpart}`, color: counterpart }) }),
   }
   // A BUTTON, so the body is reachable by mouse and keyboard. The long body is
   // deliberately NOT in `title` (browser tooltips truncate and cannot scroll):
@@ -890,13 +907,14 @@ function MessageMarker({
       title={`${when} · ${route}${peerNote}${dropped}`}
       aria-label={label}
       data-msg-kind={marker.kind}
+      data-msg-shape={shape}
       data-msg-direction={paint.direction}
       data-msg-peer={paint.peerName}
       data-msg-key={marker.key}
       data-msg-from={marker.from.id}
       {...(marker.to === undefined ? {} : { 'data-msg-to': marker.to.id })}
     >
-      <span className="dtg-msg-glyph" aria-hidden="true">
+      <span className="dtg-msg-glyph" aria-hidden="true" style={{ color: 'inherit' }}>
         {marker.kind === 'turn' ? '▸' : outgoing ? '↗' : '↙'}
       </span>
       {marker.droppedBefore > 0 ? <span className="dtg-msg-count" aria-hidden="true">{`+${marker.droppedBefore}`}</span> : null}

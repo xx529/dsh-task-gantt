@@ -468,6 +468,32 @@ ui-2 自查出：他曾在自检里打印**手写的** `when=00:00:00` 当作证
 - **结果**：①命中 **1** 条 —— `tests/bundle.spec.ts:158` `expect('client.abc123.js').toMatch(HOST_CLIENT_CHUNK)`，这是**故意的正则标定**（用合法分块名证明 `HOST_CLIENT_CHUNK` 这个**产品导入的模式**不是空转），不属于该缺陷类；②0 条；③0 条。
 - **结论（含边界）**：我的用例里**没有**"期望值手写、被测函数从未被调用"的实例；每条 `expect` 的主语都是函数返回值或从磁盘/契约读到的产物。**但我的脚本无法区分"断言自造常量"与"断言文件产物 / 在 `beforeEach` 里准备好的被测值"**（例如 `bundle/ci/manifest/host-route` 的命中多为后两者），所以这条结论建立在①②③三种**精确模式**上，而不是"所有断言都人工读过"。唯一更弱的一类是 `expect(detail.when).toBe(formatTime(long.time))` —— 它断言的是**注入的 formatter**；我在同一条里补了 `=== `t${long.time}``（主语仍是函数返回值）并加注释说明这一层的弱性。
 
+## 1.15 task-13：五个已报缺陷的回归锁（含"修复前必红"的反证）
+
+**命令与结果**
+```
+修复后（工作树）：pnpm run test → 21 files | 529 passed | 1 skipped (530) | 0 failed
+修复前（隔离树）：git archive HEAD=3dd5e59 → /tmp/prefix13 + 同一份两个 spec
+                  → 2 files | 10 failed | 12 passed
+```
+**新增文件**：`tests/zoom-reconcile.spec.ts`（缺陷 1a/1b/2）、`tests/marker-hit.spec.ts`（缺陷 3）。**未削弱或删除任何既有断言**。
+
+| 缺陷 | 我的锁 | 修复前 | 性质 |
+|---|---|---|---|
+| 1a 同一条消息在两泳道 → React key 重复 | 两泳道携带同一 `messageId` 时 `layout.messages[].key` **全局唯一且非空**；两次相同调用键序稳定；键含 lane id | **红**（旧 `key: message.messageId ?? …`，两条都是 `m2`） | **真回归锁** |
+| 1b 剔除用错坐标空间 | ①`scrollLeft` 推到左边缘外 → `cull:true` 必须丢弃（旧代码 `x + w >= 0` 仍算可见）；②`viewX ∈ [0,width]` 但内容 `x > viewportWidth` → 必须保留 | **两条都红** | **真回归锁**（并断言两个空间确实不同：`contentWidth > viewportWidth`、`x !== viewX`） |
+| 2 任务条长度给了最少值 | ①真宽 ≥1px 时 `w === duration/msPerPx` 精确；②<1px 时为 `TASK_BAR_MIN_WIDTH` **且该常量为 1**（旧值 2 = 回归）；③**左边缘 = 真实开始时间**；④真宽 0.1→10px 扫描**不被抬平**（≥1px 段严格递增）；⑤`msPerPx` 钳制边界 | **4 条红**（精确矩阵、常量=1、单调、1s@1000）；左边缘与比例两条在旧码也绿 | **真回归锁**（第 ④ 条正对用户"有错觉"的原话） |
+| 3 点击打不开消息 | 真锁：每个 `key` 非空唯一（一次点击唯一定位）+ 命中盒非 0 尺寸 | 1 条红 | 真锁 |
+| 3 的交互/命中 | **代理**：扫 `GanttChart.tsx` 的 `Tag = interactive ? 'button' : 'span'` + `onClick` + `data-msg-key`；扫 `styles.ts` 的 `.dtg-layer{pointer-events:none}` 与 `.dtg-msg{pointer-events:auto}` 成对存在 | **CSS 代理红**（旧样式表里 `pointer-events` 全是 `none`，marker 从未重新开启）；JSX 三条代理在旧码也绿（button/onClick 早就存在，坏的是级联） | **代理**（已明说：node/vitest 无布局引擎，命中行为是 Lead 在真实浏览器实测的） |
+
+**Lead 纠正我的两处错误前提（已改）**
+1. 我把 `msPerPx: 5` 放进矩阵，却按 5 计算期望值 —— 而 `clampMsPerPx` 会把它抬到 `MIN_MS_PER_PX = 50`，于是每一行恰好差 10 倍；**那是文档化的钳制，不是缺陷**。矩阵现只用合法档位，钳制单独成一条边界锁。
+2. 我要求**所有**行精确相等 —— 但 `TASK_BAR_MIN_WIDTH = 1` 是**设备发丝下限**（让 rect 可渲染，只让右边缘短最多一个亚像素，左边缘永远真实），不是可读性下限。现改为"doc 适用域内精确"：真宽 ≥1px 精确、<1px 等于发丝常量且该常量为 1。**修正后 22/22 全绿。**
+
+**关于既有断言的引用（未改，按任务要求明示）**：`tests/layout.spec.ts` 有两处断言 `w === TASK_BAR_MIN_WIDTH`（1ms 任务、无 history 的 live 标记），它们**钉的是发丝约定**（常数式而非字面量 2），在 Lead 确认 1px 为有意保留后仍然正确，故原样保留；若将来把发丝也去掉，这两条会先红，届时应作为一次**显式**的契约变更更新。
+
+**踩到的一个坑（记录）**：我第一版单调性用例写了 `expect(widths[0]).toBeLessThan(1)`，把**画出来的宽度**当成**真实宽度**比较 —— 发丝下限让它是 1。教训同"断言要盯住正确的量"，已改为断言 `truths[0] < 1` 且 `widths[0] === TASK_BAR_MIN_WIDTH`。
+
 ## 2. 环境（实测值）
 
 | 事实 | 值 | 怎么测的 |

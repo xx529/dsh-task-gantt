@@ -420,11 +420,24 @@ describe('layoutTimeline — task cards', () => {
     expect(long / short).toBeCloseTo(10, 5)
   })
 
-  it('the floor only applies below it (a 1ms task is a 2px marker, not a 2px rule)', () => {
+  it('a 1ms task is a hairline, NOT a 2px rule (the length floor is gone)', () => {
+    // This replaces `the floor only applies below it (a 1ms task is a 2px
+    // marker, not a 2px rule)`, which pinned the width floor at 2px. The user
+    // reported that floor as wrong: "视图粒度很大的时候…任务框的长度给了最少值，
+    // 这样会有错觉" — at a coarse zoom a short task must be drawn as short as it
+    // really was, not rounded up to a visible rule. The floor is now the single
+    // device pixel `TASK_BAR_MIN_WIDTH`, whose ONLY job is to keep a
+    // zero-width rect renderable.
     const tiny = withTasks(data, [task({ history: [{ time: 1_000, action: 'created', sessionId: 's' }, { time: 1_001, action: 'completed', sessionId: 's' }] })])
     const layout = layoutTimeline(tiny, VIEWPORT, { now: 11_000, msPerPx: 1_000, tzOffsetMinutes: 0 })
+    // 1ms at 1000ms/px = 0.001px, which is below the hairline: clamp to 1px.
+    expect(TASK_BAR_MIN_WIDTH).toBe(1)
     expect(layout.tasks[0]?.w).toBe(TASK_BAR_MIN_WIDTH)
     expect(layout.tasks[0]?.durationMs).toBe(1)
+    // ...and just above the hairline the width is the TRUE value, not a floor.
+    const twoSec = withTasks(data, [task({ history: [{ time: 1_000, action: 'created', sessionId: 's' }, { time: 3_000, action: 'completed', sessionId: 's' }] })])
+    const wider = layoutTimeline(twoSec, VIEWPORT, { now: 11_000, msPerPx: 1_000, tzOffsetMinutes: 0 })
+    expect(wider.tasks[0]?.w).toBeCloseTo(2, 9)
   })
 
   it('never lets the subject length move the bar (label/bar decoupling)', () => {
@@ -455,8 +468,10 @@ describe('layoutTimeline — task cards', () => {
     const layout = layoutTimeline(live, VIEWPORT, { now: 11_000, msPerPx: 100, tzOffsetMinutes: 0 })
     const card = layout.tasks[0]
     expect(card).toMatchObject({ anchor: 'live', historyIndex: -1, live: true, at: 11_000, durationMs: 0, w: TASK_BAR_MIN_WIDTH })
-    // An unknown duration must be a POINT, not a bar: 2px.
+    // An unknown duration must be a HAIRLINE, not a bar: `TASK_BAR_MIN_WIDTH` is
+    // 1px (it was 2px, which rounded the length up — see issue 3).
     expect(card?.w).toBe(TASK_BAR_MIN_WIDTH)
+    expect(TASK_BAR_MIN_WIDTH).toBe(1)
     expect(card?.durationMs).toBe(0)
     expect(card?.labelPlacement).toBe('right')
     // Right-aligned to NOW, but never pushed off the left edge of the canvas.
@@ -476,12 +491,49 @@ describe('layoutTimeline — task cards', () => {
     expect(card?.durationMs).toBe(48_000)
     expect(layout.window.end).toBe(50_000)
     expect((card?.x ?? 0) + (card?.w ?? 0)).toBeLessThanOrEqual(layout.dataWidth)
-    // A min-width card on a canvas narrower than the card overflows the canvas —
-    // the scroll container's overflow region is what keeps it reachable.
+    // A live card on a 1px canvas stays anchored at x = 0, so it is never pushed
+    // off the LEFT edge (a negative x would be unreachable: scrollLeft cannot go
+    // below 0).
+    //
+    // NOTE (issue 3): this assertion used to require the live card to OVERFLOW
+    // the canvas, i.e. `x + w > dataWidth`, because the card was 148px wide
+    // (`TASK_CHIP_WIDTH`) at x = 0 on a 1px canvas. Measurement — not the text —
+    // now decides the width, so the card can no longer be assumed to overflow and
+    // that assertion pinned layout arithmetic rather than the reachability it was
+    // written to protect.
     const narrowCanvas = layoutTimeline(withTasks(data, [task({ history: [] })]), { ...VIEWPORT, width: 1 }, { now: 11_000, msPerPx: 10_000, tzOffsetMinutes: 0 })
     const floored = narrowCanvas.tasks[0]
     expect(floored).toBeDefined()
-    expect((floored?.x ?? 0) + (floored?.w ?? 0)).toBeGreaterThan(narrowCanvas.dataWidth)
+    expect(floored?.x).toBe(0)
+    // NOTE (issue 3): this block used to require the live card to OVERFLOW the
+    // canvas (`x + w > dataWidth`) because the card was 148px wide
+    // (`TASK_CHIP_WIDTH`) at x = 0 on a 1px canvas. The width is now decided by
+    // measurement, not by the text, so that assertion had become a statement
+    // about layout arithmetic rather than about the reachability it was written
+    // to protect. What actually keeps a card reachable is that its left edge is
+    // never pushed off the canvas (x = 0, and scrollLeft cannot go below 0).
+    //
+    // The width floor itself is asserted directly here: the bar is its real
+    // duration in px, and only the 1px hairline may intervene.
+    const longTask = withTasks(data, [task({ history: [{ time: 1_000, action: 'created', sessionId: 's' }, { time: 101_000, action: 'completed', sessionId: 's' }] })])
+    const overflowing = layoutTimeline(longTask, { ...VIEWPORT, width: 1 }, { now: 200_000, msPerPx: 1_000, tzOffsetMinutes: 0 })
+    const wide = overflowing.tasks[0]
+    // 100s at 1000ms/px = exactly 100px of bar: a 1px canvas is overflowed by the
+    // DURATION, not by a chip width, and the old 2px floor is not in the number.
+    expect(wide?.w).toBeCloseTo(100, 9)
+    expect((wide?.x ?? 0) + (wide?.w ?? 0)).toBeGreaterThan(1)
+    // ...and its LEFT edge is still the task's real start, never moved right to
+    // fit: that is the whole point of removing the length floor.
+    expect(wide?.x).toBe((1_000 - overflowing.window.start) / 1_000)
+    // A genuinely sub-hairline task is clamped to the single hairline pixel for
+    // rendering — which is the ONLY clamp left, and it is 1px, not 2px.
+    const subHairline = withTasks(data, [task({ history: [{ time: 10_000, action: 'created', sessionId: 's' }, { time: 10_001, action: 'completed', sessionId: 's' }] })])
+    const tinyBar = layoutTimeline(subHairline, VIEWPORT, { now: 11_000, msPerPx: 10_000, tzOffsetMinutes: 0 }).tasks[0]
+    expect(tinyBar?.durationMs).toBe(1)
+    // The raw duration would be 1ms / 10_000ms-per-px = 0.0001px, far below any
+    // readability floor — and yet the drawn width is 1px, not 2px.
+    expect(tinyBar?.w).toBe(TASK_BAR_MIN_WIDTH)
+    expect(tinyBar?.w).toBe(1)
   })
 
   it('places a top-level task the lanes did not carry, through its laneId', () => {
