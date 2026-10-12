@@ -26,6 +26,8 @@
  * reproducible: a 60-second window starting at 0 with `msPerPx = 100`, i.e. the
  * content strip is 600px wide.
  */
+import { readFileSync } from 'node:fs'
+
 import { describe, expect, it } from 'vitest'
 
 import { ACTIVITY_TRACK_HEIGHT, ACTIVITY_TRACK_TOP, DEFAULT_LANE_HEIGHT, laneTracks } from '../src/client/ui/timeline-layout.ts'
@@ -131,5 +133,44 @@ describe('the window behaviour is unchanged by the move', () => {
 
     const kept = band([wait(1_000, 2_000)], 0, { cull: true, viewportWidth: 100, scrollLeft: 0 })
     expect(kept).toHaveLength(1)
+  })
+})
+
+/**
+ * The band shares the activity track with the span it describes, so WHICH ONE PAINTS
+ * ON TOP is part of the contract, not an accident of element order.
+ *
+ * The user reported the consequence directly: the grey band was drawn UNDER the span,
+ * and "看不清等待开始和结束在哪里" — the span's opaque fill hid both end caps. The
+ * fix is a stacking order rather than a JSX reshuffle, because `<WaitBand>` is
+ * rendered before the span bars inside the same layer and moving the JSX would let the
+ * next reorder bury it again.
+ *
+ * MEASURED (17x10 crop of a band overlapping a span, pixels with the shipped CSS vs
+ * the same page with `z-index: auto` injected to simulate the old order): the left and
+ * right cap pixels read (26,60,135) — visible — against the span's flat (36,96,229)
+ * when the band is under, with 128 of 170 pixels differing. So this lock stands in for
+ * a rendering property that the pure layer cannot express.
+ */
+describe('the wait band paints above the span it coincides with', () => {
+  const css = readFileSync(new URL('../src/client/ui/styles.ts', import.meta.url), 'utf8')
+
+  it('puts the band in a stacking order above the span, and below the chrome', () => {
+    const band = css.slice(css.indexOf('.dtg-wait {'), css.indexOf('.dtg-wait::after'))
+    expect(band).toContain('z-index: 2')
+    // The two things it may never cover: the sticky axis and the lane heads.
+    expect(css).toMatch(/\.dtg-axis \{[^}]*z-index: 3/s)
+    expect(css).toMatch(/\.dtg-heads \{[^}]*z-index: 4/s)
+  })
+
+  it('leaves the span bars without a z-index, so the band wins in the same layer', () => {
+    // If a span ever declares its own z-index at or above 2, the band goes under again
+    // and the caps vanish — the exact defect this file now guards.
+    for (const selector of ['.dtg-step {', '.dtg-span {']) {
+      const at = css.indexOf(selector)
+      if (at === -1) continue
+      const block = css.slice(at, css.indexOf('}', at))
+      expect(block).not.toContain('z-index')
+    }
   })
 })

@@ -437,13 +437,24 @@ export const BOARD_CSS = `
 
 /* --- wait blocks (wait_agent) ------------------------------------------- */
 
-/* A wait is a PERIOD, drawn on the message row: it means "blocked, waiting for a
-   teammate", which is the opposite of the turn/step bars above it ("working").
-   Distinguished from a message marker by TEXTURE, not by a new hue: the band is
-   a faint identity-coloured wash with diagonal stripes cut out of it by a mask,
-   so the stripe gradient carries no colour of its own. */
+/* A wait is a PERIOD: it means "blocked, waiting for a teammate", which is the
+   opposite of the turn/step bars it is now drawn ON ("working"). Distinguished from
+   a message marker by TEXTURE, not by a new hue: the band is a faint wash with
+   diagonal stripes cut out of it by a mask, so the stripe gradient carries no colour
+   of its own.
+
+   It shares the ACTIVITY track with the turn band and the step bar, at the user's
+   request ("等待的灰色条可以重合在 span，这样表达更清晰"), so WHICH ONE IS ON TOP
+   matters. It has to be the band: the span's fill is opaque, and while the band
+   painted under it the user could not see where the wait STARTED and ENDED at all.
+   It used to paint under simply because the WaitBand element is rendered BEFORE the
+   span bars inside dtg-layer and neither carried a z-index. Fixed with a stacking
+   order rather than by moving the JSX, so that reordering the layer's children for
+   some other reason cannot silently bury the band again. Kept below the axis (3) and
+   the lane heads (4), which are the two things it may never cover. */
 .dtg-wait {
   position: absolute;
+  z-index: 2;
   border-radius: 2px;
   background: var(--dsw-alias-label-tertiary);
   opacity: 0.45;

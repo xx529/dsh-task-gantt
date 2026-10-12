@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.2.14 — 2026-10-12
+
+**The grey wait band now paints ON TOP of the span it coincides with**
+
+Reported immediately after 0.2.13 put the band on the activity track: "等待的灰色条应该在颜色条
+的上层吧，现在这样看不清等待开始和结束在哪里". Coinciding was only half the request — the band
+rendered BEFORE the span bars inside `.dtg-layer` and neither carried a z-index, so the span's
+opaque fill covered the band entirely, caps included.
+
+Fixed with a stacking order (`z-index: 2` on `.dtg-wait`) rather than by moving the JSX, so that
+a future reorder of the layer's children cannot silently bury it again. It stays below the two
+things it may never cover: the sticky axis (`z-index: 3`) and the lane heads (`z-index: 4`).
+
+MEASURED, as a pixel A/B on the same page: a 17×10 crop of a band overlapping a span, with the
+shipped CSS versus the same page with `z-index: auto` injected to reproduce the old order.
+
+| sample | shipped (band on top) | simulated pre-fix (span on top) |
+|---|---|---|
+| centre | `(76,111,187)` washed | `(36,96,229)` raw span blue |
+| left cap | `(26,60,135)` visible | `(36,96,229)` **invisible** |
+| right cap | `(26,60,135)` visible | `(36,96,229)` **invisible** |
+
+128 of 170 pixels differ, and both cap pixels read as the span's flat colour before the fix —
+i.e. the start and end of the wait genuinely could not be seen. Two source locks now stand in
+for that rendering property in `tests/wait-band.spec.ts` (the band's `z-index` with the axis and
+heads above it, and the span bars carrying no `z-index` of their own).
+
+A second stale comment was found and fixed here: the CSS block above `.dtg-wait` still said the
+band was "drawn on the message row ... the opposite of the turn/step bars above it", which the
+0.2.13 move had already made false (the `GanttChart.tsx` copy had been updated, the CSS one had
+not).
+
+Two process notes, because both cost time. The build guard rejected my first attempt at that
+comment: I wrote element names in backticks inside the BOARD_CSS template, which is the exact
+trap this repo has hit repeatedly; the guard printed the line and `deploy.sh` aborted before
+writing a bundle, so no partial artifact was published. And `elementFromPoint` is NOT a valid
+probe for paint order here — `.dtg-layer` is `pointer-events: none`, so hit-testing falls through
+to the canvas and reports the wrong element regardless of which layer paints on top. Pixels
+settle it; hit-testing does not.
+
+The footer build identity is now `v0.2.14 · wait-above-span`.
+
 ## 0.2.13 — 2026-10-12
 
 **1 — the message markers get the same hover popover as the task cards**

@@ -1,6 +1,6 @@
 {
   "name": "dsh-task-gantt",
-  "version": "0.2.13",
+  "version": "0.2.14",
   "description": "Agent-team task Gantt chart for the DSH sidebar \u2014 teammates on the y-axis, real session time on the x-axis, task title and summary in every bar. \u00b7 DSH \u4fa7\u8fb9\u680f\u7684 agent team \u4efb\u52a1\u7518\u7279\u56fe\u3002",
   "license": "MIT",
   "type": "module",
