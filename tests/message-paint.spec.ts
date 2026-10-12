@@ -418,7 +418,32 @@ describe('the direction cue does not depend on colour', () => {
     expect(source).toContain("transform={direction === 'out' ? undefined : 'scale(-1,-1)'}")
     // The weight: the body and the outline SWAP between the two directions, so
     // both stay equally bold and neither can vanish against the surface.
-    expect(source).toContain("{ fill: ink, stroke: 'none' }")
+    // The weight must come from STROKE WIDTH on ONE closed-capable centreline, not
+    // from filling a path. Both earlier attempts at a separate filled path were
+    // wrong in ways only rendering showed: open segments enclose no area (the sent
+    // marker collapsed to "just a small triangle"), and the replacement polygon's
+    // head ran outside the viewBox and was clipped. A stroke draws the head's barbs
+    // for free.
+    expect(source).toContain("strokeWidth={filled ? ARROW_STROKE_SENT : ARROW_STROKE_RECEIVED}")
+    expect(source).toContain("fill=\"none\"")
+    const path = /const ARROW_PATH = '([^']+)'/.exec(source)
+    expect(path, 'there must be ONE arrow centreline').not.toBeNull()
+    // One centreline means no second path constant to drift from it.
+    expect(source).not.toContain('ARROW_FILL_PATH')
+    expect(source).not.toContain('ARROW_STROKE_PATH')
+    const sent = Number(/const ARROW_STROKE_SENT = ([\d.]+)/.exec(source)?.[1])
+    const received = Number(/const ARROW_STROKE_RECEIVED = ([\d.]+)/.exec(source)?.[1])
+    expect(sent, 'the sent weight must be the heavier one').toBeGreaterThan(received)
+    // The centreline must stay inside the 12x12 box even after a 3.4px stroke adds
+    // ~1.7 units either side: the polygon that clipped reached 10.8.
+    const nums = [...(path?.[1] ?? '').matchAll(/(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)/g)]
+    for (const m of nums) {
+      const [x, y] = [Number(m[1]), Number(m[2])]
+      expect(x, `x=${x} would clip with the sent stroke`).toBeLessThanOrEqual(12 - sent / 2)
+      expect(y, `y=${y} would clip with the sent stroke`).toBeLessThanOrEqual(12 - sent / 2)
+      expect(x, `x=${x} would clip`).toBeGreaterThanOrEqual(sent / 2)
+      expect(y, `y=${y} would clip`).toBeGreaterThanOrEqual(sent / 2)
+    }
     expect(source).toMatch(/aria-label=\{label\}/)
     expect(source).toContain('messageSentTo')
     expect(source).toContain('messageReceivedFrom')

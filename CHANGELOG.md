@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.2.4 — 2026-10-12
+
+**The sent and received arrows are now the same arrow, differing only in weight**
+
+The report: "发送的标识只有一个小三角形明显，改成更接收一样的 icon 只是方向变了斜线上".
+
+The received arrow was right and the sent one was wrong, because they used different
+*paint* on a different *geometry*:
+
+- The filled variant used the same centreline as the stroked one — a path of **open
+  line segments**. Open lines enclose no area, so `fill` on them paints almost
+  nothing; the sent marker was a 1px sliver with one visible nub. That is the "小三角形".
+- It was then given a real closed polygon, and it came out wrong a second way: the
+  head reached 10.8 of a 12-unit box, so the arrow was **silently clipped** by its own
+  viewBox and read as a stub. Neither defect is visible from reading the numbers.
+
+Both are replaced by ONE centreline drawn at two stroke weights:
+
+| | aim | weight |
+|---|---|---|
+| sent | up-right | 3.4px — wide enough that the head's barbs fill, so it reads solid |
+| received | down-left | 2px — the same shape read as an outline |
+
+The centreline is derived, not eyeballed: a 2px stroke reaches 1px either side of its
+path, so the line is inset one unit from the outer silhouette, which keeps the painted
+arrow inside its box at both weights (a test now asserts that for every vertex).
+
+The footer build identity is now `v0.2.4 · matched-arrow-weights`.
+
 ## 0.2.3 — 2026-10-12
 
 Two follow-ups from looking at the panel on a real screen: the message icon still

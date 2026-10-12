@@ -1009,18 +1009,16 @@ function MessageMarker({
  * rounded head — and the earlier revisions' problem was a plate around the glyph
  * competing with its tip.
  *
- * Both directions share ONE geometry, so only the aim and the paint differ:
+ * Both directions describe the SAME arrow, so only the aim and the weight differ —
+ * never the silhouette:
  *
- * | | aim | paint |
+ * | | aim | weight |
  * |---|---|---|
- * | outgoing (solid)  | up-right   | FILLED, no outline |
- * | incoming (hollow) | down-left  | STROKED at 2px, no fill |
+ * | outgoing | up-right  | stroke 3.4px, which fills the head's barbs |
+ * | incoming | down-left | stroke 2px |
  *
- * "Hollow" means the arrow's LINE is the icon, which is what the earlier attempts
- * got wrong twice: first by drawing an outlined *body* (a faint frame around a
- * white block), then by putting the surface in the body. A stroke-only arrow has no
- * body to look like a box, and it is as heavy as the filled one because the stroke
- * is 2px on a 12px box.
+ * Same geometry, same size, same position; only the weight and the aim differ, which
+ * is what the user asked for ("改成更接收一样的 icon 只是方向变了").
  *
  * Visibility on the panel is handled OUTSIDE the icon: the marker carries a hairline
  * of the panel surface behind it (see `MessageMarker`), so a pale lane colour still
@@ -1052,11 +1050,11 @@ function ArrowIcon({
       height={size}
       aria-hidden="true"
       focusable="false"
-      style={
-        filled
-          ? { fill: ink, stroke: 'none' }
-          : { fill: 'none', stroke: ink, strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round' }
-      }
+      fill="none"
+      stroke={ink}
+      strokeWidth={filled ? ARROW_STROKE_SENT : ARROW_STROKE_RECEIVED}
+      strokeLinecap="round"
+      strokeLinejoin="round"
       transform={direction === 'out' ? undefined : 'scale(-1,-1)'}
     >
       <path d={ARROW_PATH} />
@@ -1066,12 +1064,31 @@ function ArrowIcon({
 
 
 /**
- * The arrow's geometry, in the 12x12 box: a thick shaft plus a second stroke that
- * terminates in an arrowhead. Stroked with round caps and joins this reads as one
- * bold arrow, and the same path serves both weights (see {@link ArrowIcon}) because
- * only the paint changes.
+ * The arrow's geometry, in the 12x12 box: ONE centreline, drawn at two weights.
+ *
+ * This is deliberately one path and not two. Two earlier revisions used a FILLED
+ * path for the sent arrow and a stroked one for the received arrow, and both times
+ * the filled variant came out wrong — first because the shared path was all open
+ * segments (a fill on open lines paints almost nothing, so the sent marker collapsed
+ * to "just a small triangle"), then because the replacement polygon had no real
+ * arrowhead and its head ran outside the viewBox and was clipped. A stroke gives the
+ * head barbs for free, so the only thing that changes between the two directions'
+ * weight is the stroke width.
+ *
+ *     sent     3.4px  ->  the head's barbs are solid, so the arrow reads as filled
+ *     received 2px    ->  the same shape reads as an outline
+ *
+ * The centreline is inset one unit from the outer silhouette, because a 2px stroke
+ * reaches 1px either side of it; that keeps the painted arrow inside the 12px box
+ * (the polygon attempt reached 10.8 and clipped).
  */
-const ARROW_PATH = 'M2.6 9.4 L9.4 2.6 M4.6 2.6 H9.4 V7.4'
+const ARROW_PATH = 'M3.3 9.7 L6.6 6.4 M3.7 3 H9.8 V9.1'
+
+/** Stroke width for a SENT message: wide enough to fill the head's barbs. */
+const ARROW_STROKE_SENT = 3.4
+
+/** Stroke width for a RECEIVED message: the same shape, read as an outline. */
+const ARROW_STROKE_RECEIVED = 2
 
 function TaskCard({
   rect,
