@@ -404,13 +404,40 @@ describe('speakerLaneMapper is the single mapping implementation', () => {
 })
 
 describe('the direction cue does not depend on colour', () => {
-  it('outgoing and incoming map to different class names and glyphs in the chart', () => {
+  it('outgoing and incoming map to an arrow that differs in BOTH aim and weight', () => {
+    // The cue replaced a circle-plus-glyph: "外面还有个正方形的框会让里面的尖头显示
+    // 不清晰" (the user). A text glyph at 9px was a hairline whose weight depended on
+    // the font, and the plate around it competed with the arrow's own tip. What has
+    // to hold now is that the two directions differ by SHAPE, not only by colour:
+    // the arrow points the other way AND one is filled while the other is outlined.
     const source = readFileSync(resolve(ROOT, 'src/client/ui/GanttChart.tsx'), 'utf8')
-    expect(source).toContain("outgoing ? 'dtg-msg-out' : 'dtg-msg-in'")
-    expect(source).toMatch(/outgoing \? '↗' : '↙'/)
+    expect(source).toContain("direction={outgoing ? 'out' : 'in'}")
+    expect(source).toContain('filled={outgoing && !isUser}')
+    expect(source).toContain('function ArrowIcon')
+    // The aim: one path, mirrored for the incoming direction.
+    expect(source).toContain("transform={direction === 'out' ? undefined : 'scale(-1,-1)'}")
+    // The weight: the body and the outline SWAP between the two directions, so
+    // both stay equally bold and neither can vanish against the surface.
+    expect(source).toContain("{ fill: ink, stroke: 'none' }")
     expect(source).toMatch(/aria-label=\{label\}/)
     expect(source).toContain('messageSentTo')
     expect(source).toContain('messageReceivedFrom')
+  })
+
+  it('the marker keeps NO box: no disc, no plate, no frame around the arrow', () => {
+    // The regression this pins: every earlier revision wrapped the glyph, and the
+    // wrapper is what the user objected to. A background or border on the marker
+    // (or a border-radius that turns it into a disc) brings it back.
+    const css = readFileSync(resolve(ROOT, 'src/client/ui/styles.ts'), 'utf8')
+    const marker = /\.dtg-msg \{([^}]*)\}/.exec(css)
+    expect(marker, '.dtg-msg rule must exist').not.toBeNull()
+    const block = marker?.[1] ?? ''
+    expect(block, 'the marker must not paint a plate').toContain('background: none')
+    expect(block, 'the marker must not draw a frame').toContain('border: 0')
+    expect(block, 'a rounded marker is a disc again').toContain('border-radius: 0')
+    // ...and no direction may reintroduce a plate.
+    expect(css).not.toMatch(/\.dtg-msg-out \{[^}]*background/)
+    expect(css).not.toMatch(/\.dtg-msg-in \{[^}]*background/)
   })
 })
 describe('the detail view shows the whole body of the marker', () => {

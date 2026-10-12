@@ -28,7 +28,7 @@ export const API_VERSION = 1 as const
  * or behaviour changes, and a tester can read the version off the screen
  * instead of guessing from a screenshot.
  */
-export const BUILD_LABEL = 'v0.2.2 · arrow-icons+exact-bars+clickable' as const
+export const BUILD_LABEL = 'v0.2.3 · box-free-arrows+chromatic-lanes' as const
 
 /** The sidebar tab type id registered through `ctx.betterSidebar.registerTab`. */
 export const TAB_TYPE_ID = 'dsh-task-gantt:board' as const
@@ -174,8 +174,23 @@ export type LaneNavigation =
 export interface LaneColorTokens {
   /** Fill for the lane's step bars and the left edge of its markers. */
   bar: string
-  /** Text/icon colour that sits on {@link bar}. */
+  /** Text/icon colour that sits on {@link bar} when the fill is DARK. */
   on: string
+  /**
+   * Text/icon colour that sits on {@link bar} when the fill is LIGHT.
+   *
+   * Both inks are needed because the theme publishes exactly two, and each flips
+   * with the skin (`--dsw-alias-label-primary-inverted` is `#ffffff` in the light
+   * skin and `#353638` in the dark one), and because no single ink clears the 3:1
+   * graphical minimum against every lane colour a four-hue theme can offer:
+   * measured, only five chromatic statics in the whole theme manage that against
+   * both skins' ink, and all five are red or blue. So a palette entry carries
+   * both partners and the client picks per lane by luminance.
+   *
+   * Optional on the wire: a payload that predates it yields the same value as
+   * {@link on}, i.e. exactly the previous behaviour.
+   */
+  onLight?: string
 }
 
 /** One shared task, as the durable board publishes it plus its dated history. */

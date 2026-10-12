@@ -1,5 +1,54 @@
 # Changelog
 
+## 0.2.3 — 2026-10-12
+
+Two follow-ups from looking at the panel on a real screen: the message icon still
+had a square around it, and one lane colour was grey.
+
+**The message icon is now the arrow, and nothing else**
+
+- Every earlier revision wrapped the glyph — first an 11px disc, then a
+  solid/hollow plate — and the report each time was the same: "外面还有个正方形的框
+  会让里面的尖头显示不清晰". A frame competes with the arrow's own tip for the same
+  few pixels in an 11px track. The marker now carries `background: none`,
+  `border: 0` and `border-radius: 0`; the SVG path *is* the icon.
+- The arrow is drawn as a path, not set as a text glyph. `↗` renders as a hairline
+  whose weight depends on the font and never gets as legible as a 2px stroke with
+  round caps — which is what the user's reference image shows.
+- Direction is two independent cues from one geometry: the path is mirrored for a
+  received message, and a sent message is FILLED while a received one is STROKED at
+  2px. Both are equally heavy, so the two directions differ in shape rather than in
+  strength.
+- The arrow is painted in the **counterpart's lane colour** — the rule the user
+  asked for ("A 发给 B，A 的泳道显示 收件人B 的颜色"). A hairline of the panel
+  surface behind each marker keeps a pale lane colour readable as an edge without
+  introducing a frame.
+
+**No lane is grey any more, and the palette is built from measured values**
+
+- `--dsw-alias-state-idle-primary`, the fifth palette entry, resolves to a pure
+  grey: `--dsw-static-neutral-300` (`#d4d4d4`, chroma 0) in the light skin and
+  `--dsw-static-neutral-600` (`#545557`, chroma 0) in the dark one. Every sixth lane
+  was therefore drawn in black-and-white, which is the report "每个 agent 的颜色区分度
+  要大，但是不要出现 黑白灰". It is gone, and a test forbids it from returning.
+- The palette is now eight chromatic slots: four hue families, each used twice at a
+  clearly different lightness. This is a real ceiling of the theme, not a choice —
+  extracting every `--dsw-static-*` value shows the theme publishes only four
+  chromatic families (red 0°, amber 31-38°, green 142°, blue 212-226°) and no
+  purple, magenta, cyan, teal, lime or pink token at all. Past four lanes a palette
+  *must* reuse a family, and separating the repeat by lightness is the honest way to
+  do it.
+- The values were read out of the theme the running app actually ships, not out of
+  the npm copy on disk. That copy is an older build with fewer tokens, which is why
+  an earlier scan appeared to show `state-idle-primary` did not exist. Both a
+  name-only fixture and a new value fixture now pin the palette, so a colour can be
+  checked for being chromatic and legible rather than merely for existing.
+- Measured defect found while doing this: the previous palette's
+  `state-success-primary` (`#22c55e`) and `state-warn-primary` (`#f59e0b`) carried the
+  light skin's white ink at **2.28:1** and **2.15:1**, both below the 3:1 graphical
+  minimum. Those lanes' arrows and card badges were not reliably readable.
+- The footer build identity is now `v0.2.3 · box-free-arrows+chromatic-lanes`.
+
 ## 0.2.2 — 2026-10-12
 
 Five defects reported from live use of the panel. Each one was reproduced and

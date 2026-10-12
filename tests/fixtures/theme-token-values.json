@@ -1,0 +1,66 @@
+{
+  "_note": "Resolved VALUES for the small set of theme tokens this plugin chooses between, with their chroma and WCAG contrast against both of the theme's inks. The token-name fixture (dsw-theme-tokens.json) can only prove a name EXISTS; these tests need to prove a chosen lane colour is CHROMATIC and LEGIBLE, which needs values. Every entry was read out of the theme the running app ships.",
+  "_source": "@deepseek-ai/dsh-client-ui-theme/lib/client.js inside /Applications/DeepSeek Harness.app/Contents/Resources/app.asar, extracted 2026-10-12 by pulling the --token:value declarations and resolving each var() chain to a static. NOTE: the npm copy on ~/.dsh/profiles/node_modules is an OLDER build (0.1.2-alpha.2) that does not define every alias; the app bundle is authoritative.",
+  "_regenerate": "python3 - <<'PY'\nimport re\nblob = open('/Applications/DeepSeek Harness.app/Contents/Resources/app.asar','rb').read().decode('utf-8','replace')\nstatics = {}\nfor k, v in re.findall(r'(--dsw-static-[a-z0-9-]+)\\s*:\\s*(#[0-9a-fA-F]{3,8})', blob):\n    statics.setdefault(k, v)\nprint(statics)\nPY",
+  "inks": {
+    "--dsw-alias-label-primary-inverted": {
+      "light": "#ffffff",
+      "dark": "#353638",
+      "_meaning": "The theme's ink for a SATURATED fill. It flips with the skin, so a lane colour must be checked against BOTH values."
+    },
+    "--dsw-alias-label-primary": {
+      "light": "#0f1115",
+      "dark": "#f9fafb",
+      "_meaning": "The theme's ink for its own SURFACE. Used here as the ink on a PALE lane fill."
+    }
+  },
+  "statics": {
+    "--dsw-static-amber-400": "#f7ad31",
+    "--dsw-static-amber-500": "#f59e0b",
+    "--dsw-static-amber-600": "#dd8629",
+    "--dsw-static-blue-300": "#93c5fd",
+    "--dsw-static-blue-400": "#60a5fa",
+    "--dsw-static-blue-450": "#4d93f8",
+    "--dsw-static-blue-500": "#3b82f6",
+    "--dsw-static-blue-600": "#2563eb",
+    "--dsw-static-blue-800": "#1e40af",
+    "--dsw-static-blue-900": "#0e3074",
+    "--dsw-static-deepseek-400": "#7aaaff",
+    "--dsw-static-deepseek-450": "#5686fe",
+    "--dsw-static-deepseek-500": "#4176e6",
+    "--dsw-static-deepseek-600": "#4868b2",
+    "--dsw-static-green-400": "#4ed17e",
+    "--dsw-static-green-500": "#22c55e",
+    "--dsw-static-neutral-300": "#d4d4d4",
+    "--dsw-static-neutral-600": "#545557",
+    "--dsw-static-neutral-bluish-00": "#fff",
+    "--dsw-static-neutral-bluish-1000": "#0f1115",
+    "--dsw-static-neutral-bluish-50": "#f9fafb",
+    "--dsw-static-neutral-bluish-800": "#353638",
+    "--dsw-static-red-400": "#f25a5a",
+    "--dsw-static-red-500": "#ef4444",
+    "--dsw-static-red-600": "#ec1313"
+  },
+  "knownHues": [
+    {
+      "family": "red",
+      "minHue": 345,
+      "maxHue": 15
+    },
+    {
+      "family": "amber",
+      "minHue": 20,
+      "maxHue": 50
+    },
+    {
+      "family": "green",
+      "minHue": 120,
+      "maxHue": 165
+    },
+    {
+      "family": "blue",
+      "minHue": 200,
+      "maxHue": 245
+    }
+  ]
+}

@@ -420,18 +420,25 @@ export const BOARD_CSS = `
   background: var(--dsw-alias-label-dimmed);
   opacity: 0.35;
 }
-/* The marker is an ARROW ICON, not a disc.
-   A filled/hollow plate around a 9px glyph was visual noise (the user's words:
-   "圆圈+箭头不干净"), and it made the two directions differ mainly by hue. Now the
-   arrow itself carries the direction twice over — pointing ↗ or ↙ AND filled or
-   hollow — and the counterpart's colour is the ink, so it stays legible on any
-   lane colour under either skin. */
+/* The marker is an ARROW, and ONLY an arrow.
+   Every earlier revision wrapped the glyph in something — first a 11px disc, then
+   a solid/hollow plate — and the user's complaint was always the same: "外面还有个
+   正方形的框会让里面的尖头显示不清晰". A frame competes with the tip of the arrow
+   for the same few pixels. So the button keeps NO background, NO border and NO
+   outline; the SVG path is the entire icon, which is what lets its 2px stroke and
+   round caps stay crisp in the 11px track the layout reserves.
+   Direction is carried by the arrow itself: it points ↗ or ↙, it is filled when
+   this lane SENT the message and outlined when it received it, and it is painted
+   in the counterpart's lane colour. */
 .dtg-msg {
   position: absolute;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  background: none;
+  border: 0;
   border-radius: 0;
+  padding: 0;
   /* The decorative layer above is pointer-events: none so the lane background,
      gridlines, bands and spans never swallow a click. The marker is the one
      INTERACTIVE child, so it re-enables hit-testing here. Without this line the
@@ -439,10 +446,19 @@ export const BOARD_CSS = `
      and clicking a "button" silently does nothing. */
   pointer-events: auto;
 }
+/* The arrow is INK-ONLY: no plate, no disc, no ring. currentColor is set per
+   marker from the counterpart's lane FILL, so the icon carries the other lane's
+   identity colour. A hairline of the panel surface behind it (set inline) keeps the
+   arrow's edge readable even for a fill that is low-contrast on the panel. */
+.dtg-msg-arrow {
+  display: block;
+  flex: 0 0 auto;
+  color: inherit;
+}
 /* A comfortable hit target that does NOT move the arrow: the layout positions
    this box from the message's real time, so an offset would lie about when the
    message happened. An absolutely-positioned, transparent pseudo-element grows
-   the clickable area outward without taking part in layout. */
+   the clickable area outward without taking part in layout or paint. */
 .dtg-msg[type='button']::before {
   content: '';
   position: absolute;
@@ -451,50 +467,34 @@ export const BOARD_CSS = `
   bottom: -5px;
   left: -5px;
 }
-/* Outgoing: SOLID — the plate is the counterpart's colour, the arrow is cut out
-   of it in the inverted ink. */
-.dtg-msg-out { background: var(--dsw-alias-label-tertiary); }
-/* Incoming: HOLLOW — no plate at all, the counterpart's colour becomes an
-   outline plus the arrow's own ink. */
-.dtg-msg-in { background: transparent; }
-/* The human's own prompt: a punched-out dot with a TWO-TONE ring, never a hue.
-   Single tokens are invisible on one theme or the other (measured: the
-   previously-used markdown-citation token scored 1.16:1 on a light panel), and
-   the app switches themes without any attribute we could read. So the ring paints
-   BOTH ends of the ink pair: whichever skin is active, one of the two layers
-   contrasts with the surface. Do not collapse this to one token — a single
-   candidate measures below the 3:1 graphical minimum on one skin or the other,
-   and "it flips with the skin" is an assumption, not a measurement. The fill
-   stays the panel surface so the dot reads as a punched-out hole. */
+/* The human's own prompt: a punched-out disc with a TWO-TONE ring, never a hue.
+   This is the one marker that KEEPS a shape, because a prompt must never read as
+   a lane transfer and because no single hue is legible on both skins (measured:
+   the previously-used markdown-citation token scored 1.16:1 on a light panel).
+   The ring paints BOTH ends of the ink pair, so whichever skin is active one of
+   the two layers contrasts with the surface — no theme detection, and no reliance
+   on either token flipping. Do not collapse this to one token. */
 .dtg-msg-user {
   background: var(--dsw-alias-bg-layer-1);
+  border-radius: 50%;
   box-shadow:
     0 0 0 2px var(--dsw-alias-label-primary),
     0 0 0 3.5px var(--dsw-alias-label-primary-inverted);
 }
-/* Turn markers are a context tick, not a message: keep them a quiet solid plate
-   so they are not mistaken for a human prompt. */
-.dtg-msg-turn { background: var(--dsw-alias-label-dimmed); }
+/* A turn marker is a context tick, not a message: it keeps the small flat glyph
+   so it is never mistaken for a person's arrow. */
+.dtg-msg-turn { background: none; }
 .dtg-msg .dtg-msg-glyph { font-size: 10px; line-height: 1; }
+/* The legend arrows use the SAME SVG geometry as the markers, so the key cannot
+   drift from the thing it explains. */
 .dtg-legend-arrow {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 11px;
-  height: 11px;
-  border-radius: 1px;
-  font: var(--dsw-font-xxxs-strong-11);
-  line-height: 1;
+  width: 12px;
+  height: 12px;
 }
-/* Solid = outgoing, hollow = incoming: the same shape contrast the markers use. */
-.dtg-legend-arrow-solid {
-  background: var(--dsw-alias-label-tertiary);
-  color: var(--dsw-alias-label-primary-inverted);
-}
-.dtg-legend-arrow-hollow {
-  border: 1px solid var(--dsw-alias-label-tertiary);
-  color: var(--dsw-alias-label-tertiary);
-}
+.dtg-legend-arrow .dtg-msg-arrow { color: var(--dsw-alias-label-secondary); }
 
 .dtg-msg-glyph {
   font: var(--dsw-font-xxxs-strong-11);

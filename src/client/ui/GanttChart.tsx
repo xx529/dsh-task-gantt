@@ -89,15 +89,45 @@ export function lanePaint(token: string): string {
   return name.startsWith('var(') ? name : `var(${name})`
 }
 
-/** Fallback lane tokens, for a payload that predates `lane.color`. */
+/**
+ * Fallback lane tokens, for a payload that predates `lane.color`.
+ *
+ * Kept byte-identical in intent to the host's `LANE_COLOR_TOKENS`
+ * (`src/host/lane-color.ts`): eight chromatic slots, four hue families each used
+ * twice at a different lightness. Both inks are carried per slot because no
+ * single one clears 3:1 against every fill in both skins (see
+ * {@link LaneColorTokens.onLight}).
+ *
+ * The entry that used to sit here — `--dsw-alias-state-idle-primary` — is gone
+ * on purpose: it is chroma-0 grey in both skins, and a lane colour is an
+ * identity, so an achromatic one cannot identify anything.
+ */
 const LANE_COLOR_FALLBACKS: readonly LaneColorTokens[] = [
-  { bar: '--dsw-alias-brand-primary', on: '--dsw-alias-label-primary-inverted' },
-  { bar: '--dsw-alias-state-success-primary', on: '--dsw-alias-label-primary-inverted' },
-  { bar: '--dsw-alias-state-warn-primary', on: '--dsw-alias-label-primary-inverted' },
-  { bar: '--dsw-alias-state-error-primary', on: '--dsw-alias-label-primary-inverted' },
-  { bar: '--dsw-alias-state-business-primary', on: '--dsw-alias-label-primary-inverted' },
-  { bar: '--dsw-alias-state-idle-primary', on: '--dsw-alias-label-primary-inverted' },
+  { bar: '--dsw-static-blue-600', on: '--dsw-alias-label-primary-inverted', onLight: '--dsw-alias-label-primary' },
+  { bar: '--dsw-static-red-600', on: '--dsw-alias-label-primary-inverted', onLight: '--dsw-alias-label-primary' },
+  { bar: '--dsw-static-amber-600', on: '--dsw-alias-label-primary-inverted', onLight: '--dsw-alias-label-primary' },
+  { bar: '--dsw-static-green-500', on: '--dsw-alias-label-primary-inverted', onLight: '--dsw-alias-label-primary' },
+  { bar: '--dsw-static-blue-300', on: '--dsw-alias-label-primary-inverted', onLight: '--dsw-alias-label-primary' },
+  { bar: '--dsw-static-red-400', on: '--dsw-alias-label-primary-inverted', onLight: '--dsw-alias-label-primary' },
+  { bar: '--dsw-static-amber-400', on: '--dsw-alias-label-primary-inverted', onLight: '--dsw-alias-label-primary' },
+  { bar: '--dsw-static-green-400', on: '--dsw-alias-label-primary-inverted', onLight: '--dsw-alias-label-primary' },
 ]
+
+/**
+ * NOTE for a later reader. An ink-selection helper used to live here: it measured
+ * a lane's fill and chose between `color.on` and `color.onLight` by WCAG contrast.
+ * It was REMOVED because the marker no longer needs it — a marker is painted in the
+ * counterpart's lane FILL (the user's colour rule), never in an ink chosen for a
+ * fill, and the arrow that sits on the panel gets a hairline of the surface behind
+ * it instead. Keeping it would have meant carrying a contrast engine, a
+ * `getComputedStyle` probe and a memo, all uncalled.
+ *
+ * The lesson it encoded is worth keeping, though: a lane colour is chosen to be
+ * legible against ITS OWN fill, and that says nothing about how it reads on the
+ * PANEL. The measured case was `--dsw-static-green-500` (#22c55e) at 2.28:1 on the
+ * light panel. Anything drawn on the panel has to clear 3:1 against the panel.
+ */
+
 /**
  * The human's own prompts: a punched-out dot ringed by BOTH ends of the ink pair.
  *
@@ -162,17 +192,27 @@ export interface GanttChartProps {
 function laneColor(lane: TimelineResponse['lanes'][number], index: number): LaneColorTokens {
   const given = lane.color
   if (given !== undefined && typeof given.bar === 'string' && given.bar !== '') {
-    return { bar: lanePaint(given.bar), on: lanePaint(given.on ?? '--dsw-alias-label-primary-inverted') }
+    const on = lanePaint(given.on ?? '--dsw-alias-label-primary-inverted')
+    // A payload from before `onLight` existed gets the SAME ink for both, which
+    // is precisely the previous behaviour — never an invented second token.
+    return { bar: lanePaint(given.bar), on, onLight: given.onLight === undefined ? on : lanePaint(given.onLight) }
   }
   const pick = (index0: number): LaneColorTokens => {
     const entry = LANE_COLOR_FALLBACKS[index0 % LANE_COLOR_FALLBACKS.length]!
-    return { bar: lanePaint(entry.bar), on: lanePaint(entry.on) }
+    return {
+      bar: lanePaint(entry.bar),
+      on: lanePaint(entry.on),
+      onLight: entry.onLight === undefined ? lanePaint(entry.on) : lanePaint(entry.onLight),
+    }
   }
   if (lane.role === 'lead') return pick(0)
   if (lane.id === 'unassigned' || lane.role === 'unknown') return pick(LANE_COLOR_FALLBACKS.length - 1)
+  // Only the NAME-bearing tail of the palette is hashed into: slot 0 belongs to
+  // the Lead and the last slot to `unassigned`, so a teammate never silently
+  // takes either identity.
   let hash = 0
   for (let i = 0; i < lane.id.length; i += 1) hash = (hash * 31 + lane.id.charCodeAt(i)) >>> 0
-  return pick(1 + (hash % (LANE_COLOR_FALLBACKS.length - 1)))
+  return pick(1 + (hash % (LANE_COLOR_FALLBACKS.length - 2)))
 }
 
 export function GanttChart(props: GanttChartProps): ReactNode {
@@ -537,15 +577,19 @@ export function GanttChart(props: GanttChartProps): ReactNode {
         </span>
         {markerCount === 0 ? null : (
           <>
-            {/* The legend uses the SAME two shapes as the markers (solid ↗ vs
-                hollow ↙), so it explains the cue the reader actually sees rather
+            {/* The legend uses the SAME two shapes as the markers (filled ↗ vs
+                outlined ↙), so it explains the cue the reader actually sees rather
                 than approximating it. */}
             <span className="dtg-legend-item" title={uiLabel('messageLegendHint')}>
-              <span className="dtg-legend-arrow dtg-legend-arrow-solid" aria-hidden="true">↗</span>
+              <span className="dtg-legend-arrow" aria-hidden="true">
+                <ArrowIcon className="dtg-msg-arrow" direction="out" filled ink="currentColor" />
+              </span>
               {uiLabel('messageLegendSent')}
             </span>
             <span className="dtg-legend-item" title={uiLabel('messageLegendHint')}>
-              <span className="dtg-legend-arrow dtg-legend-arrow-hollow" aria-hidden="true">↙</span>
+              <span className="dtg-legend-arrow" aria-hidden="true">
+                <ArrowIcon className="dtg-msg-arrow" direction="in" filled={false} ink="currentColor" />
+              </span>
               {uiLabel('messageLegendReceived')}
             </span>
             {layout.droppedMessageCount === 0 ? null : (
@@ -866,18 +910,29 @@ function MessageMarker({
   const peerNote = paint.peerMatched ? '' : ` · ${uiLabel('messagePeerUnknown')}`
   const dropped = marker.droppedBefore > 0 ? ` · ${uiLabel('messageOmitted', { count: marker.droppedBefore })}` : ''
   const label = uiLabel('messageAria', { time: when, route, preview: marker.preview ?? '' })
-  const counterpart = color === undefined ? undefined : color.bar
-  const solidInk = color === undefined ? 'var(--dsw-alias-label-primary-inverted)' : color.on
   /**
-   * The plates and inks for one marker.
+   * The counterpart's lane FILL — the marker's ink.
    *
-   * - outgoing: a SOLID plate in the counterpart's colour, arrow cut out of it;
-   * - incoming: NO plate, the counterpart's colour as outline + arrow ink;
-   * - the human's own prompt: the surface fill with the two-tone ring, because a
-   *   hue cannot be legible on both skins (one candidate measured 1.16:1 on the
-   *   light surface). That ring is the reason this branch must win over the
-   *   incoming styling: a prompt IS incoming, but it is not a lane transfer.
-   * - a turn marker: a quiet solid plate, never mistaken for a person's message.
+   * This is the user's colour rule: "A 发给 B，A 的泳道显示 收件人B 的颜色". Note it
+   * is the counterpart's `bar` (the lane FILL), never its `on` (the ink for text
+   * sitting on that fill). Substituting the ink here painted every white-inked lane
+   * as a white arrow on the white panel — invisible, and measured: 48 of 48 arrows
+   * came out `rgb(255,255,255)` on a `rgb(255,255,255)` surface.
+   */
+  const counterpart = color === undefined ? undefined : color.bar
+  const arrowInk = counterpart ?? 'var(--dsw-alias-label-secondary)'
+  /**
+   * The marker's paint.
+   *
+   * - an agent message: NO plate and NO ring — the arrow is the whole icon, so
+   *   nothing boxes in the shape the reader is trying to recognise. Direction is
+   *   carried three ways at once: the arrow points ↗ or ↙, it is FILLED for a
+   *   message this lane sent and OUTLINED for one it received, and the ink is the
+   *   counterpart's lane colour.
+   * - the human's own prompt: a punched-out disc with the two-tone ring, because
+   *   a prompt must never read as a lane transfer and no single hue is legible on
+   *   both skins. This branch deliberately wins over the incoming styling.
+   * - a turn marker: the quiet `▸` tick, on no plate at all.
    */
   const shape: 'solid' | 'hollow' = outgoing ? 'solid' : 'hollow'
   const style: CSSProperties = {
@@ -889,11 +944,26 @@ function MessageMarker({
       ? {
           background: 'var(--dsw-alias-bg-layer-1)',
           boxShadow: `0 0 0 2px var(${UR_MARKER_RING_TOKENS[0]})`,
+          color: `var(${UR_MARKER_RING_TOKENS[0]})`,
         }
-      : outgoing
-        ? { background: counterpart ?? 'var(--dsw-alias-label-tertiary)', color: solidInk }
-        : { background: 'transparent', ...(counterpart === undefined ? {} : { border: `1px solid ${counterpart}`, color: counterpart }) }),
+      : {
+          background: 'transparent',
+          color: arrowInk,
+        }),
   }
+  /**
+   * A hairline of the PANEL SURFACE behind the arrow.
+   *
+   * The arrow is a solid block in the counterpart's lane colour, and a lane colour
+   * is only guaranteed legible against its OWN fill — the arrow sits on the PANEL.
+   * Measured: `--dsw-static-green-500` (#22c55e) appears at 2.28:1 on the light
+   * panel, below the 3:1 graphical minimum, so a bare green arrow would be a
+   * smudge. Punching a hairline of the surface out behind the icon makes the
+   * arrow's own edge readable while leaving its middle the lane colour — the same
+   * layering the human's marker already uses, and the reason the marker still needs
+   * no plate or frame.
+   */
+  if (!isUser) style.boxShadow = '0 0 0 1.5px var(--dsw-alias-bg-layer-1)'
   // A BUTTON, so the body is reachable by mouse and keyboard. The long body is
   // deliberately NOT in `title` (browser tooltips truncate and cannot scroll):
   // the tooltip stays the one-line summary, and the detail view carries the text.
@@ -914,13 +984,94 @@ function MessageMarker({
       data-msg-from={marker.from.id}
       {...(marker.to === undefined ? {} : { 'data-msg-to': marker.to.id })}
     >
-      <span className="dtg-msg-glyph" aria-hidden="true" style={{ color: 'inherit' }}>
-        {marker.kind === 'turn' ? '▸' : outgoing ? '↗' : '↙'}
-      </span>
+      {marker.kind === 'turn' ? (
+        <span className="dtg-msg-glyph" aria-hidden="true">▸</span>
+      ) : (
+        <ArrowIcon
+          className="dtg-msg-arrow"
+          direction={outgoing ? 'out' : 'in'}
+          filled={outgoing && !isUser}
+          ink={arrowInk}
+        />
+      )}
       {marker.droppedBefore > 0 ? <span className="dtg-msg-count" aria-hidden="true">{`+${marker.droppedBefore}`}</span> : null}
     </Tag>
   )
 }
+
+/**
+ * The diagonal arrow that IS the marker.
+ *
+ * Drawn as an SVG path rather than set as a text glyph: the character renders as a
+ * hairline at the 9-11px this track has room for, its weight depends on the font,
+ * and no font-size makes it as legible as a thick stroke with round caps. The
+ * user's reference image is exactly this shape — a fat rounded diagonal with a fat
+ * rounded head — and the earlier revisions' problem was a plate around the glyph
+ * competing with its tip.
+ *
+ * Both directions share ONE geometry, so only the aim and the paint differ:
+ *
+ * | | aim | paint |
+ * |---|---|---|
+ * | outgoing (solid)  | up-right   | FILLED, no outline |
+ * | incoming (hollow) | down-left  | STROKED at 2px, no fill |
+ *
+ * "Hollow" means the arrow's LINE is the icon, which is what the earlier attempts
+ * got wrong twice: first by drawing an outlined *body* (a faint frame around a
+ * white block), then by putting the surface in the body. A stroke-only arrow has no
+ * body to look like a box, and it is as heavy as the filled one because the stroke
+ * is 2px on a 12px box.
+ *
+ * Visibility on the panel is handled OUTSIDE the icon: the marker carries a hairline
+ * of the panel surface behind it (see `MessageMarker`), so a pale lane colour still
+ * reads as an edge. That keeps this component free of any contrast branching.
+ *
+ * @param props.direction - `'out'` points up-right (this lane sent it), `'in'`
+ *   points down-left (this lane received it).
+ * @param props.filled - `true` for outgoing, `false` for incoming.
+ * @param props.ink - the counterpart's lane FILL, as a CSS colour.
+ */
+function ArrowIcon({
+  className,
+  direction,
+  filled,
+  ink,
+  size = 12,
+}: {
+  className: string
+  direction: 'out' | 'in'
+  filled: boolean
+  ink: string
+  size?: number
+}): ReactNode {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 12 12"
+      width={size}
+      height={size}
+      aria-hidden="true"
+      focusable="false"
+      style={
+        filled
+          ? { fill: ink, stroke: 'none' }
+          : { fill: 'none', stroke: ink, strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round' }
+      }
+      transform={direction === 'out' ? undefined : 'scale(-1,-1)'}
+    >
+      <path d={ARROW_PATH} />
+    </svg>
+  )
+}
+
+
+/**
+ * The arrow's geometry, in the 12x12 box: a thick shaft plus a second stroke that
+ * terminates in an arrowhead. Stroked with round caps and joins this reads as one
+ * bold arrow, and the same path serves both weights (see {@link ArrowIcon}) because
+ * only the paint changes.
+ */
+const ARROW_PATH = 'M2.6 9.4 L9.4 2.6 M4.6 2.6 H9.4 V7.4'
 
 function TaskCard({
   rect,
