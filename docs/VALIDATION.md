@@ -776,6 +776,25 @@ task-16：8791 服务文件 917fceca426dbe57216cb66b9bc1ea53  151057 B
     **live 态的边界更窄**：窗口右端是 `now` 且持续前进，所以刚到的新消息只在到达瞬间处在 `viewX === dataWidth`，随 `now` 前进会自己移进可见区；**只有冻结盘**会把最后一条事件永久留在画布外。
     守护：**有意不加**任何断言锁住这个行为（把缺陷写成"期望通过"等于把它锁死）；verify 已被告知只报 ✗、不写断言。
 
+25. ❓（**0.2.11 验证中新发现；一条我无法归属所以不动代码，一条是与三处旧记载矛盾**）
+    **(a) 比 fit 更细的缩放下，跨越视口右边缘的「历史任务卡」整张从 DOM 消失。** verify 原始值（其页面
+    500×745、画布 116px）：fit 档（93 秒/像素）8 张卡全在；**28 秒/像素时 `data-task-id` 只剩 4 张 live
+    卡**，而按布局算式那张长任务应在 `x=64.3`、`w=96.4`（左沿在视口内、右沿 160.7 > 116）。
+    **我核过 `rectVisible(viewX, w, viewportWidth) = viewX + w > 0 && viewX < viewportWidth`
+    （timeline-layout.ts:805-807）：把 x=64.3 / w=96.4 / `viewX = x - scrollLeft` 代进去，除非 `scrollLeft`
+    把整张卡推出视口，它不该被剔除——而 verify 没有记录当时的 `scrollLeft`，所以这条我**无法用现有数据归属**：
+    既可能是「已滚出视口 ⇒ 正确剔除」，也可能是布局与渲染用了不同步的 `msPerPx`/`scrollLeft`（即
+    `tests/zoom-reconcile.spec.ts` 守护的那一族）。**未改任何代码、未写成断言**（按「禁止猜测」先记档）。
+    要查的第一步：同一状态下同时打印 `scrollLeft`、`effectiveMsPerPx` 与 `layout.tasks` 的 `viewX/visible`。
+    **(b) 轴刻度确实会撑出横向滚动范围，"不产生滚动"的旧记载是错的。** verify 实测 fit 档 `.dtg-scroll`
+    scrollWidth **140** vs clientWidth **116**（delta **24**），DOM 里最右两个越界者是 `.dtg-msg-count`
+    （right **140**）与 `.dtg-tick-label`（right **137**，宽 36）；缩到 600 秒/像素时 delta 归零；DOM 里
+    没有 `.dtg-lane-head`。这与本文件"越界元素始终只有 2 个既有的轴刻度（被 `.dtg-axis` 的 `overflow:hidden`
+    裁掉、**不产生滚动**）"以及旧保留项"轴刻度略越右缘约 5px（被裁掉，不产生滚动）"**互相矛盾**：那两处
+    只看 `.dtg-axis`，而实际被撑开的是 `.dtg-scroll`（fit 档 delta 24；**本轮之前就已存在**，不是 0.2.11
+    引入）。仍是小问题——24px 的可滚范围会让"跟随 = 把 NOW 顶在右缘"看到的内容比视口宽——归下一轮，
+    或明确接受为已知上限。
+
 ---
 
 ## 7. 复现方式（任何人在干净 checkouts 上都能重跑）
