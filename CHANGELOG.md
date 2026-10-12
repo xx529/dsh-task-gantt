@@ -1,5 +1,51 @@
 # Changelog
 
+## 0.2.15 — 2026-10-12
+
+**A teammate filter, a toggle that finally does something, and a popover that fits**
+
+**1 — "活动+消息" was doing nothing at all.** Reported as "点击这个，页面好像没有什么变化", and
+the measurement agreed: the click changed NOTHING — `{step:3, turn:1, msg:8, wait:5}` before and
+after. The code was consistent with that: `'both'` only excluded turn-kind entries from the
+marker candidate set (folding them into a "+n"), while the turn/step ACTIVITY BARS never read
+`messageMode` at all. So the label promised the activity bars and the code did nothing.
+
+The toggle now hides the whole activity track: `{step:3, turn:1, msg:8, wait:5}` becomes
+`{step:0, turn:0, msg:8, wait:0}`, restores exactly on the second click, and the label switches
+between 活动+消息 and 只看消息. The message markers deliberately stay (that is what the label
+says), and the wait band hides WITH the track because since 0.2.13 it shares that track and
+coincides with the step bar — leaving it behind would draw a grey stripe in an empty row and make
+the toggle look half-applied.
+
+**2 — the hover popover now fits.** "悬停，看不完整，这里我觉得仅显示到标题和时间就够了，详细的点开来看".
+`TaskPopoverBody` drops the description and keeps the title plus the time/status line
+(measured: `156x17`, i.e. `设计面板布局 / 10-12 17:23:21 → 完成 10-12 17:40:21 · 已完成`). The full
+detail is still one click away in the TaskDetails panel. A max height plus single-line ellipsis on
+the title and meta means a long subject truncates instead of pushing the popover out of view.
+
+**3 — the teammate filter.** "如果我筛选了某几个 teammate，甘特图里面内容就只显示这个几个 agent
+的内容，包括 agent 列只保留选择的，泳道里面的内容，收发标识也仅展示该 teammate，但是 lead 是不能
+筛选的，一定要显示的，默认情况下全选所有 teammate".
+
+Implemented with ONE filtering point — `data.lanes` (and orphaned top-level tasks) are filtered in
+BoardView before the chart sees them, so the lane-head column, the lane contents, the send/receive
+markers, the waits and the legend counts all follow automatically and there is no second place to
+keep in sync. The state is the HIDDEN set (empty = all shown), so a teammate who appears later is
+visible by default. `lead` is pinned by `role === 'lead' || id === 'lead'` and cannot be hidden
+even if its id reaches the hidden set; `unassigned` is deliberately filterable.
+
+Measured with two teammates unchecked: lanes `["Lead","host-data","ui","verify"]` →
+`["Lead","host-data"]`, messages 8 → 6, the button reads `筛选 teammate −2`, the lead row survives,
+and `.dtg-scroll` stays 249/248 with the menu OPEN (the trap that has bitten this repo twice).
+
+The pure filter lives in `src/client/ui/lane-filter.ts` with 9 locks (identity for an empty hidden
+set, a hidden teammate disappearing with its tasks, a hidden LEAD still shown, `unassigned`
+filterable, orphaned tasks dropped, unknown ids ignored, order preserved). `clipBounds` moved from
+GanttChart into `src/client/ui/overlay-position.ts` so the new menu and both popovers share one
+implementation instead of a second copy of a trap-prone helper.
+
+The footer build identity is now `v0.2.15 · lane-filter`.
+
 ## 0.2.14 — 2026-10-12
 
 **The grey wait band now paints ON TOP of the span it coincides with**

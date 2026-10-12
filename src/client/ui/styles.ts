@@ -365,9 +365,25 @@ export const BOARD_CSS = `
   box-shadow: var(--dsw-shadow-lv2);
   font: var(--dsw-font-xxxs-11);
 }
+.dtg-popover {
+  /* A hard ceiling so long text can never push the popover out of the panel. The
+     title clips on ONE line (that plus the time is all the user asked to see) and the
+     body scrolls instead of growing without bound. */
+  max-height: 200px;
+  overflow: hidden;
+}
 .dtg-popover-title {
-  overflow-wrap: anywhere;
+  /* Single line, ellipsised: a title long enough to wrap would defeat the point of a
+     tooltip. The full text is one click away in the details panel. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font: var(--dsw-font-xxs-strong-12);
+}
+.dtg-popover-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .dtg-popover-desc {
   margin-top: 2px;
@@ -434,6 +450,49 @@ export const BOARD_CSS = `
   outline: 2px solid var(--dsw-alias-border-l4);
   outline-offset: 1px;
 }
+
+/* --- teammate filter menu ----------------------------------------------- */
+
+/* Fixed-positioned and OUTSIDE the toolbar: an absolutely positioned descendant adds
+   to its ancestor's scrollable overflow, and this panel would clip a child menu. The
+   measured invariant is that the scroll container's scrollWidth/clientWidth are identical
+   with the menu open and closed. */
+.dtg-menu {
+  position: fixed;
+  z-index: 50;
+  max-height: 240px;
+  overflow: auto;
+  padding: 4px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-2);
+  box-shadow: var(--dsw-shadow-lv2);
+  font: var(--dsw-font-xxxs-11);
+}
+.dtg-menu-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 4px;
+  border-radius: 4px;
+  color: var(--dsw-alias-label-primary);
+  cursor: pointer;
+}
+.dtg-menu-row:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.dtg-menu-row-pinned { cursor: default; color: var(--dsw-alias-label-secondary); }
+.dtg-menu-row-pinned:hover { background: transparent; }
+.dtg-menu-name {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dtg-menu-note {
+  flex: 0 0 auto;
+  color: var(--dsw-alias-label-tertiary);
+}
+.dtg-menu input { margin: 0; flex: 0 0 auto; }
 
 /* --- wait blocks (wait_agent) ------------------------------------------- */
 

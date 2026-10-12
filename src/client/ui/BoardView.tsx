@@ -21,8 +21,10 @@
  * mount refcount, because several tabs may render the same board and HMR may
  * unmount one of them while another stays mounted.
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import type { LaneNavigation, TimelineResponse, TimelineTask } from '../../shared/contract.ts'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import type { LaneNavigation, TimelineLane, TimelineResponse, TimelineTask } from '../../shared/contract.ts'
+import { filterTimelineLanes, isPinnedLane } from './lane-filter.ts'
+import { clipBounds } from './overlay-position.ts'
 import { BUILD_LABEL, MESSAGE_PREVIEW_MAX, type MessageSpan } from '../../shared/contract.ts'
 import { fetchTimeline, type RouteBase } from '../api.ts'
 import { t } from '../i18n.ts'
@@ -81,6 +83,100 @@ export interface BoardViewProps {
 /** Stylesheet mount refcount; the element is shared by every board instance. */
 let styleMounts = 0
 
+/**
+ * The teammate filter's checkbox menu.
+ *
+ * Rendered as a FIXED-positioned sibling of the toolbar rather than an absolutely
+ * positioned child, for the trap this repository has paid for twice: an absolutely
+ * positioned descendant adds to its ancestor's scrollable overflow. Measured with the
+ * menu open, `.dtg-scroll`'s scrollWidth/clientWidth must equal the closed values; a
+ * child of the toolbar would also be CLIPPED by the panel, since the toolbar is as
+ * narrow as the panel.
+ *
+ * Placement comes from the shared `clipBounds`, so the menu is clamped into the first
+ * ancestor that really clips instead of the (much wider) viewport.
+ *
+ * @param anchor - the button the menu hangs from.
+ * @param lanes - the board's lanes, in board order.
+ * @param hidden - the hidden lane ids.
+ * @param onToggle - flips one lane's visibility.
+ * @param onClose - called for Escape and for a click outside.
+ */
+function LaneFilterMenu({
+  anchor,
+  lanes,
+  hidden,
+  onToggle,
+  onClose,
+}: {
+  anchor: HTMLElement
+  lanes: readonly TimelineLane[]
+  hidden: ReadonlySet<string>
+  onToggle: (laneId: string) => void
+  onClose: () => void
+}): ReactNode {
+  const ref = useRef<HTMLDivElement | null>(null)
+  /** Fixed positioning means a scroll would strand the menu; close instead. */
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') onClose()
+    }
+    const onPointer = (event: MouseEvent): void => {
+      const target = event.target as Node | null
+      // The button itself toggles, so let its own click handle that case.
+      if (target !== null && (ref.current?.contains(target) === true || anchor.contains(target))) return
+      onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    window.addEventListener('mousedown', onPointer)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('mousedown', onPointer)
+    }
+  }, [anchor, onClose])
+
+  const rect = anchor.getBoundingClientRect()
+  const bounds = clipBounds(anchor, 120)
+  const MARGIN = 6
+  const width = Math.min(240, Math.max(140, bounds.width - 2 * MARGIN))
+  const MAX_H = 240
+  const top = rect.bottom + MARGIN
+  const flipAbove = top + MAX_H > bounds.bottom
+  const left = Math.min(Math.max(bounds.left + MARGIN, rect.left), Math.max(bounds.left + MARGIN, bounds.right - width - MARGIN))
+  const style: CSSProperties = flipAbove
+    ? { left, bottom: Math.max(MARGIN, bounds.bottom - rect.top + MARGIN), width }
+    : { left, top, width }
+
+  // Pinned first, then the filterable lanes in board order.
+  const pinned = lanes.filter((lane) => isPinnedLane(lane))
+  const filterable = lanes.filter((lane) => !isPinnedLane(lane))
+
+  return (
+    <div className="dtg-menu" style={style} ref={ref} role="group" aria-label={uiLabel('laneFilterLabel')}>
+      {pinned.map((lane) => (
+        <div className="dtg-menu-row dtg-menu-row-pinned" key={lane.id}>
+          <input type="checkbox" checked disabled aria-label={`${lane.name} · ${uiLabel('laneFilterPinned')}`} readOnly />
+          <span className="dtg-menu-name">{lane.name}</span>
+          <span className="dtg-menu-note">{uiLabel('laneFilterPinned')}</span>
+        </div>
+      ))}
+      {/* No "nothing to filter" row: if every lane is pinned there is nothing this
+          control can do, and the button still reports the state. */}
+      {filterable.map((lane) => (
+          <label className="dtg-menu-row" key={lane.id}>
+            <input
+              type="checkbox"
+              checked={!hidden.has(lane.id)}
+              onChange={() => onToggle(lane.id)}
+              aria-label={lane.name}
+            />
+            <span className="dtg-menu-name">{lane.name}</span>
+          </label>
+        ))}
+    </div>
+  )
+}
+
 function useBoardStyles(): void {
   useEffect(() => {
     if (typeof document === 'undefined') return
@@ -124,6 +220,25 @@ export function BoardView({ sessionId, visible, routeBase, navigate }: BoardView
    * entirely to the user, and nothing flips it back on their behalf.
    */
   const [follow, setFollow] = useState(true)
+  /**
+   * The HIDDEN lane ids — not the shown ones. An empty set means "全选 / everything",
+   * so a teammate that joins the board later is visible by default instead of being
+   * excluded by a list written before it existed.
+   */
+  const [hiddenLanes, setHiddenLanes] = useState<ReadonlySet<string>>(() => new Set())
+  const [filterOpen, setFilterOpen] = useState(false)
+  const filterButtonRef = useRef<HTMLButtonElement | null>(null)
+
+  /**
+   * THE one filtering point. Everything downstream — the lane-head column, the lane
+   * contents, the send/receive markers, the wait bands and the legend counts — is
+   * derived by `GanttChart` from `data.lanes`, so filtering here filters all of it at
+   * once and no second filter is needed (or wanted) inside the chart.
+   */
+  const shownData = useMemo(
+    () => (data === null ? null : filterTimelineLanes(data, hiddenLanes)),
+    [data, hiddenLanes],
+  )
 
   useBoardStyles()
 
@@ -269,7 +384,27 @@ export function BoardView({ sessionId, visible, routeBase, navigate }: BoardView
   }, [visible, selectedMessageKey, selectedTaskId])
   const retry = useCallback(() => setReloadKey((key) => key + 1), [])
 
+  /**
+   * Flip one lane's visibility. The state is the HIDDEN set, so unticking adds and
+   * ticking removes; the board keeps its order because the filter preserves it.
+   */
+  const toggleLane = useCallback((laneId: string) => {
+    setHiddenLanes((previous) => {
+      const next = new Set(previous)
+      if (next.has(laneId)) next.delete(laneId)
+      else next.add(laneId)
+      return next
+    })
+  }, [])
+
   /* -------------------------------------------------------------- states */
+
+  // `shownData` is `data` after the teammate filter, so it is null exactly when `data`
+  // is; narrowing it here is what lets the render path below be written against the
+  // FILTERED board only, with no second filter anywhere downstream.
+  if (shownData === null) {
+    return null
+  }
 
   if (data === null) {
     const failed = error !== null
@@ -292,9 +427,9 @@ export function BoardView({ sessionId, visible, routeBase, navigate }: BoardView
 
   const tzOffsetMinutes = -new Date(now).getTimezoneOffset()
   const sourceChip =
-    data.source === 'log'
+    shownData.source === 'log'
       ? { className: 'dtg-chip', text: t('sourceLog') }
-      : { className: 'dtg-chip dtg-chip-warn', text: data.source === 'partial' ? t('sourcePartial') : t('sourceLive') }
+      : { className: 'dtg-chip dtg-chip-warn', text: shownData.source === 'partial' ? t('sourcePartial') : t('sourceLive') }
 
   return (
     <div className="dtg-root" data-dsh-task-gantt="" data-build={BUILD_LABEL}>
@@ -306,7 +441,7 @@ export function BoardView({ sessionId, visible, routeBase, navigate }: BoardView
           <span className="dtg-chip dtg-chip-live">{uiLabel('nowLabel')}</span>
         ) : (
           <span className="dtg-chip" title={uiLabel('frozenHint')}>
-            {`${formatDateTime(data.range.start, tzOffsetMinutes)} → ${uiLabel('endedLabel')} ${formatDateTime(data.range.end ?? data.generatedAt, tzOffsetMinutes)}`}
+            {`${formatDateTime(shownData.range.start, tzOffsetMinutes)} → ${uiLabel('endedLabel')} ${formatDateTime(shownData.range.end ?? shownData.generatedAt, tzOffsetMinutes)}`}
           </span>
         )}
         <label className="dtg-control" title={uiLabel('rangeHint')}>
@@ -339,15 +474,43 @@ export function BoardView({ sessionId, visible, routeBase, navigate }: BoardView
           {`${uiLabel('followLabel')} ${follow ? '●' : '○'}`}
         </button>
         <span className="dtg-spacer" />
-        <span className="dtg-chip" title={`${t('tabTitle')} · ${data.lanes.length}`}>
-          {`${data.tasks.length} ${uiLabel('tasksLabel')}`}
+        <button
+          type="button"
+          ref={filterButtonRef}
+          className="dtg-btn"
+          onClick={() => setFilterOpen((open) => !open)}
+          title={uiLabel('laneFilterHint')}
+          aria-label={uiLabel('laneFilterLabel')}
+          aria-expanded={filterOpen}
+          aria-haspopup="true"
+        >
+          {`${uiLabel('laneFilterLabel')} ${hiddenLanes.size === 0 ? '·' : `−${hiddenLanes.size}`}`}
+        </button>
+        <span className="dtg-chip" title={`${t('tabTitle')} · ${shownData.lanes.length}`}>
+          {`${shownData.tasks.length} ${uiLabel('tasksLabel')}`}
         </span>
         <button type="button" className="dtg-btn" onClick={retry} title={t('retry')}>
           ⟳
         </button>
       </div>
 
-      {data.lanes.length === 0 ? (
+      {/*
+        The menu is a SIBLING of the toolbar, not a child of it: an absolutely
+        positioned descendant adds to its ancestor's scrollable overflow and would be
+        clipped by this panel. It is fixed-positioned from the button's own rect and
+        clamped by the shared `clipBounds`.
+      */}
+      {filterOpen && filterButtonRef.current !== null ? (
+        <LaneFilterMenu
+          anchor={filterButtonRef.current}
+          lanes={data.lanes}
+          hidden={hiddenLanes}
+          onToggle={toggleLane}
+          onClose={() => setFilterOpen(false)}
+        />
+      ) : null}
+
+      {shownData.lanes.length === 0 ? (
         <div className="dtg-center">
           <span className="dtg-center-title">{t('emptyTitle')}</span>
           <span>{t('emptyBody')}</span>
@@ -355,7 +518,7 @@ export function BoardView({ sessionId, visible, routeBase, navigate }: BoardView
         </div>
       ) : (
         <GanttChart
-          data={data}
+          data={shownData}
           visible={visible}
           now={now}
           selectedTaskId={selectedTaskId}
@@ -371,7 +534,7 @@ export function BoardView({ sessionId, visible, routeBase, navigate }: BoardView
       {selectedTask === null ? null : (
         <TaskDetails
           task={selectedTask}
-          generatedAt={data.generatedAt}
+          generatedAt={shownData.generatedAt}
           tzOffsetMinutes={tzOffsetMinutes}
           onClose={() => setSelectedTaskId(null)}
         />
@@ -389,12 +552,12 @@ export function BoardView({ sessionId, visible, routeBase, navigate }: BoardView
       )}
 
       {error === null ? null : <div className="dtg-notice dtg-notice-error">{`${t('errorTitle')}: ${error}`}</div>}
-      {data.failure === undefined ? null : (
-        <div className="dtg-notice dtg-notice-error">{`${uiLabel('failureLabel')}: ${data.failure}`}</div>
+      {shownData.failure === undefined ? null : (
+        <div className="dtg-notice dtg-notice-error">{`${uiLabel('failureLabel')}: ${shownData.failure}`}</div>
       )}
-      {data.notes.length === 0 ? null : (
-        <div className="dtg-notice" title={data.notes.join('\n')}>
-          {`${uiLabel('notesLabel')}: ${data.notes.join(' · ')}`}
+      {shownData.notes.length === 0 ? null : (
+        <div className="dtg-notice" title={shownData.notes.join('\n')}>
+          {`${uiLabel('notesLabel')}: ${shownData.notes.join(' · ')}`}
         </div>
       )}
       {/*

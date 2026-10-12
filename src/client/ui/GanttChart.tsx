@@ -44,6 +44,7 @@ import type {
   TimelineTask,
 } from '../../shared/contract.ts'
 import { format, t } from '../i18n.ts'
+import { clipBounds } from './overlay-position.ts'
 import { uiLabel } from './labels.ts'
 import {
   STATUS_GLYPH,
@@ -596,9 +597,15 @@ export function GanttChart(props: GanttChartProps): ReactNode {
                   a marker is an instant. Each one draws both ends: a filled cap at
                   the start, and either a filled cap (it finished) or an open,
                   dashed cap (it is still blocking) at the end. */}
-              {waitBands.map((band) => (
-                <WaitBand key={`wait:${band.laneId}:${band.start}:${band.end ?? 'open'}`} band={band} />
-              ))}
+              {/* The wait band goes WITH the bars: since 0.2.13 it is drawn on the
+                  activity track, so leaving it behind would strand a grey stripe in
+                  an empty row and make the switch look half-applied. The layer is one
+                  visual object — "the activity track" — and it is hidden as one. */}
+              {messageMode === 'markers'
+                ? null
+                : waitBands.map((band) => (
+                    <WaitBand key={`wait:${band.laneId}:${band.start}:${band.end ?? 'open'}`} band={band} />
+                  ))}
               {/* Per-lane message rhythm: the TRUE first→last extent of every
                   message, so decimated markers can never shrink the reported
                   span of when a lane was talking. */}
@@ -621,17 +628,29 @@ export function GanttChart(props: GanttChartProps): ReactNode {
                 />
               ))}
               {/* Two passes so every faint turn band paints UNDER every solid
-                  step bar, whatever order the host folded the spans in. */}
-              {layout.spans.map((span, index) =>
-                span.kind === 'turn' ? (
-                  <SpanBar key={`turn:${index}:${spanKey(span)}`} span={span} color={laneColors.get(span.laneId)} />
-                ) : null,
-              )}
-              {layout.spans.map((span, index) =>
-                span.kind === 'step' ? (
-                  <SpanBar key={`step:${index}:${spanKey(span)}`} span={span} color={laneColors.get(span.laneId)} />
-                ) : null,
-              )}
+                  step bar, whatever order the host folded the spans in.
+                  Both passes are the ACTIVITY layer, and the legend switch next to
+                  the "turn 区间 / step 区间" keys hides exactly that layer: measured
+                  before the fix, toggling it changed NOTHING (step 3, turn 1, msg 8,
+                  wait 5 on both settings) because it only ever touched marker
+                  decimation — `'markers'` merely DREW turn-kind message markers that
+                  `'both'` folded into a "+N". The label promised bars, so the bars
+                  are what it now hides. `layout.spans` holds only `turn`/`step`
+                  ({@link SpanRect}), so the whole array is the layer. */}
+              {messageMode === 'markers'
+                ? null
+                : layout.spans.map((span, index) =>
+                    span.kind === 'turn' ? (
+                      <SpanBar key={`turn:${index}:${spanKey(span)}`} span={span} color={laneColors.get(span.laneId)} />
+                    ) : null,
+                  )}
+              {messageMode === 'markers'
+                ? null
+                : layout.spans.map((span, index) =>
+                    span.kind === 'step' ? (
+                      <SpanBar key={`step:${index}:${spanKey(span)}`} span={span} color={laneColors.get(span.laneId)} />
+                    ) : null,
+                  )}
               {/* Message markers paint ON TOP of the bars: they are the finest
                   detail on the chart and must stay legible. */}
               {layout.messages.map((marker) => (
@@ -1523,40 +1542,6 @@ function useSuspendedTitle(element: HTMLElement | null, open: boolean): void {
   )
 }
 
-/**
- * The box a popover anchored at `anchor` must stay inside.
- *
- * Starts from the viewport and then narrows to the nearest ancestor that actually
- * clips (`overflow` other than `visible`), because `position: fixed` does NOT escape
- * an ancestor's overflow clipping. Without this the popover is silently cut off by a
- * narrow host panel, which is exactly what happened in the demo: an ancestor 381px
- * wide removed 239px of a 280px popover.
- *
- * @param anchor - the card element to walk up from.
- */
-function clipBounds(anchor: HTMLElement): { left: number; right: number; top: number; bottom: number; width: number } {
-  const viewport = {
-    left: 0,
-    right: typeof window === 'undefined' ? 1024 : window.innerWidth,
-    top: 0,
-    bottom: typeof window === 'undefined' ? 768 : window.innerHeight,
-    width: typeof window === 'undefined' ? 1024 : window.innerWidth,
-  }
-  if (typeof document === 'undefined') return viewport
-  let el: Element | null = anchor.parentElement
-  while (el !== null && el !== document.documentElement) {
-    const cs = getComputedStyle(el)
-    if (cs.overflow !== 'visible' || cs.overflowX !== 'visible' || cs.overflowY !== 'visible') {
-      const r = el.getBoundingClientRect()
-      // A box that is not wider than the popover cannot host it; keep looking outward.
-      if (r.width >= 160) {
-        return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width }
-      }
-    }
-    el = el.parentElement
-  }
-  return viewport
-}
 
 /**
  * The full title, on hover or keyboard focus.
@@ -1657,15 +1642,21 @@ function TaskPopoverBody({
 }): ReactNode {
   const first = task.history[0]?.time
   const last = task.history[task.history.length - 1]?.time
+  const status = statusText(task.status)
   return (
     <>
+      {/*
+        TITLE and TIME only. The user: "仅显示到标题和时间就够了，详细的点开来看" — the
+        description used to be repeated here, which pushed the popover past the panel
+        and made it unreadable ("悬停，看不完整"). Detail has its own home: clicking the
+        card opens the TaskDetails panel, which can scroll and wrap properly.
+      */}
       <div className="dtg-popover-title">{task.subject === '' ? '—' : task.subject}</div>
-      {task.description === '' ? null : <div className="dtg-popover-desc">{task.description}</div>}
-      {first === undefined || last === undefined ? null : (
-        <div className="dtg-popover-meta">
-          {`${formatDateTime(first, tzOffsetMinutes)} -> ${formatDateTime(last, tzOffsetMinutes)}`}
-        </div>
-      )}
+      <div className="dtg-popover-meta">
+        {first === undefined || last === undefined
+          ? status
+          : `${formatDateTime(first, tzOffsetMinutes)} -> ${formatDateTime(last, tzOffsetMinutes)} · ${status}`}
+      </div>
     </>
   )
 }
