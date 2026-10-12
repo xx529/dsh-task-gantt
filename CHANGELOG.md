@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.2.19 — 2026-10-12
+
+**Follow mode keeps `now` at 3/4 of the viewport, with blank headroom to its right**
+
+"跟随时间线情况下，如果时间线已经去到最右边了，应该自动延长空白部分，让时间线回到整屏的 3/4 位置（左边3
+右边1）这样就不用一直贴着边往前".
+
+`FOLLOW_GUTTER_RATIO = 1/4` adds a right gutter IN CONTENT PIXELS, produced by the layout (not a CSS
+spacer, which the scroll arithmetic cannot see): `contentWidth = dataWidth + gutterPx`, with
+`gutterPx = viewportWidth * RATIO` and ZERO when follow is off. `dataWidth` is never modified, so
+`now` keeps its own x and an open task still ends exactly at the semantic end of data — the gutter is
+pure headroom to the right.
+
+MEASURED at 348 / 248 / 168 px viewports with follow on and the content scrolled fully right
+(scrollLeft = contentWidth - viewportWidth):
+
+| viewport | gutter | contentWidth | now's viewport x | viewport × 3/4 | task bars beyond now |
+|---|---|---|---|---|---|
+| 348 | 87 | 435 | **261** | **261** | 0 |
+| 248 | 62 | 310 | **186** | **186** | 0 |
+| 168 | 42 | 210 | **126** | **126** | 0 |
+
+`now`'s x equals 3/4 of the viewport to the pixel, and every open task's right edge sits exactly
+`0px` relative to `now` (closed tasks are negative) — so the headroom did not stretch any running
+task into the future. The gutter is exactly `viewportWidth / 4` in all three cases.
+
+The axis extends across the gutter (chosen over stopping at `now`: the headroom is future time, and a
+label-free blank strip would be worse) — a right-side tick label now flips to the left of its line
+with `.dtg-tick-label-flip`, because without it a label reached x=338 on a 310px canvas and was cut.
+
+The gutter is deliberate scroll range now, so the numbers are stated rather than merely asserted: the
+scroll maximum equals the gutter (87 / 62 / 42), and with follow OFF the content width returns to
+`dataWidth` with no gutter at all. The lane background and gridlines still use `dataWidth` and draw
+nothing inside it (measured lane background 248 == dataWidth, gridline max x 167).
+
+The three new locks were ADDED to tests/layout.spec.ts; no existing assertion was modified
+(`git diff tests/layout.spec.ts | grep '^-'` is empty), and all 86 previous locks still pass.
+
+Recorded as not verified: the continuous behaviour of follow as `now` advances in real time — only
+the static geometry at the end of the scroll range was measured; the scroll-target function itself
+has a truth-table lock.
+
+The footer build identity is now `v0.2.19 · follow-headroom`.
+
 ## 0.2.18 — 2026-10-12
 
 **Toolbar labels stop wrapping when the panel is narrow**

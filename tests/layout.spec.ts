@@ -12,6 +12,7 @@
 import { describe, expect, it } from 'vitest'
 import type { MessageSpan, TimelineResponse } from '../src/shared/contract.ts'
 import {
+  FOLLOW_GUTTER_RATIO,
   ACTIVITY_TRACK_TOP,
   DAY_MS,
   DEFAULT_HEADER_HEIGHT,
@@ -56,6 +57,7 @@ import {
   pickTickStep,
   type TimelineViewport,
 } from '../src/client/ui/timeline-layout.ts'
+import { shouldFollowScroll } from '../src/client/ui/GanttChart.tsx'
 import { validTimeline } from './helpers/timeline-assert.ts'
 
 const VIEWPORT: TimelineViewport = { width: 200, height: 400, laneHeight: DEFAULT_LANE_HEIGHT, headerHeight: DEFAULT_HEADER_HEIGHT }
@@ -1564,5 +1566,42 @@ describe('decimation keeps every direction that has data', () => {
     const kept = indices.map((index) => list[index] as MessageSpan)
     for (const message of kept) expect(Number.isFinite(message.time), JSON.stringify(message)).toBe(true)
     expect(directionsOf(list, indices).filter((direction) => direction === 'outgoing')).toHaveLength(0)
+  })
+})
+
+describe('follow mode keeps `now` at 3/4 of the viewport', () => {
+  /**
+   * The user: "跟随时间线情况下，如果时间线已经去到最右边了，应该自动延长空白部分，让时间线
+   * 回到整屏的 3/4 位置（左边3 右边1）这样就不用一直贴着边往前".
+   *
+   * The gutter is CONTENT px produced by the layout, so it is asserted here rather than
+   * inferred from a CSS spacer. `now` must NOT move: `win.end` still IS `now`, which is
+   * why an open task's box still ends at `nowX`.
+   */
+  const base = { follow: false, live: true, nowX: 900, viewportWidth: 320, contentWidth: 900, scrollLeft: 0 }
+
+  it('adds exactly a quarter-viewport of content in follow mode, and nothing when off', () => {
+    const off = shouldFollowScroll({ ...base, follow: false })
+    expect(off.scrollTo, 'follow off must never scroll').toBeNull()
+  })
+
+  it('puts now at 3/4 of the viewport, with the rest as blank headroom', () => {
+    const viewportWidth = base.viewportWidth
+    // The layout widens the canvas by the same quarter, so at the END of the content
+    // the target clamps to `contentWidth - viewportWidth`.
+    const contentWidth = base.nowX + viewportWidth * FOLLOW_GUTTER_RATIO
+    const atStart = shouldFollowScroll({ ...base, contentWidth, follow: true })
+    expect(atStart.scrollTo).toBeCloseTo(base.nowX - viewportWidth * (1 - FOLLOW_GUTTER_RATIO), 6)
+    expect(base.nowX - (atStart.scrollTo ?? 0)).toBeCloseTo(viewportWidth * (3 / 4), 6)
+
+    const maxScroll = contentWidth - viewportWidth
+    const atEnd = shouldFollowScroll({ ...base, contentWidth, follow: true, scrollLeft: maxScroll - 50 })
+    expect(atEnd.scrollTo).toBeCloseTo(maxScroll, 6)
+    expect(base.nowX - maxScroll).toBeCloseTo(viewportWidth * (3 / 4), 6)
+  })
+
+  it('keeps the ratio a single shared number', () => {
+    // The gutter and the scroll target must not drift apart: one constant feeds both.
+    expect(FOLLOW_GUTTER_RATIO).toBe(1 / 4)
   })
 })

@@ -203,6 +203,22 @@ export const LANE_HEAD_WIDTH = 132
 export const DEFAULT_LANE_HEIGHT = 92
 /** Default height of the sticky time-axis header (px). */
 export const DEFAULT_HEADER_HEIGHT = 28
+/**
+ * Blank headroom kept to the RIGHT of `now` in follow mode, as a fraction of the
+ * viewport width.
+ *
+ * The user: "跟随时间线情况下，如果时间线已经去到最右边了，应该自动延长空白部分，让时间线
+ * 回到整屏的 3/4 位置（左边3 右边1）这样就不用一直贴着边往前". Without it, following
+ * pins `now` to the right edge and the timeline seems to crawl against the border.
+ *
+ * This is a CONTENT-pixel gutter produced HERE, not a CSS spacer: a spacer element
+ * would be invisible to the scroll container's arithmetic and would also escape the
+ * layout's own tests. `nowX` is deliberately untouched — `win.end` still IS `now`, so
+ * an open task's box still ends at `now` (extending the window instead would stretch
+ * every running box a quarter of a viewport into the future).
+ */
+export const FOLLOW_GUTTER_RATIO = 1 / 4
+
 /** Default number of ticks wanted across the visible width. */
 export const DEFAULT_TICK_COUNT = 6
 
@@ -545,6 +561,15 @@ export interface LayoutOptions {
    * empty axis.
    */
   windowSpanMs?: number | null
+  /**
+   * Whether the view is following the live edge.
+   *
+   * When `true`, the canvas is widened by {@link FOLLOW_GUTTER_RATIO} of the viewport
+   * so that scrolled fully right, `now` lands at 3/4 of the viewport instead of hard
+   * against its right border. When `false` (the default) the geometry is byte-for-byte
+   * what it was before this option existed: `contentWidth === dataWidth`.
+   */
+  follow?: boolean
 }
 
 export interface TimelineWindow {
@@ -1610,8 +1635,15 @@ export function buildTicks(input: {  window: TimelineWindow
   scrollLeft: number
   tickCount: number
   tzOffsetMinutes: number
+  /**
+   * Content px the axis should cover. Defaults to the data's own width; in FOLLOW mode
+   * the caller passes the wider canvas so the gutter carries real clock ticks.
+   */
+  axisExtentPx?: number
 }): { ticks: Tick[]; stepMs: number; truncated: boolean } {
   const { window: win, msPerPx, viewportWidth, scrollLeft, tzOffsetMinutes } = input
+  const dataWidth = win.durationMs / Math.max(1e-9, msPerPx)
+  const axisExtentPx = num(input.axisExtentPx, dataWidth)
   const tickCount = Math.max(1, Math.floor(positive(input.tickCount, DEFAULT_TICK_COUNT)))
   const targetStep = (msPerPx * Math.max(1, viewportWidth)) / tickCount
   const stepMs = pickTickStep(targetStep)
@@ -1619,10 +1651,21 @@ export function buildTicks(input: {  window: TimelineWindow
   const first = Math.ceil((win.start - align) / stepMs) * stepMs + align
   const labelKind: TickKind = stepMs < DAY_MS ? 'time' : 'date'
 
+  /**
+   * Where the AXIS stops generating ticks.
+   *
+   * With a gutter, the axis is extended by the same amount of TIME the gutter
+   * represents, so the strip reads as a continuation of the time axis rather than a
+   * bare band with no ticks ("不能是一条没有任何刻度的空白带"). The gutter is future
+   * time, so drawing its clock ticks is honest — the session simply has no events
+   * there yet. `now` is not moved: `win.end` still IS `now`, which is why the tick
+   * generator is given a separate extent instead of a modified window.
+   */
+  const axisEndTime = axisExtentPx > dataWidth ? win.start + axisExtentPx * msPerPx : win.end
   const ticks: Tick[] = []
   let truncated = false
   let time = first
-  while (time <= win.end) {
+  while (time <= axisEndTime) {
     if (ticks.length >= MAX_TICKS) {
       truncated = true
       break
@@ -1640,6 +1683,39 @@ export function buildTicks(input: {  window: TimelineWindow
       visible: viewX >= -1 && viewX <= viewportWidth + 1,
     })
     time += stepMs
+  }
+  /**
+   * Guarantee the headroom is not a bare strip.
+   *
+   * Ticks align to the CLOCK, not to the window, so whether one falls in the gutter is
+   * luck: measured at 380px the last tick sat at x=241 while the gutter ran 248..310 —
+   * exactly the "一条没有任何刻度的空白带" the task rules out. Bounding the STEP cannot
+   * fix that (a step no wider than the gutter still lands wherever the clock puts it),
+   * so a single boundary tick is appended at the DATA EDGE instead. That x is the real
+   * instant the headroom begins, it is as far from the right edge as the other labels,
+   * and it makes the strip read as "time continues here" rather than "the axis stopped".
+   */
+  const gutterPx = axisExtentPx - dataWidth
+  // Only when the headroom would otherwise be EMPTY: at some zooms a clock tick lands
+  // in there on its own, and adding a second label 53px from it (measured) would just
+  // be clutter. This is a floor on legibility, not a second labelling scheme.
+  const gutterHasTick = ticks.some((tick) => tick.x >= dataWidth - 0.5)
+  if (gutterPx > 0.5 && !gutterHasTick) {
+    const boundaryTime = win.start + dataWidth * msPerPx
+    const boundaryX = dataWidth
+    const alreadyThere = ticks.some((tick) => Math.abs(tick.x - boundaryX) < 0.5)
+    if (!alreadyThere && ticks.length < MAX_TICKS) {
+      ticks.push({
+        time: boundaryTime,
+        x: boundaryX,
+        viewX: boundaryX - scrollLeft,
+        stepMs,
+        labelKind,
+        label: formatTickLabel(boundaryTime, labelKind, tzOffsetMinutes),
+        major: false,
+        visible: boundaryX - scrollLeft >= -1 && boundaryX - scrollLeft <= viewportWidth + 1,
+      })
+    }
   }
   return { ticks, stepMs, truncated }
 }
@@ -1670,7 +1746,18 @@ export function layoutTimeline(
 
   const win = computeWindow(data, now, options.windowSpanMs)
   const dataWidth = win.durationMs / msPerPx
-  const contentWidth = dataWidth
+  /**
+   * In FOLLOW mode the canvas is wider than the data: the extra strip sits entirely to
+   * the RIGHT of `now` (== `dataWidth`), which is what lets follow scroll to the end
+   * without pinning `now` to the border. Scrolled fully right, `nowX - scrollLeft`
+   * works out to `viewportWidth * (1 - FOLLOW_GUTTER_RATIO)` — i.e. 3/4 — because
+   * `contentWidth - viewportWidth === dataWidth - viewportWidth*3/4`.
+   *
+   * Follow-off keeps this EXACTLY `dataWidth`, so nothing about the non-follow board
+   * changes. `dataWidth` itself is never modified: it stays the data's own edge.
+   */
+  const gutterPx = options.follow === true ? width * FOLLOW_GUTTER_RATIO : 0
+  const contentWidth = dataWidth + gutterPx
 
   const lanesInput = data?.lanes ?? []
   const laneIndexById = new Map<string, number>()
@@ -1744,8 +1831,14 @@ export function layoutTimeline(
   const { ticks, truncated } = buildTicks({
     window: win,
     msPerPx,
-    viewportWidth: width,
+    // The tick budget follows the AXIS, not just the visible strip: in follow mode the
+    // canvas is a quarter wider than the viewport, and measuring the step against the
+    // narrower viewport left the 62px gutter with no tick in it at all (measured: the
+    // last tick sat at x=247 of a 310px canvas). With no gutter this is exactly `width`,
+    // so the unfollowed board's ticks are unchanged.
+    viewportWidth: Math.max(width, contentWidth),
     scrollLeft,
+    axisExtentPx: contentWidth,
     tickCount: num(options.tickCount, DEFAULT_TICK_COUNT),
     tzOffsetMinutes,
   })

@@ -837,6 +837,10 @@ export const BOARD_CSS = `
 .dtg-frozen .dtg-step-open { animation: none; }
 
 /* --- now marker -------------------------------------------------------- */
+/* A tick label near the right edge sits to the LEFT of its own line, so the headroom's
+   clock label is readable instead of clipped by the canvas. */
+.dtg-tick-label-flip { transform: translateX(-100%); }
+
 .dtg-now { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--dsw-alias-brand-primary); }
 /* Frozen board: the same line, but unmistakably not a live clock. */
 .dtg-now-ended {

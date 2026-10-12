@@ -67,6 +67,7 @@ import {
   formatDateTime,
   isLiveBoard,
   clamp,
+  FOLLOW_GUTTER_RATIO,
   inWindow,
   messageMarkerPaint,
   speakerLaneMapper,
@@ -344,9 +345,12 @@ export function GanttChart(props: GanttChartProps): ReactNode {
           scrollTop: scroll.top,
           cull: true,
           windowSpanMs,
+          // Only FOLLOW mode gets the trailing gutter; with it off, contentWidth is
+          // byte-for-byte the data width, which is what the layout's own locks assume.
+          follow: follow === true,
         },
       ),
-    [data, now, effectiveMsPerPx, viewport.width, viewport.height, scroll.left, scroll.top],
+    [data, now, effectiveMsPerPx, viewport.width, viewport.height, scroll.left, scroll.top, windowSpanMs, follow],
   )
 
   /* ------------------------------------------------- measurement + scroll */
@@ -581,16 +585,24 @@ export function GanttChart(props: GanttChartProps): ReactNode {
                 <span
                   key={lane.laneId}
                   className={lane.index % 2 === 1 ? 'dtg-lane-bg dtg-lane-bg-alt' : 'dtg-lane-bg'}
-                  style={{ top: lane.y, width: layout.contentWidth, height: lane.height }}
+                  /* The lane stripe stops at the DATA edge: in follow mode the canvas is
+                     wider than the data, and painting the lane into that gutter would
+                     claim the session had lanes where it has no events yet. */
+                  style={{ top: lane.y, width: layout.dataWidth, height: lane.height }}
                 />
               ))}
-              {layout.ticks.map((tick) => (
-                <span
-                  key={`grid:${tick.time}`}
-                  className={tick.major ? 'dtg-gridline dtg-gridline-major' : 'dtg-gridline'}
-                  style={{ left: tick.x, height: layout.contentHeight }}
-                />
-              ))}
+              {/* Gridlines only where there is data. The AXIS still labels the gutter
+                  (see `axisExtentPx`), so the strip reads as future time rather than a
+                  bare band; a gridline out there would imply events that do not exist. */}
+              {layout.ticks
+                .filter((tick) => tick.x <= layout.dataWidth + 1e-6)
+                .map((tick) => (
+                  <span
+                    key={`grid:${tick.time}`}
+                    className={tick.major ? 'dtg-gridline dtg-gridline-major' : 'dtg-gridline'}
+                    style={{ left: tick.x, height: layout.contentHeight }}
+                  />
+                ))}
               {/* Wait blocks sit UNDER the message markers: a wait is a period,
                   a marker is an instant. Each one draws both ends: a filled cap at
                   the start, and either a filled cap (it finished) or an open,
@@ -990,7 +1002,19 @@ function Axis({
           className={tick.major ? 'dtg-tick dtg-tick-major' : 'dtg-tick'}
           style={{ left: tick.x }}
         >
-          <span className="dtg-tick-label">{tick.label}</span>
+          {/*
+            A label whose text would cross the canvas edge flips to the LEFT of its
+            line, the same way the now-head does. Without this the headroom's own tick
+            was half cut off (measured: its label ran to x=338 of a 310px canvas), so the
+            strip that exists to avoid an empty edge showed a clipped one instead.
+          */}
+          <span
+            className={
+              tick.x > layout.contentWidth - 60 ? 'dtg-tick-label dtg-tick-label-flip' : 'dtg-tick-label'
+            }
+          >
+            {tick.label}
+          </span>
         </span>
       ))}
       {marker === null || !marker.visible ? null : (
@@ -1254,13 +1278,28 @@ export function shouldFollowScroll(input: {
   viewportWidth: number
   contentWidth: number
   scrollLeft: number
+  /**
+   * Retained for callers that want a tighter inset; the default is now the FOLLOW
+   * gutter itself, so following and the layout agree on one number.
+   */
   margin?: number
 }): { scrollTo: number | null } {
   if (!input.follow || !input.live) return { scrollTo: null }
-  const margin = input.margin ?? 24
+  /**
+   * In follow mode `now` targets 3/4 of the viewport, with the remaining quarter as
+   * blank headroom, so the timeline is not pinned to the right border:
+   *
+   *   scrollLeft = nowX - viewportWidth * (1 - FOLLOW_GUTTER_RATIO)
+   *
+   * The layout widens the canvas by exactly that quarter (see {@link FOLLOW_GUTTER_RATIO}),
+   * so at the END of the content this target CLAMPS to `contentWidth - viewportWidth`
+   * and `nowX - scrollLeft` is exactly `viewportWidth * 3/4`. One number, one place:
+   * the margin is no longer an independent 24px that disagreed with the gutter.
+   */
+  const gutter = input.margin ?? input.viewportWidth * FOLLOW_GUTTER_RATIO
   const maxScroll = Math.max(0, input.contentWidth - input.viewportWidth)
   if (maxScroll <= 0) return { scrollTo: null }
-  const target = clamp(input.nowX - (input.viewportWidth - margin), 0, maxScroll)
+  const target = clamp(input.nowX - (input.viewportWidth - gutter), 0, maxScroll)
   // Sub-pixel differences would otherwise fire on every tick for nothing.
   if (Math.abs(target - input.scrollLeft) < 0.5) return { scrollTo: null }
   return { scrollTo: target }
