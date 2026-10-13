@@ -84,7 +84,15 @@
  * ============================================================================
  */
 import { WAIT_TOOL_NAME } from '../shared/contract.ts'
-import type { ActivitySpan, LaneWait, MemberPhase, TaskEvent, TaskStatus } from '../shared/contract.ts'
+import type {
+  ActivitySpan,
+  LaneLiveActivity,
+  LaneLiveActivityKind,
+  LaneWait,
+  MemberPhase,
+  TaskEvent,
+  TaskStatus,
+} from '../shared/contract.ts'
 
 export { WAIT_TOOL_NAME }
 
@@ -223,6 +231,15 @@ export interface FoldedSession {
    * four are separate — a wait is not activity, not a task transition and not a message.
    */
   waits: LaneWait[]
+  /**
+   * What this lane's agent is doing RIGHT NOW.
+   *
+   * A sixth orthogonal fold, and the only one that is not about the past: everything
+   * else describes what happened, this describes what is happening. See
+   * {@link foldLaneLiveActivity} for the rule and {@link LaneLiveActivity} for the two things
+   * it deliberately cannot report.
+   */
+  laneActivity: LaneLiveActivity
 }
 
 /** A status value the board can publish. */
@@ -1300,6 +1317,245 @@ export function dateTaskFromToolCalls(
   return history
 }
 
+// --------------------------------------------------------------------------
+// 6. Live activity — what the lane's agent is doing right now
+// --------------------------------------------------------------------------
+
+/**
+ * Tool names that count as "running a command".
+ * Verbatim from the built-in `activity()` mapper
+ * (`@deepseek-ai/dsh-client-ui-chat/lib/client.js:10500-10505`).
+ */
+const COMMAND_TOOLS: readonly string[] = ['bash', 'pwsh', 'exec_command', 'write_stdin']
+
+/** Tool names that count as "updating the plan". Verbatim from `:10510-10515`. */
+const PLAN_TOOLS: readonly string[] = ['todo_write', 'create_goal', 'update_goal', 'get_goal']
+
+/**
+ * Argument keys tried, in order, for a one-line detail of the running tool.
+ * Verbatim from `LIVE_TOOL_DETAIL_KEYS` (`:10522-10544`).
+ */
+const LIVE_TOOL_DETAIL_KEYS: readonly string[] = [
+  'title',
+  'description',
+  'objective',
+  'task',
+  'task_name',
+  'name',
+  'question',
+  'questions',
+  'prompt',
+  'message',
+  'command',
+  'cmd',
+  'queries',
+  'query',
+  'pattern',
+  'url',
+  'uri',
+  'file_path',
+  'path',
+  'target',
+  'action',
+  'status',
+]
+
+/** Detail clip length, from `LIVE_TOOL_DETAIL_MAX_CHARS` (`:10518`). */
+const LIVE_TOOL_DETAIL_MAX_CHARS = 160
+
+/**
+ * Map a DSH tool name to the activity category the built-in UI shows.
+ *
+ * A line-by-line mirror of `activity(name)` in
+ * `@deepseek-ai/dsh-client-ui-chat/lib/client.js:10494-10517`, including its final
+ * `return "tools"` catch-all — so an unknown tool reports the generic
+ * "calling a tool" wording instead of being silently dropped. That catch-all is not
+ * hypothetical on this machine: `ego_js` (304 calls in the Lead's log),
+ * `ego_navigate` and `send_message` are real tools absent from the table, so they
+ * land on `'tools'`.
+ *
+ * @param name - the tool name from a `tool/call` event.
+ * @returns the category key; never a sentence, because the client owns the wording.
+ */
+export function toolActivityKind(name: string): LaneLiveActivityKind {
+  if (name === 'read') return 'read'
+  if (name === 'read_image') return 'readImage'
+  if (name === 'grep' || name === 'glob' || name.endsWith('_inspect')) return 'search'
+  if (name === 'write') return 'write'
+  if (name === 'edit' || name === 'apply_patch') return 'edit'
+  if (COMMAND_TOOLS.includes(name) || name.startsWith('terminal_')) return 'commands'
+  if (name === 'run_code') return 'code'
+  if (name === 'web_search') return 'webSearch'
+  if (name === 'web_fetch') return 'webFetch'
+  if (name === 'subagent' || name.startsWith('subagent_')) return 'subagents'
+  if (PLAN_TOOLS.includes(name)) return 'plan'
+  if (name === 'ask_user_question' || name === 'request_user_input') return 'questions'
+  return 'tools'
+}
+
+/**
+ * Collapse one argument value into a single clipped line.
+ *
+ * Mirror of `normalizeLiveToolDetail` (`:10545-10549`): a string stays, an all-string
+ * array joins with `", "`, anything else is empty; whitespace runs collapse to one
+ * space; the result is clipped to 160 characters counted in **code points**
+ * (`Array.from` — the built-in counts graphemes with a default `Intl.Segmenter`, which
+ * differs only for multi-code-point glyphs and cannot change a one-line label's
+ * meaning) with a trailing ellipsis.
+ *
+ * @param value - the raw argument value.
+ * @returns the normalised detail, or `''`.
+ */
+function normalizeLiveToolDetail(value: unknown): string {
+  const text =
+    typeof value === 'string'
+      ? value
+      : Array.isArray(value) && value.length > 0 && value.every((item) => typeof item === 'string')
+        ? value.join(', ')
+        : ''
+  const normalized = text.replace(/\s+/g, ' ').trim()
+  const chars = Array.from(normalized)
+  return chars.length <= LIVE_TOOL_DETAIL_MAX_CHARS
+    ? normalized
+    : `${chars.slice(0, LIVE_TOOL_DETAIL_MAX_CHARS - 1).join('').trimEnd()}…`
+}
+
+/** First `question` string of an `ask_user_question` argument. Mirror of `:10550-10558`. */
+function questionDetail(value: unknown): string {
+  if (!Array.isArray(value)) return ''
+  for (const item of value) {
+    const record = asRecord(item)
+    if (record === undefined) continue
+    const detail = normalizeLiveToolDetail(record.question)
+    if (detail !== '') return detail
+  }
+  return ''
+}
+
+/**
+ * The one-line detail for a running tool, from its raw JSON arguments.
+ *
+ * Mirror of `liveToolDetail` (`:10585-10595`): parse `argsRaw`, walk
+ * {@link LIVE_TOOL_DETAIL_KEYS} and return the first non-empty normalised value (with
+ * `questions` going through {@link questionDetail}); on unparseable or non-object
+ * arguments fall back to the tool NAME — never to an invented phrase.
+ *
+ * @param name - the tool name, used as the fallback detail.
+ * @param argumentsRaw - the `arguments` field of a `tool/call` event (a JSON string).
+ * @returns the detail line, or `''`.
+ */
+export function liveToolDetail(name: string, argumentsRaw: unknown): string {
+  if (typeof argumentsRaw !== 'string') return normalizeLiveToolDetail(name)
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(argumentsRaw)
+  } catch {
+    return normalizeLiveToolDetail(name)
+  }
+  const args = asRecord(parsed)
+  if (args === undefined) return normalizeLiveToolDetail(name)
+  for (const key of LIVE_TOOL_DETAIL_KEYS) {
+    if (!(key in args)) continue
+    const value = args[key]
+    const detail = key === 'questions' ? questionDetail(value) : normalizeLiveToolDetail(value)
+    if (detail !== '') return detail
+  }
+  return normalizeLiveToolDetail(name)
+}
+
+/**
+ * The newest `tool/call` in this log that no `tool/result` has settled.
+ *
+ * Settling is by `callId`, read from `message.source.callId` — the shape verified
+ * against a live log (`tool/result.data.message.source.callId`) — with
+ * `message.toolCallId` as a fallback spelling. A result whose id cannot be read
+ * settles nothing, which is the safe direction: it may keep a finished call visible
+ * for one poll, but it can never invent a running one.
+ *
+ * @param indexed - the log's events, already indexed.
+ * @returns the newest unsettled call, or `undefined`.
+ */
+function lastUnsettledToolCall(
+  indexed: readonly IndexedEvent[],
+): { name: string; args: unknown } | undefined {
+  const pending = new Map<string, { name: string; args: unknown; seq: number }>()
+  for (const item of inLogOrder(indexed)) {
+    const type = eventType(item)
+    if (type === 'tool/call') {
+      const data = eventData(item)
+      if (data === undefined) continue
+      const callId = asText(data.callId)
+      const name = asText(data.name)
+      if (callId === undefined || name === undefined) continue
+      pending.set(callId, { name, args: data.arguments, seq: item.seq })
+      continue
+    }
+    if (type !== 'tool/result') continue
+    const data = eventData(item)
+    if (data === undefined) continue
+    const message = asRecord(data.message)
+    const source = message === undefined ? undefined : asRecord(message.source)
+    const callId = asText(source?.callId) ?? asText(message?.toolCallId) ?? asText(data.callId)
+    if (callId !== undefined) pending.delete(callId)
+  }
+  let latest: { name: string; args: unknown; seq: number } | undefined
+  for (const entry of pending.values()) {
+    if (latest === undefined || entry.seq > latest.seq) latest = entry
+  }
+  return latest === undefined ? undefined : { name: latest.name, args: latest.args }
+}
+
+/**
+ * Fold one session log into its lane's CURRENT activity.
+ *
+ * The rule has two halves, and BOTH must hold:
+ *
+ * 1. **an unclosed turn or step** — taken straight from {@link foldActivitySpans},
+ *    i.e. "a `turn/start` with no later `turn/end`, or a `step/start` with no later
+ *    `step/end`". Without this guard an interrupted or aborted turn would leave a
+ *    `tool/call` with no `tool/result` forever, and the lane would claim to be running
+ *    `bash` for the rest of the session;
+ * 2. **an unsettled `tool/call`** — the window in which a tool is genuinely executing.
+ *
+ * Anything else is `'thinking'` — the built-in's own "no tool in flight" state, and the
+ * phrase the user asked for.
+ *
+ * WHY an unsettled `tool/call` rather than merely `turn/start`: measured over the
+ * Lead's real log, 2580 `tool/call` → `tool/result` intervals have a median of **175 ms**
+ * but a long tail — 796 over 1 s, 385 over 5 s, 128 over 30 s, longest **900 s**. "A turn
+ * is open" would assert work for the whole turn; "no result yet" is exactly the window a
+ * tool executes in, and it is wide enough for a human reading the panel to catch. The
+ * host reads the LIVE channel (`agents.get(id).session.snapshotEvents()`), so an
+ * unflushed `tool/call` is visible immediately.
+ *
+ * `preparing` (准备读取文件) is deliberately NOT reported — see {@link LaneLiveActivity}.
+ *
+ * @param events - raw events of ONE session (any order, any shape).
+ * @returns the activity; total, never `undefined`, never a throw.
+ */
+export function foldLaneLiveActivity(events: readonly unknown[]): LaneLiveActivity {
+  const spans = foldActivitySpans(events).spans
+  // The PRIMARY guard is the TURN: when the log has turn events, "is the turn still
+  // open" is the only question that matters, and an orphan `step/start` (a missing
+  // `step/end`) must NOT be able to keep a finished turn alive — that is exactly the
+  // stale-tool failure this guard exists to stop. Only a log with no turn events at all
+  // (a fragment) falls back to the step.
+  const hasTurn = spans.some((span) => span.kind === 'turn')
+  const open = hasTurn
+    ? spans.some((span) => span.kind === 'turn' && span.end === null)
+    : spans.some((span) => span.kind === 'step' && span.end === null)
+  const running = open ? lastUnsettledToolCall(indexEvents(events)) : undefined
+  if (running === undefined) {
+    return { kind: 'thinking', detail: '', evidence: 'no-running-tool' }
+  }
+  return {
+    kind: toolActivityKind(running.name),
+    detail: liveToolDetail(running.name, running.args),
+    toolName: running.name,
+    evidence: 'running-tool',
+  }
+}
+
 /**
  * Run all three folds over one session log.
  *
@@ -1315,6 +1571,7 @@ export function foldSessionEvents(events: readonly unknown[], sessionId: string)
     toolCalls: foldToolCallTransitions(events, sessionId),
     messages: foldMessageRecords(events),
     waits: foldWaitSpans(events, sessionId),
+    laneActivity: foldLaneLiveActivity(events),
   }
 }
 

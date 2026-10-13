@@ -30,6 +30,7 @@ import {
   foldMessageRecords,
   foldSessionEvents,
   foldTeamEvents,
+  toolActivityKind,
   type RawSessionEvent,
 } from './fold.ts'
 import { MESSAGE_PREVIEW_MAX } from '../shared/contract.ts'
@@ -416,6 +417,54 @@ const catalogOnly = foldTeamEvents(
 assert(
   catalogOnly.memberById.get('m-1') !== undefined && catalogOnly.memberIdByName.size === 0,
   'F2: a catalog-only member yields a row but contributes no name (its name is genuinely unknown)',
+)
+
+// ---- live lane activity over the REAL logs ---------------------------------
+// The unit spec locks the rule with constructed events; this runs the same fold over
+// every real session log in the workspace, so the tool names and argument shapes that
+// actually occur are exercised too (`ego_js`/`send_message`/`team_task_update` all land
+// on the `'tools'` catch-all, which no synthetic fixture would have told us).
+console.log('\n=== live lane activity, per real log ===')
+const kinds = new Map<string, number>()
+for (const session of loaded) {
+  const folded = foldSessionEvents(session.events, session.id)
+  const activity = folded.laneActivity
+  kinds.set(activity.kind, (kinds.get(activity.kind) ?? 0) + 1)
+  console.log(
+    `  ${session.id.slice(0, 8)}  kind=${activity.kind.padEnd(10)} detail=${JSON.stringify(activity.detail).slice(0, 46)}` +
+      `  tool=${activity.toolName ?? '-'}  evidence=${activity.evidence}`,
+  )
+}
+console.log('  kind tally:', [...kinds].map(([k, n]) => `${k}=${n}`).join(' '))
+
+assert(
+  loaded.every((session) => {
+    const a = foldSessionEvents(session.events, session.id).laneActivity
+    return typeof a.kind === 'string' && typeof a.detail === 'string' && (a.evidence === 'running-tool' || a.evidence === 'no-running-tool')
+  }),
+  'every real log yields a well-formed activity',
+)
+assert(
+  loaded.every((session) => foldSessionEvents(session.events, session.id).laneActivity.evidence === 'no-running-tool'
+    ? foldSessionEvents(session.events, session.id).laneActivity.toolName === undefined
+    : true),
+  'a thinking result never carries a toolName',
+)
+// The catch-all is real: at least one tool in these logs is not in the built-in table.
+const realToolNames = new Set<string>()
+for (const session of loaded) {
+  for (const event of session.events) {
+    const e = event as { type?: unknown; data?: unknown }
+    if (e.type !== 'tool/call') continue
+    const data = e.data as { name?: unknown } | undefined
+    if (typeof data?.name === 'string') realToolNames.add(data.name)
+  }
+}
+const unmapped = [...realToolNames].filter((name) => toolActivityKind(name) === 'tools')
+console.log(`  real tool names: ${realToolNames.size};  landing on the 'tools' catch-all: ${unmapped.length} (${unmapped.slice(0, 6).join(', ')})`)
+assert(
+  realToolNames.size > 0 && unmapped.length > 0,
+  "the built-in table's catch-all is exercised by real tool names, not just by a fixture",
 )
 
 console.log(failures === 0 ? '\nALL CHECKS PASSED' : `\n${failures} CHECK(S) FAILED`)

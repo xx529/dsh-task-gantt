@@ -1,5 +1,77 @@
 # Changelog
 
+## 0.2.30 — 2026-10-13
+
+**泳道头显示「正在做什么」；面板菜单在矮面板/被 transform 的祖先下都能贴住按钮**
+
+**1 — 当前活动：从「运行中」一个词，变成真正的活动短语**
+
+用户贴了参照图，红框里是 `正在分析请求`，并说"这个应该跟对话状态有关的"。查证（三处 file:line 闭合）：
+那句话**不是 better-sidebar 的词**，是**内置 `@deepseek-ai/dsh-client-ui-chat` 的词典**
+（`lib/client.js:5366`），由客户端从会话事件流物化出的「工具调用节点」推导
+（选词 `:2249-2253`、产出 `processActivity` `:10596-10633`、类别映射 `:10494-10517`、
+节点物化 `rootCall` `:9524-9555`）。它的语义是 **`activity = summary.running ?? 'thinking'`**，
+也就是**「当前没有正在跑的工具」** —— 这正是 `正在分析请求` 的含义。
+
+host 侧据此新增 `LaneLiveActivity`（`kind` / `detail` / `toolName?` / `evidence`）与
+`TimelineLane.activity?`：取该 lane 会话日志里**最后一条 `tool/call` 且其 `callId` 没有对应
+`tool/result`**；没有未结算调用 ⇒ `thinking`。为什么用这个信号而不是只看 `turn/start`：
+真实日志实测 2580 次 `tool/call → tool/result` 的间隔**中位 175ms、>1s 796 次、>5s 385 次、
+最长 900s** —— 只看 turn 会把整个 turn 都算作"在工作"，而"调用还没结果"才是工具真正执行的窗口，
+且我们读的是**活会话通道**（未 flush 的 `tool/call` 立刻可见）。17 条守卫真值表锁，
+其中一条关键：**已闭合的 turn 即使还留着未结算调用也只报 `thinking`** —— 否则中断的 turn
+会永远显示"正在跑 bash"。实现中**自己抓到并修掉**一个设计缺陷：第一版用"任一 span 未闭合"，
+结果一个孤儿 `step/start` 就能让已闭合的 turn 续命；现在有 turn 事件时只看 turn，step 无权续命。
+
+真实日志**活捉**两条：一条正在跑 `bash`（`kind=commands`, detail 取自 arguments）、
+一条正在跑 `wait_agent`（`kind=tools`，走 catch-all）。48 个真实工具名里 **38 个**落到 catch-all
+（MCP 工具、`send_message`、`team_task_*`），说明内置那张表的兜底不是理论问题。
+
+**已知、且已写进契约 JSDoc 的差异**：内置面板在模型刚开始流式生成工具参数时显示
+`准备读取文件`，我们**不复现这个子状态** —— 该信号来自客户端合成事件 `assistant/live-chunk`，
+它不在宿主已知事件类型里、在全部持久日志里 0 命中，只活在实时流中。此时我们显示上一状态或
+`正在分析请求`。`已完成 …` 那句摘要需要客户端的分组切分模型，**属独立任务，不在本轮**。
+
+**2 — 短词 + 紧凑计数：一次被抓住的"假绿"**
+
+短语由我们自己的词典出（`thinking→分析中`、`commands→运行命令`、`read→读取中` 等 14 个 kind，
+zh/en 各一份），回退链是 `activity → 运行中/启动中 → 不给词`（空闲泳道仍不说词）。
+但 107px 的头部列放不下「短词 + `5 任务 · ✉ 259`」：**14 个短词没有一个放得下**
+（`分析中` 46px + 75px = 121px），而且**计数文本自身被 `text-overflow: ellipsis` 静默截断**
+（实测 `clientWidth 54 < scrollWidth 62`，尾部的 `✉ 5` 被吃掉）—— 而 meta 行的 `scrollWidth`
+**看不出来**。此前"0/9 省略"的测量因此是**假绿**：那份 fixture 的任务数与消息数为 0。
+改成**紧凑计数** `分析中 · 5 · ✉ 259`（任务数用裸数字、消息数保留 `✉`），完整措辞
+（`5 个任务 · 259 条消息`）保留在 tooltip 与无障碍名里。验收方法也随之升级为**逐文本节点**
+判定，并用真实量级（5 任务 / 259 消息）：三档宽度 × 27 个节点 `failingNodes = 0`、
+`namesTruncated = 0`，最紧组合 `运行命令 + ✉ 259 = 103px ≤ 107px`（余 4px）。
+
+**3 — 面板菜单：`position: fixed` 的包含块被祖先劫持**
+
+用户报"底部打开还是这样，不是在点击处的下方"。根因被合成复现坐实：**祖先上的 `transform`
+会让它成为 `fixed` 后代的包含块**，我们按视口算的 `top/left` 于是整体偏移**恰好等于该祖先的
+视口位置**（合成场景实测 Δtop +406 = 包含块 top、Δleft +600 = 包含块 left）。修法是识别包含块
+并把坐标换算到它的空间，同时**保留以窗口为界的夹取** —— 这样"贴住按钮"与"不被面板裁掉"
+不再冲突（改成"面板内 absolute"会重新被 `overflow` 裁掉，把 0.2.29 刚修好的矮面板打回原形）。
+三场景实测：干净 `top−bottom = 6`、`left−left = 0`；宽包含块 `left−left = 0`（空间足够时优先对齐
+按钮左缘）；窄包含块（420px）兜底夹取以保证可见。四档矮面板（410/250/160/100px）仍全部
+可见可点、`.dtg-scroll` 不变；popover 回归验证未变。
+
+**4 — 文档与回归锁**
+
+`docs/VALIDATION.md`：§1.23 那句"状态词只在顶行"的过期描述改为"状态词是 meta 行里的独立
+`.dtg-head-status` 节点"；新增 **§1.24**（活动短词 / 紧凑计数 / 菜单定位 / 证据口径 / ❓ 未验证）。
+新增真锁三类：泳道高与轨道栈一致性的**产出侧**检查（用 `laneTracks()` 的真实 y/h、零魔数，
+含"只越轨不越界"这一当年密度带的 bug 类别）、泳道头可见契约（`tests/lane-head.spec.ts` 13 例，
+刻意与"词在哪一行、有几个词"无关）、以及**密度带不回流**（扫 `src/**` 5 个 token，校准指向
+删除前的真实源码树 `e32aa2b^` 报出 8 处命中）。牙齿校准均做了破坏→红→复原。
+
+Tests: 773 passed / 1 skipped, 36 files; typecheck 0 errors; verify-build and verify-meta OK.
+**未验证**：暗色皮肤下的短词/开关可辨性；极窄面板（<320px）；非 `transform` 的包含块祖先
+（`filter`/`perspective`/`will-change`/`contain`）只做了代码层判定；`detail` 含换行/超长中文；
+真机上"活动短语渲染"与"自动展示面板"的视觉与焦点落点。
+
+The footer build identity is now `v0.2.30 · live-activity`.
+
 ## 0.2.29 — 2026-10-13
 
 **Working agents get a word; the panel reveals itself on the first team call; the lane-bottom band is

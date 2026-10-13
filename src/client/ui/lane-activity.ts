@@ -29,7 +29,80 @@
  * Kept in its own module (like `task-times.ts`) so the rule is unit-testable without
  * pulling React and the renderer into the test graph.
  */
-import type { ActivitySpan, MemberStatus, TimelineLane } from '../../shared/contract.ts'
+import type { ActivitySpan, LaneLiveActivity, MemberStatus, TimelineLane } from '../../shared/contract.ts'
+import type { UiMessageKey } from './labels.ts'
+
+/**
+ * Short words for the narrow head column, keyed for `labels.ts` so both locales stay in
+ * one place. Deliberately 2-4 characters: the meta column has ~108px total and the counts
+ * already take ~62px, so the word's budget is ~45px.
+ *
+ * These track the wording of the built-in `dsh-client-ui-chat` dictionary (which is where
+ * the user's `正在分析请求` comes from) but are shortened for the column.
+ */
+const ACTIVITY_LABEL_KEY: Record<LaneLiveActivity['kind'], UiMessageKey> = {
+  thinking: 'laneActThinking',
+  read: 'laneActRead',
+  readImage: 'laneActRead',
+  search: 'laneActSearch',
+  write: 'laneActWrite',
+  edit: 'laneActEdit',
+  commands: 'laneActCommands',
+  code: 'laneActCode',
+  webSearch: 'laneActWebSearch',
+  webFetch: 'laneActWebFetch',
+  subagents: 'laneActSubagents',
+  plan: 'laneActPlan',
+  questions: 'laneActQuestions',
+  tools: 'laneActTools',
+}
+
+/**
+ * Full phrasing for the tooltip, keyed by the SHORT word's key.
+ *
+ * The user's reference row reads `正在分析请求`; the head column is too narrow to print that
+ * (it is ~78px against a ~45px budget), so the short word goes in the row and the full
+ * sentence goes in the tooltip — which is where the host's `detail` is appended too.
+ */
+const ACTIVITY_FULL_KEY: Record<string, UiMessageKey> = {
+  laneActThinking: 'laneActThinkingFull',
+  laneActRead: 'laneActReadFull',
+  laneActSearch: 'laneActSearchFull',
+  laneActWrite: 'laneActWriteFull',
+  laneActEdit: 'laneActEditFull',
+  laneActCommands: 'laneActCommandsFull',
+  laneActCode: 'laneActCodeFull',
+  laneActWebSearch: 'laneActWebSearchFull',
+  laneActWebFetch: 'laneActWebFetchFull',
+  laneActSubagents: 'laneActSubagentsFull',
+  laneActPlan: 'laneActPlanFull',
+  laneActQuestions: 'laneActQuestionsFull',
+  laneActTools: 'laneActToolsFull',
+  laneRunning: 'laneWorking',
+  laneProvisioning: 'laneProvisioning',
+}
+
+/**
+ * The tooltip for a lane's word: the FULL phrase's label key, plus the host's `detail`.
+ *
+ * Returned as a KEY rather than a finished string so `labels.ts` stays the one place the
+ * wording lives (and both locales are covered by the parity test). The caller joins them
+ * as `full` or `full：detail`.
+ *
+ * `detail` is truncated by the HOST at 160 chars and again here (`ACTIVITY_DETAIL_MAX`), so
+ * a pathological payload cannot produce a title long enough to matter.
+ *
+ * @param activity - the result of {@link laneActivity}.
+ * @returns the full-phrase key (or `null` when the lane gets no word) and the detail.
+ */
+export function activityTooltip(activity: LaneActivity): { fullKey: UiMessageKey; detail: string | null } | null {
+  if (activity.tooltipKey === null) return null
+  const full = ACTIVITY_FULL_KEY[activity.tooltipKey]
+  return { fullKey: full ?? activity.tooltipKey, detail: activity.tooltipDetail }
+}
+
+/** Longest detail shown in a tooltip; the host truncates too, this bounds the title. */
+export const ACTIVITY_DETAIL_MAX = 160
 
 /** The status word to show, or `null` when the lane gets no text. */
 export interface LaneActivity {
@@ -40,9 +113,43 @@ export interface LaneActivity {
    * A key rather than a finished string, so `labels.ts` stays the single source of the
    * wording and both locales are covered by the parity test.
    */
-  statusKey: 'laneWorking' | 'laneProvisioning' | null
+  statusKey: UiMessageKey | null
   /** Which signal decided it — reported so the choice is auditable, not implicit. */
-  reason: 'status' | 'open-turn' | 'none'
+  reason: 'activity' | 'status' | 'open-turn' | 'none'
+  /** Tooltip body: the full wording, plus the host's `detail` when it has one. */
+  tooltipKey: UiMessageKey | null
+  /** Host detail verbatim (truncated by the caller), or `null`. */
+  tooltipDetail: string | null
+}
+
+/**
+ * The label key for a lane's head word.
+ *
+ * THE FALLBACK CHAIN, in order (and why):
+ *   1. `lane.activity` PRESENT → its short word. This is the richest signal and the one the
+ *      user asked for (`正在分析请求`).
+ *   2. absent, but `laneActivity`-style working → `运行中` / `启动中`. Keeps a word on screen
+ *      against an older host that does not send `activity` yet.
+ *   3. idle → NO word. An idle lane has nothing to say; the user deleted 「空闲」 for exactly
+ *      that reason.
+ *
+ * The `unassigned` bucket and any lane without a status get the same treatment as everyone
+ * else: this function has no special cases, so the filter and the head cannot diverge.
+ */
+function activityFields(lane: TimelineLane): Pick<LaneActivity, 'statusKey' | 'tooltipKey' | 'tooltipDetail'> {
+  const descriptor: LaneLiveActivity | null | undefined = lane.activity
+  if (descriptor !== undefined && descriptor !== null && typeof descriptor.kind === 'string') {
+    const key = ACTIVITY_LABEL_KEY[descriptor.kind]
+    if (key !== undefined) {
+      const detail = typeof descriptor.detail === 'string' ? descriptor.detail : ''
+      return {
+        statusKey: key,
+        tooltipKey: key,
+        tooltipDetail: detail === '' ? null : detail.slice(0, ACTIVITY_DETAIL_MAX),
+      }
+    }
+  }
+  return { statusKey: null, tooltipKey: null, tooltipDetail: null }
 }
 
 /**
@@ -61,15 +168,27 @@ const WORKING_STATUS_KEY: Partial<Record<MemberStatus, 'laneWorking' | 'laneProv
  * @returns the working flag, the label key for its status word, and which signal fired.
  */
 export function laneActivity(lane: TimelineLane): LaneActivity {
+  /**
+   * 1. The host's own activity descriptor wins when present — it is the only signal that
+   *    can say WHAT the agent is doing, not merely that it is busy.
+   */
+  const fields = activityFields(lane)
+  if (fields.statusKey !== null) {
+    return { working: true, ...fields, reason: 'activity' }
+  }
   const statusKey = lane.status === undefined ? undefined : WORKING_STATUS_KEY[lane.status]
-  if (statusKey !== undefined) return { working: true, statusKey, reason: 'status' }
+  if (statusKey !== undefined) {
+    return { working: true, statusKey, reason: 'status', tooltipKey: statusKey, tooltipDetail: null }
+  }
   /**
    * An EXPLICIT non-working status is final. `idle` / `failed` mean the agent is not
    * working, and that must not be overridden by the span fallback below — otherwise a
    * frozen session that left one span open would show a spinner forever. Only a MISSING
    * status falls through to the spans.
    */
-  if (lane.status !== undefined) return { working: false, statusKey: null, reason: 'none' }
+  if (lane.status !== undefined) {
+    return { working: false, statusKey: null, reason: 'none', tooltipKey: null, tooltipDetail: null }
+  }
   /**
    * FALLBACK, used only when `lane.status` is ABSENT — not an override.
    *
@@ -80,8 +199,10 @@ export function laneActivity(lane: TimelineLane): LaneActivity {
    * mark; the layout's `open: true` is accepted too.
    */
   const openTurn = (lane.spans ?? []).some(isOpenTurn)
-  if (openTurn) return { working: true, statusKey: 'laneWorking', reason: 'open-turn' }
-  return { working: false, statusKey: null, reason: 'none' }
+  if (openTurn) {
+    return { working: true, statusKey: 'laneWorking', reason: 'open-turn', tooltipKey: 'laneWorking', tooltipDetail: null }
+  }
+  return { working: false, statusKey: null, reason: 'none', tooltipKey: null, tooltipDetail: null }
 }
 
 /**

@@ -79,3 +79,68 @@ export function clipBounds(anchor: HTMLElement, options: ClipBoundsOptions | num
   }
   return viewport
 }
+
+/**
+ * The element that `position: fixed` descendants are resolved against, or `null` when
+ * that is the viewport.
+ *
+ * Normally a fixed element IS resolved against the viewport, which is what every caller
+ * here assumes. But an ancestor with `transform`, `filter`, `perspective`,
+ * `contain: paint|layout|strict|content`, or `will-change: transform` becomes the
+ * CONTAINING BLOCK instead. Measured on a synthesised case: a wrapper with
+ * `transform: translate(0,0)` at viewport `left 600 / top 400` made a menu whose inline
+ * style was `left:955` render at viewport `x=1555` — off by exactly the wrapper's own
+ * position, i.e. the user's "菜单不在点击处的下方".
+ *
+ * @param element - the element whose fixed positioning is being computed.
+ */
+export function fixedContainingBlock(element: HTMLElement): HTMLElement | null {
+  let el: HTMLElement | null = element.parentElement
+  while (el !== null && el !== document.documentElement) {
+    const cs = getComputedStyle(el)
+    if (
+      cs.transform !== 'none' ||
+      cs.filter !== 'none' ||
+      cs.perspective !== 'none' ||
+      cs.willChange === 'transform' ||
+      /paint|layout|strict|content|size/.test(cs.contain === 'none' ? '' : cs.contain)
+    ) {
+      return el
+    }
+    el = el.parentElement
+  }
+  return null
+}
+
+/**
+ * How much to subtract from a VIEWPORT-space offset before writing it as `top`/`left`
+ * on a fixed element, plus the coordinate space's own bounds.
+ *
+ * When a containing block exists, `top`/`left` are measured from that ancestor's padding
+ * box rather than the viewport, so `viewportOffset - ancestorViewportOffset` is the value
+ * that actually lands on screen where the viewport arithmetic said. With no such
+ * ancestor both offsets are zero and nothing changes.
+ *
+ * The bounds are returned in the SAME space, so room/flip/clamp decisions stay correct
+ * for a docked panel whose wrapper is smaller than the window.
+ *
+ * @param element - the fixed-positioned element being placed.
+ */
+export function overlaySpace(element: HTMLElement): { offsetX: number; offsetY: number; bounds: OverlayBounds } {
+  const viewport: OverlayBounds = {
+    left: 0,
+    right: typeof window === 'undefined' ? 1024 : window.innerWidth,
+    top: 0,
+    bottom: typeof window === 'undefined' ? 768 : window.innerHeight,
+    width: typeof window === 'undefined' ? 1024 : window.innerWidth,
+  }
+  if (typeof document === 'undefined') return { offsetX: 0, offsetY: 0, bounds: viewport }
+  const cb = fixedContainingBlock(element)
+  if (cb === null) return { offsetX: 0, offsetY: 0, bounds: viewport }
+  const r = cb.getBoundingClientRect()
+  return {
+    offsetX: r.left,
+    offsetY: r.top,
+    bounds: { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width },
+  }
+}

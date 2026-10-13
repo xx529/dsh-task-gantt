@@ -28,7 +28,7 @@ export const API_VERSION = 1 as const
  * or behaviour changes, and a tester can read the version off the screen
  * instead of guessing from a screenshot.
  */
-export const BUILD_LABEL = 'v0.2.29 · working-lanes' as const
+export const BUILD_LABEL = 'v0.2.30 · live-activity' as const
 
 /** The sidebar tab type id registered through `ctx.betterSidebar.registerTab`. */
 export const TAB_TYPE_ID = 'dsh-task-gantt:board' as const
@@ -260,6 +260,87 @@ export interface LaneWait {
   sessionId: string
 }
 
+/**
+ * What the lane's agent is doing RIGHT NOW, as a semantic category.
+ *
+ * Deliberately a category and not a sentence: the host publishes the same vocabulary
+ * the built-in chat UI uses for its own process header
+ * (`message.stepProcess.*` in `@deepseek-ai/dsh-client-ui-chat/lib/client.js:5366`),
+ * and the CLIENT owns the wording through its own dictionary. The host never emits a
+ * Chinese phrase.
+ *
+ * `'thinking'` is the built-in's own fallback for "no tool call is in flight"
+ * (`live.activity = data?.summary.running ?? "thinking"`, same file `:2248`), i.e. the
+ * `正在分析请求` the user asked for.
+ */
+export type LaneLiveActivityKind =
+  | 'thinking'
+  | 'read'
+  | 'readImage'
+  | 'search'
+  | 'write'
+  | 'edit'
+  | 'commands'
+  | 'code'
+  | 'webSearch'
+  | 'webFetch'
+  | 'subagents'
+  | 'plan'
+  | 'questions'
+  | 'tools'
+
+/**
+ * One lane's live activity, derived from that lane's own session log.
+ *
+ * ## What it is
+ *
+ * The lane's last `tool/call` that has NO matching `tool/result` yet, while the lane's
+ * turn/step is still open. Both halves are durable, host-readable session events
+ * (`tool/call` / `tool/result` are first-class members of the host's `SessionEventMap`),
+ * so this is derived, never guessed.
+ *
+ * ## What it is NOT — read this before rendering
+ *
+ * 1. **`preparing` is NOT reproducible.** The built-in's `prepare.*` wording
+ *    (`准备读取文件`) comes from the client-synthetic event `assistant/live-chunk`
+ *    (`tool-call-delta`), which is **not a session event type at all** — it is absent
+ *    from `known-event-types.js` and appears in **zero** durable logs. A host that only
+ *    sees committed events cannot know the model is still streaming tool arguments, so
+ *    this field never reports that sub-state. It is a declared gap, not an oversight.
+ * 2. **The `已完成 …` summary is out of scope.** That needs the built-in's client-side
+ *    process-group segmentation (`conversation-nodes/process-groups.js`), which is
+ *    separate work.
+ * 3. **Only render this for a lane you already present as active.** `kind: 'thinking'`
+ *    means "no tool in flight" — for an idle lane that is also true, and painting
+ *    `正在分析请求` on a finished agent would be wrong. Gate on `status === 'running'`
+ *    (or `'provisioning'`), exactly as the existing status word is gated.
+ *
+ * ## Why an unsettled `tool/call` and not just `turn/start`
+ *
+ * Measured over the Lead's real session log: 2580 `tool/call` events, and the interval
+ * to the matching `tool/result` is a median of **175 ms** but with a long tail —
+ * **796** calls over 1 s, **385** over 5 s, **128** over 30 s, longest **900 s**. So
+ * "a turn is open" would claim work for the whole turn, while "a `tool/call` has no
+ * result yet" is precisely the window in which a tool is executing — and it is wide
+ * enough for a human reading the panel to see it. The host reads the LIVE channel
+ * (`agents.get(id).session.snapshotEvents()`), so an unflushed `tool/call` is visible
+ * immediately.
+ */
+export interface LaneLiveActivity {
+  /** The category the running tool maps to, or `'thinking'` when none is in flight. */
+  kind: LaneLiveActivityKind
+  /**
+   * A short human-readable detail taken from the running tool's JSON arguments
+   * (`title` / `description` / `task` / …, first non-empty wins), collapsed to one
+   * line and clipped to 160 characters. Empty string when there is nothing to show.
+   */
+  detail: string
+  /** The running tool's own name; absent when nothing is in flight. */
+  toolName?: string
+  /** Which half of the rule decided the answer — so the value is auditable. */
+  evidence: 'running-tool' | 'no-running-tool'
+}
+
 export interface TimelineLane {
   /** The member's session id, or `'lead'` for the Lead row, or `'unassigned'`. */
   id: string
@@ -292,6 +373,19 @@ export interface TimelineLane {
    * wait is the stretch of time spent hoping for one.
    */
   waits?: LaneWait[]
+  /**
+   * What this lane's agent is doing right now.
+   *
+   * OPTIONAL by contract: absent when the lane has no readable session log, or is the
+   * `unassigned` bucket. A payload without it must render byte-for-byte as before —
+   * that is what makes this a progressive enhancement. See {@link LaneLiveActivity} for
+   * the two things it deliberately cannot report, and the rendering precondition.
+   *
+   * `null` is accepted as well as absent: JSON has no `undefined`, the client already
+   * treats an explicit `null` as "no activity", and the contract uses `| null` elsewhere
+   * (`range.end`). The host itself omits the key rather than sending `null`.
+   */
+  activity?: LaneLiveActivity | null
   /**
    * This lane's identity colour, as theme-token names. Stable for a given
    * member id, so the same teammate keeps one colour across every panel.

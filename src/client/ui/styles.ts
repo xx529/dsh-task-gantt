@@ -148,11 +148,11 @@ export const BOARD_CSS = `
   min-width: 0;
   flex: 1 1 auto;
   display: inline-block;
-  /* Capped so the status word and spinner always have a seat: the pill yields and
-     ellipsises internally instead of pushing them out. Measured with a 40-character
-     name: pill 51px of 275px of text, ellipsised, while "运行中" and the spinner stayed
-     fully visible and the row stayed 72px. */
-  max-width: 62%;
+  /* NO max-width cap. One was added while the row held three items (pill + status word
+     + spinner) so the word kept a seat; the status word has since moved to the meta line,
+     and the cap was then the only thing still truncating names — measured: host-data
+     needed 69px but was capped to 66px, against ~108px of free row. Without it the pill
+     uses the row (and shrinks only if a name genuinely does not fit). */
   padding: 1px 6px;
   border-radius: 3px;
   overflow: hidden;

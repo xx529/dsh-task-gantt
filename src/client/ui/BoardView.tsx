@@ -24,7 +24,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import type { LaneNavigation, TimelineLane, TimelineResponse, TimelineTask } from '../../shared/contract.ts'
 import { filterTimelineLanes, isPinnedLane } from './lane-filter.ts'
-import { clipBounds } from './overlay-position.ts'
+import { clipBounds, overlaySpace } from './overlay-position.ts'
 import { BUILD_LABEL, MESSAGE_PREVIEW_MAX, type MessageSpan } from '../../shared/contract.ts'
 import { fetchTimeline, type RouteBase } from '../api.ts'
 import { t } from '../i18n.ts'
@@ -160,29 +160,54 @@ function LaneFilterMenu({
   /** ~3 rows, so the menu is always recognisable and scrollable rather than a sliver. */
   const MIN_USABLE_H = 90
   const MAX_H = 240
-  const viewportW = window.innerWidth
-  const viewportH = window.innerHeight
-  const width = Math.min(240, Math.max(120, viewportW - 2 * MARGIN))
-  const roomBelow = viewportH - rect.bottom - 2 * MARGIN
-  const roomAbove = rect.top - 2 * MARGIN
+  /**
+   * WHERE `top`/`left` ARE MEASURED FROM.
+   *
+   * They are viewport coordinates only while `position: fixed` resolves against the
+   * viewport. An ancestor with `transform` / `filter` / `perspective` / `contain` /
+   * `will-change: transform` becomes the containing block instead, and then the same
+   * numbers land offset by that ancestor's own viewport position — measured on a
+   * synthesised case: inline `left: 955` rendered at viewport `x=1555`, i.e. +600, the
+   * wrapper's left edge. That is the reported "菜单不在点击处的下方".
+   *
+   * `overlaySpace` returns the subtraction that cancels it, plus the bounds expressed in
+   * the same space so the room/flip/clamp arithmetic below stays correct for a docked
+   * panel whose wrapper is smaller than the window.
+   */
+  const space = overlaySpace(anchor)
+  const boundsW = space.bounds.width
+  const boundsH = space.bounds.bottom - space.bounds.top
+  // Trigger position relative to the containing block (== viewport when there is none).
+  const relTop = rect.top - space.offsetY
+  const relLeft = rect.left - space.offsetX
+  const relBottom = relTop + rect.height
+  const width = Math.min(240, Math.max(120, boundsW - 2 * MARGIN))
+  const roomBelow = boundsH - relBottom - 2 * MARGIN
+  const roomAbove = relTop - 2 * MARGIN
   // Flip only when below cannot hold the menu AND above is genuinely better.
   const flipAbove = roomBelow < MAX_H && roomAbove > roomBelow
   const room = Math.max(0, flipAbove ? roomAbove : roomBelow)
   const maxHeight = Math.max(MIN_USABLE_H, Math.min(MAX_H, room))
   /**
-   * Horizontal: prefer the trigger's own left edge, then keep the menu inside the window.
-   * Clamped to the WINDOW for the same reason as the vertical bound — the panel can be
-   * narrower than the menu and must not clip it.
+   * Horizontal, and the PRIORITY ORDER is deliberate:
+   *   1. ALIGN WITH THE TRIGGER'S LEFT EDGE when it fits (`relLeft + width` is inside the
+   *      space). This is the normal case and what "under the button" means.
+   *   2. Only when it would overflow is it clamped back inside the space. That fallback is
+   *      approved: a transformed containing block can be NARROWER than the menu (measured:
+   *      420px space, 240px menu, trigger 181px from the space's left edge), and aligning
+   *      there would push the menu past the ancestor's right edge, where it is clipped.
+   * So a narrow space costs left-alignment, never visibility.
    */
-  const left = Math.min(Math.max(MARGIN, rect.left), Math.max(MARGIN, viewportW - width - MARGIN))
+  const maxLeft = Math.max(MARGIN, boundsW - width - MARGIN)
+  const left = relLeft + width <= boundsW - MARGIN ? Math.max(MARGIN, relLeft) : maxLeft
   /**
-   * Positioned with `top` only (a `bottom` offset is measured from the viewport, which
-   * misplaced the menu badly on a docked panel). When flipped, the menu sits `MARGIN`
-   * above the trigger.
+   * Positioned with `top` only (a `bottom` offset is measured from the containing block's
+   * bottom, which misplaced the menu badly on a docked panel). When flipped, the menu sits
+   * `MARGIN` above the trigger.
    */
   const style: CSSProperties = {
     left,
-    top: flipAbove ? rect.top - MARGIN - maxHeight : rect.bottom + MARGIN,
+    top: flipAbove ? relTop - MARGIN - maxHeight : relBottom + MARGIN,
     maxHeight,
     width,
   }

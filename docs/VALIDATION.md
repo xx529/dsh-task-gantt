@@ -183,7 +183,7 @@ Lead 扩展并冻结了 `src/shared/contract.ts`（`SpanSpeaker` / `MessageSpan`
 |---|---|---|
 | `tests/token-definitions.spec.ts`（新） | 8 | **①存在性**：剥注释后扫 `src/**`（19 文件）的 `var(--token)` 与 `'--token'` 引用，差集必须为空（**当前 25 个 distinct 引用、0 missing**）。②**对比度**：`UR_MARKER_RING_TOKENS` 双层、`UR_MARKER_FILL_TOKEN` = 面板表面、每套皮肤至少一层 ≥3:1、被否掉的 `markdown-citation`（不随皮肤翻转）1.16:1 的反例锁、WCAG 公式自校准（18.90 / 1.17 / 1.16 / 1.00 / 15.41 全复现）。 |
 | `tests/client-navigation.spec.ts`（新） | 13 | `apply()` 期间 `ctx.get` 调用序列**恰为 `['betterSidebar']`**（惰性取用的回归锁）；`navigate()` 四类死服务一律返回 false 且不冒泡（缺服务 / `openSession` 非函数 / 抛错 / **点击时 registry 抛错**）；解包口径（session→**裸字符串**、address→**同一对象引用** `toBe`）；**晚挂载**后同一 `navigate` 闭包开始工作；descriptor（`id`/`order=50`/`single`/`dedupeKey`）与 props **恰为四项**且回调**引用稳定**。 |
-| `tests/layout.spec.ts` +12 | 51 | 冻结窗口语义（`live:false` 时 `now` 取 3 万或 10 亿都不改变 `window.end`/`dataWidth`/span x；闭合 span 不被拉伸；`live:true`→`endMarker.kind='now'`；退化 payload → `endSource='datum'`；**旧 payload 无 `live` 字段 → 仍按 live 处理**）；消息层（**抽稀只删不挪**：每个标记 time 必须等于某条真实消息的 time；`droppedMessageCount` 守恒；密度带 `count/firstTime/lastTime` 覆盖真实首尾；`decimateMarkers` 确定性 + `maxPerLane`；`both` 与 `markers` 的候选差；缺 `to` 不编造；恶意 messages 不抛异常）。 |
+| `tests/layout.spec.ts` +12 | 51 | 冻结窗口语义（`live:false` 时 `now` 取 3 万或 10 亿都不改变 `window.end`/`dataWidth`/span x；闭合 span 不被拉伸；`live:true`→`endMarker.kind='now'`；退化 payload → `endSource='datum'`；**旧 payload 无 `live` 字段 → 仍按 live 处理**）；消息层（**抽稀只删不挪**：每个标记 time 必须等于某条真实消息的 time；`droppedMessageCount` 守恒；~~密度带 `count/firstTime/lastTime` 覆盖真实首尾~~ **（该带已于 0.2.29 删除，本条已过时 —— 见 §1.23；同一批断言里讲 marker 的部分仍然有效）**；`decimateMarkers` 确定性 + `maxPerLane`；`both` 与 `markers` 的候选差；缺 `to` 不编造；恶意 messages 不抛异常）。 |
 | `tests/bundle.spec.ts` 加强 | 16 | 运行时 `require` **白名单收紧为恰好 `["react","react/jsx-runtime"]`**（原先允许 `@deepseek-ai/*` 与 react-dom，无法发现新增依赖）。 |
 | `tests/host-integration.spec.ts` +3 | 23 | **空 live 读不再遮蔽磁盘日志**的回归用例（见下）；「两条通道都可读但为空」按**成功空读**处理（`source:'log'`、0 span，不诬告成 `partial`）。 |
 
@@ -520,6 +520,54 @@ task-16：8791 服务文件 917fceca426dbe57216cb66b9bc1ea53  151057 B
 2. 或直接逐字节：`diff <(tail -n +3 served.js) <repo>/lib/client.js` —— 这次就是这一步给出 `IDENTICAL`；
 3. **绝不用整文件 md5 与仓库 `lib/client.js` 比较**（永远不可能相等，差值恒为 121 B 的 shim）。
 这条与我此前的教训同族（"两个测量不齐先找测量对象差异，而不是先判谁错"）：这次差异来自**我的取样对象**（含 shim 的部署文件）而不是被测代码。**已把两次假警报都记为我的错误**，不删不改原文，只在此更正。
+
+## 1.23 标注过时：泳道底部的消息密度带已在 0.2.29 删除（本文件此前把它当现有行为）
+
+**触发**：用户指着每条泳道底部那条彩色细条说「这里每个泳道底部都有一个色条，我觉得这个逻辑可以不需要了」。
+**处理（task-47，owner `ui`）**：端到端删除 `MESSAGE_BAND_MIN_PX` / `MESSAGE_BAND_HEIGHT` 常量、`TimelineLayout.messageBands` 结果字段、`MessageBandRect` 接口、构造块（含"刻意不做 range 裁剪"的解释性散文）、`GanttChart.tsx` 的渲染块（泳道色 paint + `${count} 条消息，从 {from} 到 {to}` tooltip）、`.dtg-msg-band` 规则，以及 locales 里的 `messageBandTitle`。**唯一仍有效的原始数字都在 marker 一侧**，故本节只保留那部分（见 §1.4 消息层与 `tests/layout.spec.ts` 的 marker 断言）。
+
+**本文件里被标注为过时的地方**：§1.4 的测试清单表（`tests/layout.spec.ts` 那一行）里"密度带 `count/firstTime/lastTime` 覆盖真实首尾"一句已加删除线并指向本节，其余 marker 数字不变（该文件是台账，按仓库惯例**标注而不抹掉**）。
+
+**替代它的新锁（task-47 补齐，见 §3 的 spec 清单）**：
+- `tests/layout.spec.ts`：`src/` 全树 0 命中 `messageBands` / `MessageBandRect` / `MESSAGE_BAND_` / `dtg-msg-band`（防回流）；泳道高与轨道栈一致性（用 `laneTracks()` 的真实 y/h，最深轨道底 + `LANE_BOTTOM_PAD` ≤ `DEFAULT_LANE_HEIGHT`，且 `layoutTimeline` 产出的 span/task/marker/wait 四族 rect 都不得越过 `laneHeight`）。
+- `tests/lane-head.spec.ts`（新）：泳道头 counts 是**一个** `' · '` 连接的文本节点（不是三个节点）；状态词是 **meta 行**里的独立 `.dtg-head-status` 节点、绝不折进 counts 节点，且只对工作泳道生成（0.2.30 起；该锁刻意与"词在哪一行、有几个词"无关 —— 词在 22:35 从顶行搬进 meta 行、0.2.30 又加入活动短词，两次都没让这条锁变红，见 §1.24）。
+
+**浏览器复核（我这一轮实测，替代原来只靠目视的那条）**：服务产物剥掉前两行 shim 后 `md5 = a1c0de92179d3fc3940fb03f60f871a9`，与仓库 `lib/client.js` 逐字节 `IDENTICAL`；页面 `http://127.0.0.1:8791/demo/index.html?v=mine`。**before**（`git show HEAD:lib/client.js`，剥 shim 后 `a95339c1065fbc3fd520d1ce7cc91517`）：`.dtg-msg-band` 8 个，各 `h=2`、`top=+69`、`bottom=+71`、背景 = 泳道色、`opacity 0.35`，且每泳道"最深 track 子元素" = **+71**（band 就是最深那个）。**after**：`.dtg-msg-band` **0 个**，`+69..+71` 无任何元素，每泳道最深 track 子元素回落到 **+62**；`laneHeight 72`、`headerHeight 28`、`canvasHeight 676`（28+9×72）、`.dtg-msg 33` / `.dtg-task 24` / `.dtg-wait 18` / `.dtg-task-event 51` / `.dtg-turn 54` / `.dtg-step 57` **before→after 完全相等**。
+
+> **不是本节范围的相邻项**：§1.16 末尾"未验证"里的「`end === null` 且 NOW 被滚出视口时，**band** 右端被画布裁掉且无额外提示」说的是 **wait/活动条**（仍在），**不是**密度带 —— 两处都叫 `band`，容易混，特此区分，原文未改动。
+
+## 1.24 0.2.30：活动短词 + 紧凑计数 + 面板菜单定位
+
+**交付者**：`ui-2`（活动短词、紧凑计数、面板菜单定位）、`host-data`（`lane.activity` 活动字段 + 守卫真值表）。**本节由 `ui` 代记**（收尾轮：Lead 裁定由 `ui` 把三件的实测数字落进台账）—— **凡不是我自己跑出来的数字，都标出来源**，没有独立复跑的字段一律 ❓。
+
+### 1.24.1 活动短词（`lane.activity` → 一个词）
+- **信号**：宿主新增 `LaneLiveActivity`（`kind` + `detail` + `toolName?` + `evidence`），客户端 `lane-activity.ts` 把 `kind` 映到 2–4 字短词（`laneActThinking` → `分析中`，共 **14 个 kind**，zh/en 两份）。
+- **回退链**：`activity → 运行中/启动中（status 兜底）→ 不给词`（`idle`/`failed` 且无 descriptor 时不给词；这条链的判定归 `tests/lane-activity.spec.ts`）。
+- **头部行实测**（ui-2 交付报告，`ui` 未独立复跑）：`运行命令 · 5 · ✉ 259`。
+- **逐节点宽度**（ui-2 报告，**三档 480/420/300px 结果相同**）：`name 88/88`、`status 53/53`、`counts 50/50`；**`failingNodes = 0`、`namesTruncated = 0`**。
+- **值得记住的假绿教训**：上一轮 counts 节点曾被**静默截断**（实测 `clientWidth 54 < scrollWidth 62`），而"看起来正常"；改紧凑计数后为 `50/50`。最紧组合 `运行命令 + ✉ 259 = 103px ≤ 107px`（余 **4px**）—— 余量只够一个 3 字词，这是"短词必须 2–4 字"这一约束的来源。
+
+### 1.24.2 紧凑计数
+- 行内为 `5 · ✉ 259`：任务数是**裸数字**、消息数保留 `✉` 前缀（`任务`/`消息`两个词移出可见文本）。
+- **词没有丢**：完整措辞 `5 个任务 · 259 条消息` 进**行 tooltip / 无障碍名**，新 key `countsFullLabel`（zh `{tasks} 个任务 · {messages} 条消息` / en `{tasks} tasks · {messages} messages`）。
+- **`ui` 的锁（本轮落地）**：`tests/lane-head.spec.ts` 13 例 —— counts 是**单一文本节点**且形如 `[裸任务数, ✉ 消息数].filter(present).join(' · ')`；counts 节点**不含任何状态词或活动词**；行 `title` 含 `countsFullLabel`；meta 行 = `1 counts 节点 + 0..2 个 inline 词 span`，其余节点（含块级元素）报错；活动词存在时头部只印**最具体的那个词**（`laneActCommands` 而非 `运行中`）；`.dtg-head-status` 只对工作泳道生成。**牙齿**：谓词级标定（两个 counts 兄弟节点 / 第三个陌生节点 / `div` 块级节点 / 3 个词 span / counts 文本含活动词 全部为红；0、1、2 个词均为绿）+ 真树 liveness（把期望泳道换成隔壁 → 3 条真红）。
+
+### 1.24.3 面板菜单定位（filter 菜单）
+- **根因**：菜单用 `fixed`，而"包含块"被祖先 `transform` 劫持 —— 合成复现的 `Δtop +406` / `Δleft +600` 与该包含块的视口位置**逐一对上**（不是猜的）。
+- **修法**：识别包含块 + 坐标换算 + 保留**以窗口为界**的夹取。
+- **实测量**（ui-2 报告）：三场景 `top − bottom = 6`；空间足够时 `left − left = 0`；窄包含块走到兜底夹取且**可见**；四档矮面板（410/250/160/100）`fullyVisible` + `hitIsMenu` + `.dtg-scroll 360/288` **不变**；popover 回归正常。
+
+### 1.24.4 证据口径与缺口
+- 口径沿用 §1.23：**部署产物剥掉前两行 shim 后的 md5** + 与仓库 `lib/client.js` **逐字节一致** + 页面 URL + before/after 计数对拍 + 截图。
+- ❓ **本节缺的字段**：三件各自那套 md5 / 页面 URL / 截图由 `ui-2` 的交付报告持有，**我（ui）没有独立复跑，故不在此填写**；`host-data` 的守卫真值表见 `tests/host-live-activity.spec.ts`（**17 条**）。
+- **锁的归属（只做指针，不复制断言）**：活动短词 → `tests/lane-head.spec.ts`（可见契约，`ui` 所有）+ `tests/lane-activity.spec.ts`（descriptor→key 表，其 owner 所有）；菜单定位 → `overlay-position` 侧锁；宿主字段真值表 → `tests/host-live-activity.spec.ts`。
+
+### 1.24.5 ❓ 未验证（照实记，不写"已验收"）
+1. **暗色皮肤**下活动短词 / 紧凑计数 / 菜单的可读性——无暗色 demo。
+2. **极窄面板（< 320px）**下短词 + counts 的挤压上限（107px 列是按 420px 面板测得）。
+3. **非 `transform` 的包含块祖先**（`filter` / `perspective` / `will-change` / `contain`）只做了**代码层判定**，未逐一实测。
+4. `activity.detail` 含**换行或超长中文**时的头部/tooltip 表现未测（宿主侧已裁到 160 字符并压成一行，但客户端未实测）。
+5. **`preparing`（准备读取文件）不可复现**：该信号只存在于客户端实时流、不落盘，因此**没有**对应的 fixture 与锁。
 
 ## 2. 环境（实测值）
 

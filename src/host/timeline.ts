@@ -846,6 +846,14 @@ async function deriveTimeline(ctx: Context, sessionId: string, generatedAt: numb
       const laneFold = folds.get(draft.sessionId)
       if (laneFold !== undefined && laneFold.waits.length > 0) lane.waits = laneFold.waits
     }
+    // What this lane's agent is doing right now. Attached ONLY when the lane's own log
+    // was readable — the field is optional by contract, and an unreadable log must stay
+    // indistinguishable from today's payload rather than defaulting to a guess
+    // (`'thinking'` would be a claim, not a degradation).
+    if (draft.sessionId !== undefined) {
+      const laneFold = folds.get(draft.sessionId)
+      if (laneFold !== undefined) lane.activity = laneFold.laneActivity
+    }
     if (draft.sessionId !== undefined) {
       lane.navigation = { type: 'session', value: draft.sessionId }
     }

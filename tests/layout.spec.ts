@@ -9,10 +9,14 @@
  * Determinism is asserted too (no `Date.now()` inside the module): the same
  * input must always produce a deep-equal layout.
  */
+import { readdirSync, readFileSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import type { MessageSpan, TimelineLane, TimelineResponse } from '../src/shared/contract.ts'
+import type { MessageSpan, TimelineLane, TimelineResponse, TimelineTask } from '../src/shared/contract.ts'
 import {
   FOLLOW_GUTTER_RATIO,
+  ACTIVITY_TRACK_HEIGHT,
   ACTIVITY_TRACK_TOP,
   DAY_MS,
   DEFAULT_HEADER_HEIGHT,
@@ -49,6 +53,8 @@ import {
   formatDateTime,
   LANE_BOTTOM_PAD,
   MESSAGE_MARKER_MIN_GAP_PX,
+  MESSAGE_TRACK_HEIGHT,
+  MESSAGE_TRACK_TOP,
   resolveMessageDirection,
   TASK_TRACK_HEIGHT,
   decimateMarkers,
@@ -59,8 +65,11 @@ import {
   pickTickStep,
   type TimelineViewport,
 } from '../src/client/ui/timeline-layout.ts'
-import { shouldFollowScroll } from '../src/client/ui/GanttChart.tsx'
+import { shouldFollowScroll, waitBandRects } from '../src/client/ui/GanttChart.tsx'
 import { validTimeline } from './helpers/timeline-assert.ts'
+
+/** Repository root, for the "the deleted band cannot come back" source scan. */
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
 const VIEWPORT: TimelineViewport = { width: 200, height: 400, laneHeight: DEFAULT_LANE_HEIGHT, headerHeight: DEFAULT_HEADER_HEIGHT }
 
@@ -1710,5 +1719,210 @@ describe('an anchored range narrows a session that is LONGER than the span', () 
     // The start does not move with the clock; only the end grows.
     expect(later.window.start).toBe(anchor)
     expect(later.window.end).toBeGreaterThan(now)
+  })
+})
+
+/* ------------------------------------------------------------------------- */
+/* task-47 follow-up: the lane box must fit EVERY child its producers emit    */
+/* ------------------------------------------------------------------------- */
+
+/**
+ * The 72px lane is FIXED by decision, so every family that draws inside a lane has to
+ * fit inside it. The CONSTANT-level half is already locked in
+ * `layoutTimeline — geometry` (`laneTracks()` + `LANE_BOTTOM_PAD`); this block locks
+ * the PRODUCERS: the rects `layoutTimeline` and `waitBandRects` actually return, each
+ * measured against the origin of the lane it was built for.
+ *
+ * Why it exists: the message-density band that 0.2.29 deleted used to sit at
+ * `laneY + laneHeight - MESSAGE_BAND_HEIGHT - 1` — i.e. outside all three tracks — and
+ * nothing but a human looking at the panel ever noticed. A family that drifts out of
+ * its track (or a lane that shrinks under its own stack) now fails HERE, naming the
+ * family and the lane.
+ *
+ * Everything is expressed with `laneTracks()` / the exported constants, so retuning a
+ * track height or the lane height does not make this red on correct code.
+ */
+describe('every child family fits inside its own lane box', () => {
+  const START = 1_700_000_000_000
+  const WINDOW_END = START + 60_000
+
+  /** Two lanes, each carrying all four families (spans, markers, waits, a task). */
+  function allFamilies(): TimelineResponse {
+    const base = validTimeline()
+    const template = base.lanes[0] as TimelineLane
+    const taskTemplate = template.tasks[0] as TimelineTask
+    const lane = (id: string, index: number): TimelineLane => ({
+      ...template,
+      id,
+      name: id,
+      spans: [
+        { kind: 'turn', start: START + 1_000, end: START + 40_000 },
+        { kind: 'step', start: START + 3_000, end: START + 8_000, turn: 1, step: 1 },
+        { kind: 'step', start: START + 20_000, end: null, turn: 1, step: 2 },
+      ],
+      messages: (template.messages as MessageSpan[]).map((message, position) => ({
+        ...message,
+        time: START + (position === 0 ? 2_000 : 30_000),
+        sessionId: `session-${index}`,
+      })),
+      waits: [{ start: START + 10_000, end: START + 15_000, timedOut: false, sessionId: `session-${index}` }],
+      tasks: [
+        {
+          ...taskTemplate,
+          id: `task-${id}`,
+          laneId: id,
+          history: [{ time: START + 4_000, action: 'created', revision: 1, sessionId: `session-${index}` }],
+        },
+      ],
+    })
+    const lanes = [lane('lane-a', 0), lane('lane-b', 1)]
+    return {
+      ...base,
+      range: { start: START, end: WINDOW_END },
+      live: false,
+      lanes,
+      tasks: lanes.flatMap((entry) => entry.tasks),
+    }
+  }
+
+  const data = allFamilies()
+  const layout = layoutTimeline(data, VIEWPORT, { now: WINDOW_END, msPerPx: 100, tzOffsetMinutes: 0 })
+  const tracks = laneTracks(0, DEFAULT_LANE_HEIGHT)
+  const track = (id: LaneTrack['id']): LaneTrack => tracks.find((entry) => entry.id === id) as LaneTrack
+  /** Content-px top of a lane row, exactly as the chart computes it. */
+  const laneBase = (laneIndex: number): number => DEFAULT_HEADER_HEIGHT + laneIndex * DEFAULT_LANE_HEIGHT
+
+  it('has all four families in the fixture (the guard is not vacuous)', () => {
+    expect(layout.spans.length).toBeGreaterThan(0)
+    expect(layout.messages.length).toBeGreaterThan(0)
+    expect(layout.tasks.length).toBeGreaterThan(0)
+    expect(data.lanes[0]?.waits?.length).toBe(1)
+  })
+
+  it('puts the deepest child of every family at or above the lane bottom', () => {
+    const children = [
+      ...layout.spans.map((span) => ({
+        what: `span:${span.kind}`,
+        laneIndex: span.laneIndex,
+        track: 'activity' as const,
+        rel: span.y - laneBase(span.laneIndex),
+        h: span.h,
+      })),
+      ...layout.messages.map((marker) => ({
+        what: `marker:${marker.key}`,
+        laneIndex: marker.laneIndex,
+        track: 'message' as const,
+        rel: marker.y - laneBase(marker.laneIndex),
+        h: marker.h,
+      })),
+      ...layout.tasks.map((card) => ({
+        what: `card:${card.task.id}`,
+        laneIndex: card.laneIndex,
+        track: 'task' as const,
+        rel: card.y - laneBase(card.laneIndex),
+        h: card.h,
+      })),
+    ]
+    for (const child of children) {
+      const where = `${child.what} (lane ${child.laneIndex})`
+      expect(child.rel, where).toBeGreaterThanOrEqual(0)
+      expect(child.rel + child.h, `${where} bottom`).toBeLessThanOrEqual(DEFAULT_LANE_HEIGHT)
+      // And inside its OWN track, which is the part a per-family placement bug breaks.
+      const slice = track(child.track)
+      expect(child.rel, `${where} above the ${child.track} track`).toBeGreaterThanOrEqual(slice.y)
+      expect(child.rel + child.h, `${where} below the ${child.track} track`).toBeLessThanOrEqual(slice.y + slice.h)
+    }
+    // The message track sits ABOVE the activity track (the user's explicit order).
+    expect(track('message').y).toBeLessThan(track('activity').y)
+    expect(track('message').y).toBe(MESSAGE_TRACK_TOP)
+    expect(track('message').h).toBe(MESSAGE_TRACK_HEIGHT)
+    expect(track('activity').y).toBe(ACTIVITY_TRACK_TOP)
+    expect(track('activity').h).toBe(ACTIVITY_TRACK_HEIGHT)
+  })
+
+  it('keeps the wait band on the activity track, inside the lane', () => {
+    const lane = data.lanes[0] as TimelineLane
+    const bands = waitBandRects(lane.waits ?? [], {
+      laneId: lane.id,
+      laneIndex: 0,
+      windowStart: START,
+      windowEnd: WINDOW_END,
+      msPerPx: 100,
+      laneY: laneBase(0),
+      laneHeight: DEFAULT_LANE_HEIGHT,
+    })
+    expect(bands.length).toBe(1)
+    const band = bands[0] as (typeof bands)[number]
+    const slice = track('activity')
+    const rel = band.y - laneBase(0)
+    expect(rel).toBe(slice.y)
+    expect(rel + band.h).toBeLessThanOrEqual(slice.y + slice.h)
+    expect(rel + band.h).toBeLessThanOrEqual(DEFAULT_LANE_HEIGHT)
+  })
+})
+
+/* ------------------------------------------------------------------------- */
+/* task-47: the deleted message-density band must not come back               */
+/* ------------------------------------------------------------------------- */
+
+describe('the deleted message-density band cannot return', () => {
+  /**
+   * 0.2.29 removed it end to end (the user: 「这里每个泳道底部都有一个色条，我觉得这个
+   * 逻辑可以不需要了」). The five spellings below are the ones the implementation used: the
+   * result field, the exported type, the two constants, the CSS class, and the locale key.
+   *
+   * Calibration (measured, not assumed): the same tokens + the same walker applied to the
+   * PRE-removal tree (`git archive e32aa2b^ src`) report **6 hits in 3 files**
+   * (`GanttChart.tsx` messageBands + dtg-msg-band, `styles.ts` dtg-msg-band,
+   * `timeline-layout.ts` messageBands + MessageBandRect + MESSAGE_BAND_) — so this is a
+   * real regression lock, not a scan over something that never existed.
+   *
+   * The scan is deliberately RAW TEXT (comments included): the removal also deleted the
+   * doc comments that justified the band, so a re-introduced mention is a re-introduction
+   * — the ledger of the removal lives in CHANGELOG 0.2.29 and docs/VALIDATION.md §1.23,
+   * not in `src/`.
+   */
+  const FORBIDDEN = [
+    'messageBands',
+    'MessageBandRect',
+    'MESSAGE_BAND_',
+    'dtg-msg-band',
+    'messageBandTitle',
+  ] as const
+
+  function sourceFiles(dir: string): string[] {
+    const out: string[] = []
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name)
+      if (entry.isDirectory()) out.push(...sourceFiles(path))
+      else if (/\.(ts|tsx|css)$/.test(entry.name)) out.push(path)
+    }
+    return out
+  }
+
+  it('scans the whole src tree (the guard is not vacuous)', () => {
+    const files = sourceFiles(resolve(ROOT, 'src'))
+    expect(files.length).toBeGreaterThan(15)
+    expect(files.some((file) => file.endsWith('GanttChart.tsx'))).toBe(true)
+    expect(files.some((file) => file.endsWith('styles.ts'))).toBe(true)
+  })
+
+  it('has zero references anywhere in src/, comments included', () => {
+    const hits: string[] = []
+    for (const file of sourceFiles(resolve(ROOT, 'src'))) {
+      const text = readFileSync(file, 'utf8')
+      for (const token of FORBIDDEN) if (text.includes(token)) hits.push(`${file}: ${token}`)
+    }
+    expect(hits).toEqual([])
+  })
+
+  it('the scanner would actually find them (positive control)', () => {
+    const sample = [
+      'const messageBands: MessageBandRect[] = []',
+      'const MESSAGE_BAND_HEIGHT = 2',
+      '.dtg-msg-band { opacity: 0.35 }',
+      "messageBandTitle: '{count} 条消息，从 {from} 到 {to}'",
+    ].join('\n')
+    expect(FORBIDDEN.filter((token) => sample.includes(token))).toEqual([...FORBIDDEN])
   })
 })

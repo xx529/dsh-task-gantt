@@ -45,7 +45,7 @@ import type {
   TimelineTask,
 } from '../../shared/contract.ts'
 import { format, t } from '../i18n.ts'
-import { laneActivity } from './lane-activity.ts'
+import { activityTooltip, laneActivity } from './lane-activity.ts'
 import { clipBounds } from './overlay-position.ts'
 import { taskRunTimes } from './task-times.ts'
 import { uiLabel } from './labels.ts'
@@ -1036,6 +1036,18 @@ function LaneHead({
   const status = lane.status ?? 'idle'
   const activity = laneActivity(lane)
   const working = activity.working
+  /**
+   * The tooltip carries the FULL sentence the head column is too narrow to print
+   * (`正在运行命令：pnpm vitest run`), because the user's reference row reads
+   * `正在分析请求` and a 2-4 character word cannot say that. `detail` is appended only when
+   * the host supplied one, and it is already bounded to ACTIVITY_DETAIL_MAX.
+   */
+  const activityTip = activityTooltip(activity)
+  const statusTitle = activityTip === null
+    ? undefined
+    : activityTip.detail === null
+      ? uiLabel(activityTip.fullKey)
+      : `${uiLabel(activityTip.fullKey)}：${activityTip.detail}`
   const ink = `dtg-ink dtg-ink-${status}`
   const spans = lane.spans.length
   const messages = lane.messages?.length ?? 0
@@ -1051,7 +1063,14 @@ function LaneHead({
     lane.model ?? '',
     lane.createdAt === undefined ? '' : formatDateTime(lane.createdAt, tzOffsetMinutes),
     lane.error ?? '',
-    messages > 0 ? uiLabel('messageCountLabel', { count: messages }) : '',
+    /** FULL phrasing here on purpose: the head row is compact, the tooltip is not. */
+    messages > 0 && drawnTasks > 0
+      ? uiLabel('countsFullLabel', { tasks: drawnTasks, messages })
+      : messages > 0
+        ? uiLabel('messageCountLabel', { count: messages })
+        : drawnTasks > 0
+          ? `${drawnTasks} ${uiLabel('tasksLabel')}`
+          : '',
     navigable ? t('openSession') : t('noSession'),
   ]
     .filter((part) => part !== '')
@@ -1098,23 +1117,11 @@ function LaneHead({
           must not grow. The glyph returns the moment the lane stops working.
         */}
         {/*
-          The status TEXT, next to the spinner. The user: "你现在只有转圈圈的东西没有像这个
-          有简单状态文本的展示" — they want the state word, like the other panel's
-          `运行中  正在分析请求`.
-
-          Only a WORD, because the data has no description to offer: a turn span carries
-          `kind`/`time`/`end`/`from`/`sessionId` and nothing else (see `lane-activity.ts`
-          for the checked evidence). Inventing "正在分析请求" here would be fiction.
-
-          Placed in the TOP row, not the meta line: the meta line is at its exact limit
-          (measured 108px of text in a 108px column), whereas this row has room and the
-          word belongs beside the status mark it explains.
+          The top row is now JUST the pill and the status mark. The status WORD moved to
+          the meta line, because keeping it here squeezed the name: the user's screenshot
+          showed `le.` / `ui.` with the name ellipsised, which they rejected outright.
+          A 24px row with three items (pill + word + spinner) could not hold a name.
         */}
-        {activity.statusKey === null ? null : (
-          <span className="dtg-head-status" aria-hidden="true">
-            {uiLabel(activity.statusKey)}
-          </span>
-        )}
         <span className={ink} aria-hidden="true">
           {working ? (
             <span className="dtg-spin" />
@@ -1124,6 +1131,22 @@ function LaneHead({
         </span>
       </div>
       <div className="dtg-head-meta">
+        {/*
+          Status word FIRST, then the counts: `运行中 · 5 任务 · ✉ 259`, in the meta line.
+          The word is a separate span rather than being folded into the joined text so the
+          filter/styling can treat it independently, and so the counts keep their own
+          ellipsis behaviour.
+        */}
+        {/*
+          THE WORD FIRST: `分析中 · 5 任务 · ✉ 259`, or `运行中 · …` when the host has not
+          sent an activity descriptor yet (fallback chain in `lane-activity.ts`). An idle
+          lane still gets no word at all.
+        */}
+        {activity.statusKey === null ? null : (
+          <span className="dtg-head-status" aria-hidden="true" title={statusTitle}>
+            {`${uiLabel(activity.statusKey)} · `}
+          </span>
+        )}
         {/* NO role badge here. It was a bordered chip printing the role, and for the Lead
             it printed "Lead" directly under a name pill that already said the same word
             — the user's "下面多了一个白色框+ agent名称，这个已经是多余的了". Removing it
@@ -1152,8 +1175,19 @@ function LaneHead({
             (`空闲 · 5 任务 · …`): it frees ~30px, which is what the message count needed
             to fit inside the head column instead of being ellipsised away.
           */}
+          {/*
+            COMPACT COUNTS, by the Lead's ruling after the measurement came back: with a
+            real task count the full wording (N 任务 · ✉ M = 62-80px) plus any 2-4 character
+            activity word (35-57px) cannot fit the 107px column, and the COUNTS TEXT itself
+            was being silently ellipsised (measured clientWidth 54 vs scrollWidth 62).
+
+            So the row says `5 · ✉ 259` — bare task number, `✉` prefix kept because it is
+            the only thing distinguishing the two numbers. The words 任务/消息 are NOT lost:
+            they move to the accessible name and the row tooltip, which use the full
+            phrasing (see `countsFull` below).
+          */}
           {[
-            drawnTasks > 0 ? `${drawnTasks} ${uiLabel('tasksLabel')}` : null,
+            drawnTasks > 0 ? `${drawnTasks}` : null,
             messages > 0 ? `✉ ${messages}` : null,
           ]
             .filter((part) => part !== null)
