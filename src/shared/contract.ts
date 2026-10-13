@@ -28,7 +28,7 @@ export const API_VERSION = 1 as const
  * or behaviour changes, and a tester can read the version off the screen
  * instead of guessing from a screenshot.
  */
-export const BUILD_LABEL = 'v0.2.26 · compact-lanes' as const
+export const BUILD_LABEL = 'v0.2.27 · no-status-word' as const
 
 /** The sidebar tab type id registered through `ctx.betterSidebar.registerTab`. */
 export const TAB_TYPE_ID = 'dsh-task-gantt:board' as const

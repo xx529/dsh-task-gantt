@@ -1128,8 +1128,16 @@ function LaneHead({
           className="dtg-head-meta-text"
           title={messages > 0 ? uiLabel('messageBandTitle', { count: messages, from: '', to: '' }) : undefined}
         >
+          {/*
+            NO status word here. The user: "「空闲」这个状态文本我觉得没必要了" — the
+            status is already carried by the glyph beside the name pill, and it stays in
+            the row's aria-label and title (`detail` above), so nothing is lost for a
+            screen reader or a tooltip.
+            Dropping it also fixes the truncation the user photographed
+            (`空闲 · 5 任务 · …`): it frees ~30px, which is what the message count needed
+            to fit inside the head column instead of being ellipsised away.
+          */}
           {[
-            statusText(status),
             drawnTasks > 0 ? `${drawnTasks} ${uiLabel('tasksLabel')}` : null,
             messages > 0 ? `✉ ${messages}` : null,
           ]

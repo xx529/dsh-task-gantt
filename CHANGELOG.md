@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.2.27 — 2026-10-13
+
+**The lane head drops the status word, which also un-truncates the message count**
+
+"「空闲」这个状态文本我觉得没必要了". The one-line head no longer spells out the status; the status
+glyph beside the name pill carries it, and the status is still in BOTH the accessible name
+(`aria-label: "lead，状态空闲，3 个任务，18 段活动, 打开该会话"`) and the tooltip, so nothing is lost to a
+screen reader or a hover.
+
+It also fixed a truncation the user was living with: the line used to read `空闲 · 5 任务 · …` because
+its content was 97px in a 108px column (reported as a known limit in 0.2.26). Dropping the status word
+took it to **62px / 62px with `scrollWidth === clientWidth`** and `ellipsisedCount 0/9` at 480 / 420 /
+300px, so the message count is fully visible. Measured per width: text `3 任务 · ✉ 5`, 13px line at
+11px font (the theme shim proving the font token resolves), all 9 status glyphs present.
+
+No locale key became unused, and this was checked rather than assumed: the status word comes from
+shell-provided text functions (`memberStatusText` / `taskStatusText`), not from this plugin's
+dictionary, and `statusText()` itself is still used by the aria and title paths — so `labels.ts` is
+untouched and zh/en parity (99 keys each) is unaffected. A heuristic scan for keys that never appear
+as quoted literals turned up 12 candidates, but it is unreliable (`taskStatus_${status}` is
+template-composed) and unrelated to this change, so nothing was deleted on the strength of it.
+
+Still true and worth repeating: the line has 62px of 108px, so a much longer task or message count
+will eventually ellipsise again — removing that possibility needs a wider `LANE_HEAD_WIDTH`, which
+costs the same width from the timeline. Not done without a decision.
+
+The footer build identity is now `v0.2.27 · no-status-word`.
+
 ## 0.2.26 — 2026-10-13
 
 **Compact lanes: the head metadata on one line, and the lane trimmed to what the tracks need**
