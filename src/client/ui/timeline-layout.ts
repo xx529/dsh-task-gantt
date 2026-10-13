@@ -82,14 +82,25 @@
  *    "信息收发显示的泳道放在 span 的泳道上面". Swapping the two leaves TASK_CARD_TOP at
  *    the same 30 because both terms are summed either way — the task geometry and every
  *    lane height are unchanged by the swap, only the two thin rows move.
- *    A lane of DEFAULT_LANE_HEIGHT = 92 therefore stacks: 3px pad, 11px message-marker
- *    track, 10px turn band (the 8px step bar centred inside it), 36px task card ending
- *    at y=66,
- *    then the ~11px task-TRANSITION rail that hangs under the bar, leaving ~15px of
- *    slack. The LEFT head column shares this height and needs 90px of it for its own
- *    rows — a name pill plus four one-per-line facts — which is what set the value:
- *    at 84px the last head row was clipped, measured at clientHeight 83 vs
- *    scrollHeight 86.)
+ *    TRACK STACK, measured in the browser (deepest absolutely-positioned child of the
+ *    lane layer, per lane):
+ *
+ *      message-marker track  bottom  14
+ *      wait band / turn band bottom  27   (the 8px step bar centred inside it: 26)
+ *      task card             bottom  50   (TASK_CARD_TOP 30 + TASK_CARD_HEIGHT 20)
+ *      transition rail       bottom  67   <- the real floor
+ *
+ *    So DEFAULT_LANE_HEIGHT = 72: the 67px stack plus a 5px margin, which is what the
+ *    user asked for after seeing nine lanes — "每个泳道的间距我觉得可以做得紧凑一些 …
+ *    这样泳道图下方就会留有这么多的空位". It was 92, i.e. the same stack plus 25px of
+ *    slack, and the old value was set by the HEAD column (a name pill plus FOUR
+ *    one-per-line facts needing ~90px), not by the tracks at all. Two changes made the
+ *    trim safe together: the head's three text rows became ONE line (~46px total now),
+ *    and the head no longer sets the height — the TRACK stack does.
+ *
+ *    Do not go below 67: that is where the transition rail ends, and a shorter lane
+ *    clips it. The browser check for this is that every lane's deepest child bottom is
+ *    <= the lane height and neighbouring lanes do not overlap.)
  *
  * ============================== SPAN RECTS =================================
  * For every lane (in `data.lanes` order) and every span (in `lane.spans` order):
@@ -200,7 +211,7 @@ export const LANE_HEAD_WIDTH = 132
  * tracks (see {@link laneTracks}). Do not make this content-adaptive, and do not
  * shrink the 36px task label to win lanes back: 36px is two measured text lines.
  */
-export const DEFAULT_LANE_HEIGHT = 92
+export const DEFAULT_LANE_HEIGHT = 72
 /** Default height of the sticky time-axis header (px). */
 export const DEFAULT_HEADER_HEIGHT = 28
 /**

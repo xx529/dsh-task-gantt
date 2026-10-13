@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.2.26 — 2026-10-13
+
+**Compact lanes: the head metadata on one line, and the lane trimmed to what the tracks need**
+
+"现在每个泳道的间距我觉得可以做得紧凑一些，「状态，任务数量，消息数量」是不是可以变成一行，这样泳道图下方
+就会留有这么多的空位".
+
+The head's three text rows (空闲 / 5 Tasks / ≈ 313) are now ONE node joined with ` · ` (empty parts are
+filtered, so a lane with no tasks or messages shows no stray separators), with the name pill and the
+status glyph untouched, `nowrap` + ellipsis and explicit `font: var(--dsw-font-xxxs-11)`. Measured at
+480 / 420 / 300px: `fontSize 11px`, `textH 13px`, `clientW 97 === scrollW 97`, `ellipsisedCount 0/9`.
+
+The lane height is now what the tracks actually require, MEASURED rather than guessed: the deepest
+absolutely-positioned child sits 67px below the lane top (transition rail; the task card bottom is 50,
+the wait/turn band 27, the message track 14), so `DEFAULT_LANE_HEIGHT` went **92 -> 72** (67 + 5px
+margin). The old 92 was really being held up by the four-row head; the one-line head needs ~46px, so
+the larger of the two decides and the head is not clipped to win pixels. Measured before/after at
+420px with 9 lanes: lane height 92 -> 72, **canvas 856 -> 676 (-180px)**, lane tops 0/92/184 ->
+0/72/144, deepest child 67 -> 62 with `clippedLanes: 0`, neighbour gaps still [0] (no overlap), and
+every component height UNCHANGED (task 20, message 11, wait 10, step 8, turn 10) — this is a spacing
+change, not a scale change.
+
+Two things worth recording from this round. The harness under /tmp had been wiped by the OS, so it
+was rebuilt from the loading contract in docs/VALIDATION.md; rebuilding it surfaced a real trap: an
+independent page has no DSH theme tokens, and `var(--dsw-font-xxxs-11)` then falls back to **16px**
+rather than to nothing — which made the meta text measure 141px and look like the message count was
+being ellipsised away. That was a harness artefact, not a product defect, and it was fixed with a
+theme shim whose values come from tests/fixtures/dsw-theme-tokens.json. Second: the new lane height
+and the one-line head are backed by browser measurement only, with no regression lock in the repo
+(no existing lock referenced 92, so nothing needed re-basing).
+
+Known limit, reported rather than silently accepted: the meta line fits with 97px of the head
+column's 108px at 11px, so a longer status word or a much larger task count will start to ellipsise.
+Widening `LANE_HEAD_WIDTH` would fix that by eating the same amount from the timeline — not done
+without a decision.
+
+The footer build identity is now `v0.2.26 · compact-lanes`.
+
 ## 0.2.25 — 2026-10-13
 
 **Sixteen distinct agent colours, the filter menu clamped inside the panel, and honest task times**

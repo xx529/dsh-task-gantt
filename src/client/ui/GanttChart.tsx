@@ -1114,15 +1114,28 @@ function LaneHead({
             — the user's "下面多了一个白色框+ agent名称，这个已经是多余的了". Removing it
             also frees 16px of the head column, which was at zero margin.
             The role is not lost: it stays in the row's tooltip and accessible name. */}
-        <span className="dtg-head-meta-text">{statusText(status)}</span>
-        {drawnTasks > 0 ? (
-          <span className="dtg-head-meta-text">{`${drawnTasks} ${uiLabel('tasksLabel')}`}</span>
-        ) : null}
-        {messages > 0 ? (
-          <span className="dtg-head-meta-text" title={uiLabel('messageBandTitle', { count: messages, from: '', to: '' })}>
-            {`✉ ${messages}`}
-          </span>
-        ) : null}
+        {/*
+          ONE line: `空闲 · 3 任务 · ✉5`. The user, looking at a 9-lane board:
+          "「状态，任务数量，消息数量」是不是可以变成一行，这样泳道图下方就会留有这么多的空位"
+          — three stacked rows cost three line boxes per lane, and the lane height is
+          driven by the track stack, so those rows were pure padding.
+
+          Joined with a middle dot and rendered as a single nowrap text node, so a long
+          name/label degrades by truncating (ellipsis) rather than by wrapping into the
+          rows we just removed.
+        */}
+        <span
+          className="dtg-head-meta-text"
+          title={messages > 0 ? uiLabel('messageBandTitle', { count: messages, from: '', to: '' }) : undefined}
+        >
+          {[
+            statusText(status),
+            drawnTasks > 0 ? `${drawnTasks} ${uiLabel('tasksLabel')}` : null,
+            messages > 0 ? `✉ ${messages}` : null,
+          ]
+            .filter((part) => part !== null)
+            .join(' · ')}
+        </span>
       </div>
     </>
   )

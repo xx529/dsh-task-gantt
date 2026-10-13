@@ -163,11 +163,14 @@ export const BOARD_CSS = `
    count were squeezed into one line and then cut with an ellipsis, so the user
    could not read their own agent's state. Stacking them is the fix; the lane's
    height budget is accounted for in the geometry notes. */
+/* ONE row. It used to stack status / task count / message count vertically; they are
+   one line now ("是不是可以变成一行"), because the lane's height is set by the TRACK stack
+   and those extra line boxes were padding the lane out for nothing. */
 .dtg-head-meta {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 1px;
+  flex-direction: row;
+  align-items: center;
+  gap: 0;
   min-width: 0;
   color: var(--dsw-alias-label-tertiary);
   font: var(--dsw-font-xxxs-11);
@@ -175,7 +178,20 @@ export const BOARD_CSS = `
 /* Deliberately NOT ellipsised: wrapping a short state word onto a second line
    keeps it readable, whereas an ellipsis hides information the user asked for.
    overflow-wrap keeps a long unbroken token (a model name) inside the lane. */
-.dtg-head-meta-text { white-space: normal; overflow-wrap: anywhere; }
+/* Never wraps: the whole point is one row. A long label truncates with an ellipsis
+   inside the head column instead of pushing the row to two lines. */
+.dtg-head-meta-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  /* The font is declared HERE, not inherited. When this line became a single row it
+     picked up the root 16px instead of the meta's 11px (measured: font 16px, and the
+     line then needed 141px in a 108px column, so the message count was ellipsised
+     away). 11px measures 97px, which fits. */
+  font: var(--dsw-font-xxxs-11);
+  line-height: 1.2;
+}
 /* NOTE: there is deliberately no .dtg-head-role rule. The role badge was removed —
    for the Lead it printed the same word as the name pill directly beneath it (the
    user's "下面多了一个白色框+ agent名称，这个已经是多余的了"), and removing it also
