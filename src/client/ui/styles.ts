@@ -140,11 +140,19 @@ export const BOARD_CSS = `
    obvious"). The background is supplied INLINE by the renderer from the lane's
    own colour token, so this rule only owns the SHAPE and the ink — never a
    colour value, which would break the theme contract. */
+/* The cap is what guarantees the status word a seat. Growing freely, the pill ate every
+   free pixel of the row (it had no max width), so a long name would have pushed the
+   status word and the spinner out instead of truncating itself. A name that does not fit
+   ellipsises inside the pill — which is the intended degradation. */
 .dtg-head-name {
   min-width: 0;
   flex: 1 1 auto;
   display: inline-block;
-  max-width: 100%;
+  /* Capped so the status word and spinner always have a seat: the pill yields and
+     ellipsises internally instead of pushing them out. Measured with a 40-character
+     name: pill 51px of 275px of text, ellipsised, while "运行中" and the spinner stayed
+     fully visible and the row stayed 72px. */
+  max-width: 62%;
   padding: 1px 6px;
   border-radius: 3px;
   overflow: hidden;
@@ -486,6 +494,65 @@ export const BOARD_CSS = `
 
 /* --- teammate filter menu ----------------------------------------------- */
 
+/* The "working only" MODE row. Deliberately not a checkbox row: a switch track with a
+   sliding knob plus a separator, so it reads as a mode that changes the whole view
+   rather than one more teammate to tick. Theme tokens only, legible in both skins. */
+.dtg-menu-mode {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 4px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxxs-strong-11);
+  text-align: left;
+  cursor: pointer;
+}
+.dtg-menu-mode:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.dtg-menu-mode-track {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 12px;
+  border-radius: 6px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-layer-1);
+  position: relative;
+}
+.dtg-menu-mode-knob {
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--dsw-alias-label-tertiary);
+}
+.dtg-menu-mode-on .dtg-menu-mode-track {
+  border-color: var(--dsw-alias-brand-primary);
+}
+.dtg-menu-mode-on .dtg-menu-mode-knob {
+  left: 11px;
+  background: var(--dsw-alias-brand-primary);
+}
+.dtg-menu-mode-on { color: var(--dsw-alias-brand-primary); }
+.dtg-menu-mode-label {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dtg-menu-sep {
+  height: 1px;
+  margin: 3px 2px;
+  background: var(--dsw-alias-border-l1);
+}
+
+
+
 /* Fixed-positioned and OUTSIDE the toolbar: an absolutely positioned descendant adds
    to its ancestor's scrollable overflow, and this panel would clip a child menu. The
    measured invariant is that the scroll container's scrollWidth/clientWidth are identical
@@ -526,6 +593,16 @@ export const BOARD_CSS = `
   color: var(--dsw-alias-label-tertiary);
 }
 .dtg-menu input { margin: 0; flex: 0 0 auto; }
+
+/* The status word beside the spinner ("运行中"). A fixed flex basis so it is never
+   squeezed, and it is small text on the head background, so the ordinary label token
+   gives it contrast in both skins. */
+.dtg-head-status {
+  flex: 0 0 auto;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxxs-11);
+  white-space: nowrap;
+}
 
 /* --- working spinner (lane head) ---------------------------------------- */
 
@@ -752,13 +829,6 @@ export const BOARD_CSS = `
 
 /* --- message markers --------------------------------------------------- */
 
-/* The lane's true message extent: a hairline rhythm strip, never a timeline. */
-.dtg-msg-band {
-  position: absolute;
-  border-radius: 1px;
-  background: var(--dsw-alias-label-dimmed);
-  opacity: 0.35;
-}
 /* The human's own prompt is a speech BUBBLE, not an arrow.
    It used to draw the lane arrow inside the punched-out disc, which the user read as
    "变成一个白色框黑心的东西": a dark glyph in a white ring says nothing about who spoke.

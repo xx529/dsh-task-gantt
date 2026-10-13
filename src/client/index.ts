@@ -72,6 +72,7 @@ export function apply(ctx: Context): void {
   const mounted = readTabService(ctx)
   if (mounted !== undefined) {
     ctx.effect(() => registerTab(ctx, mounted), TAB_EFFECT_LABEL)
+    ctx.effect(() => watchForFirstTeam(ctx, mounted), FIRST_TEAM_EFFECT_LABEL)
     return
   }
 
@@ -95,6 +96,7 @@ export function apply(ctx: Context): void {
     const service = readTabService(scoped)
     if (service === undefined) return
     scoped.effect(() => registerTab(scoped, service), TAB_EFFECT_LABEL)
+    scoped.effect(() => watchForFirstTeam(scoped, service), FIRST_TEAM_EFFECT_LABEL)
   })
 
   warn(
@@ -121,14 +123,205 @@ function readTabService(ctx: Context): BetterSidebarTabService | undefined {
   return candidate as BetterSidebarTabService
 }
 
+/* ------------------------------------------------------------------------- *
+ * The one-time reveal on the first sub-agent / team invocation.
+ *
+ * WHAT THE BUILT-IN DOES (the effect the user is asking us to copy), quoted
+ * from the installed `dsh-better-sidebar@0.25.0`:
+ *
+ * - the signal is a **0 → N** transition in the count of DIRECT sub-agent
+ *   sessions — `detectNewDirectSubagent` in `src/client/subagent-detect.ts:47-56`
+ *   (`directSubagentCount(prev) === 0 && directSubagentCount(next) > 0`),
+ *   where a direct sub-agent row is `origin === 'subagent'` (`:26-36`);
+ * - it is armed from a session-list effect and re-checked after a
+ *   **500 ms** debounce (`AUTO_OPEN_DEBOUNCE_MS`, `src/client/sidebar/use-host-feeds.ts:31`,
+ *   used at `:258`), gated on the `autoOpenSubagent` pref, on a narrow-viewport
+ *   opt-out, and on `isTabEnabled('subagent') !== false` (`:259-262`);
+ * - the action is `activateTasksPage` (`:97`) →
+ *   **`ctx.get('betterSidebar')` then `openTab({ type: 'subagent', title: … })`**
+ *   (`:130`), or the same call with **`reveal: false`** (`:117`) when the reader
+ *   is already looking at another page, so the open lands in the background.
+ *
+ * THE API WE USE is that same one. `BetterSidebarService.openTab(seed, scope?)`
+ * is declared at `src/client/service.ts:639`; `OpenTabSeed` (`:447-492`) takes
+ * `type` (the registered tab id), `title`, and **`reveal?: boolean`** —
+ * "Whether the open may FOCUS what it opens (`target: 'right'` only) … Defaults
+ * to true. A background activation passes `false` so the reader's page survives"
+ * (`:483-491`). The service also publishes a monotonic capability list,
+ * `features: readonly string[]` (`:651-657`, `'targetedOpen'` among them), and
+ * states "Features are never removed — consumers gate new API usage on
+ * membership" — so capability is detected by METHOD PRESENCE, never by version.
+ *
+ * WHY THIS IS NOT IN `src/host/**` (and could not be): `betterSidebar` is a
+ * CLIENT service — `dsh-better-sidebar/src/client/index.tsx:171`
+ * `ctx.provide('betterSidebar', service)`. The host half cannot see it; a host
+ * Inspect query for that service key answers "no catalogued Service named
+ * betterSidebar". The host's only outbound channel in this area is
+ * better-sidebar's `agent-opens` WebSocket push, and that carries
+ * `kind: 'file' | 'folder' | 'url'` only (`src/agent-opens.ts:135`), never "open
+ * tab X". So the reveal has to be one client-side `openTab` call.
+ * ------------------------------------------------------------------------- */
+
+/** The cordis service name of DSH's own client-side Sessions store. */
+const SESSIONS_SERVICE = 'sessions'
+
+/**
+ * How often the one-shot watch reads the session list.
+ *
+ * Far below the time a teammate takes to spawn, and a snapshot read is cheap.
+ * The timer stops for good on the first reveal.
+ */
+const FIRST_TEAM_POLL_MS = 2000
+
+/** Effect label shown in cordis diagnostics. */
+const FIRST_TEAM_EFFECT_LABEL = 'dsh-task-gantt: reveal on first team'
+
+/**
+ * One row of `sessions.list.getSnapshot().byId`, structurally.
+ *
+ * Mirrors `SidebarSessionSummary` in better-sidebar's `src/context-types.ts:140-150`:
+ * `origin?: 'subagent'` is the durable origin, `parentId?: string` the durable
+ * parent. That is the exact feed better-sidebar's own auto-open reads.
+ */
+interface SessionSummaryLike {
+  origin?: unknown
+  parentId?: unknown
+}
+
+/** The slice of DSH's client `sessions` service this shell reads. */
+interface SessionsFace {
+  list?: {
+    getSnapshot?: () => { byId?: Record<string, SessionSummaryLike | undefined> } | undefined
+  }
+}
+
+/**
+ * The `betterSidebar` slice the reveal needs, declared structurally — the same
+ * treatment {@link WorkspaceNavigation} gets, so no value import of
+ * dsh-better-sidebar is required.
+ */
+interface TabRevealFace {
+  openTab?(seed: { type: string; title?: string; reveal?: boolean }, scope?: { sessionId: string }): void
+  isTabEnabled?(id: string): boolean
+  /** Monotonic capability list (service.ts:651-657); `'targetedOpen'` since v0.12.0. */
+  features?: readonly string[]
+}
+
+/**
+ * Count the sub-agent sessions in one session-list snapshot.
+ *
+ * Total: `undefined`, `null`, a missing `byId`, foreign rows and non-object rows
+ * all read as whatever they contain, never as an exception.
+ *
+ * @param snapshot - `sessions.list.getSnapshot()`, or anything else.
+ * @returns the number of rows whose `origin` is `'subagent'`.
+ */
+export function countSubagentSessions(snapshot: unknown): number {
+  if (snapshot === null || typeof snapshot !== 'object') return 0
+  const byId = (snapshot as { byId?: unknown }).byId
+  if (byId === null || typeof byId !== 'object') return 0
+  let count = 0
+  for (const summary of Object.values(byId as Record<string, unknown>)) {
+    if (summary !== null && typeof summary === 'object' && (summary as SessionSummaryLike).origin === 'subagent') {
+      count += 1
+    }
+  }
+  return count
+}
+
+/**
+ * The built-in's signal, as a pure predicate: a **0 → N** crossing.
+ *
+ * A page that already has sub-agents when the plugin loads must not reveal (its
+ * baseline is armed at the current count), and growing from N to N+1 is a later
+ * invocation, not the first one. Mirrors `detectNewDirectSubagent`
+ * (`dsh-better-sidebar/src/client/subagent-detect.ts:47-56`).
+ *
+ * @param previous - the count observed on the previous read.
+ * @param next - the count observed now.
+ * @returns `true` only for the 0 → positive transition.
+ */
+export function isFirstSubagentTransition(previous: number, next: number): boolean {
+  return previous === 0 && next > 0
+}
+
+/**
+ * Reveal our tab exactly ONCE, on the first sub-agent / team invocation.
+ *
+ * Idempotent by construction: the watch stops itself on the first reveal, and
+ * the 0 → N predicate can only be satisfied once per armed baseline. A second
+ * invocation therefore never re-opens the tab and never moves focus again.
+ *
+ * Silent when the capability is absent — an older runtime with no `openTab`, a
+ * missing `sessions` service, a foreign service shape, or a throwing
+ * implementation all leave the tab registered and reachable from the + menu,
+ * with nothing logged.
+ *
+ * @param ctx - the client cordis context; read lazily on every poll.
+ * @param service - the probed better-sidebar service.
+ * @returns a disposer that stops the watch (bound to the fiber by `ctx.effect`).
+ */
+export function watchForFirstTeam(ctx: Context, service: BetterSidebarTabService): () => void {
+  const reveal = service as TabRevealFace
+  // Capability, not version: the method's PRESENCE is the capability, and the
+  // documented rule is that `features` only ever grows. No version is compared
+  // anywhere in this file. Bound to a local so the narrowing survives into the
+  // timer closure.
+  const openTab = reveal.openTab
+  if (typeof openTab !== 'function') return () => {}
+
+  let timer: ReturnType<typeof setInterval> | undefined
+  const stop = (): void => {
+    if (timer !== undefined) clearInterval(timer)
+    timer = undefined
+  }
+
+  let previous: number | undefined
+  let done = false
+  const tick = (): void => {
+    if (done) return
+    let next: number
+    try {
+      const sessions = ctx.get(SESSIONS_SERVICE) as SessionsFace | undefined
+      next = countSubagentSessions(sessions?.list?.getSnapshot?.())
+    } catch {
+      // A foreign service that throws on read must not break the fiber.
+      return
+    }
+    if (previous === undefined) {
+      // Arm the baseline on the first read: a page load that already has a team
+      // is not "the first invocation" and must not steal the view.
+      previous = next
+      return
+    }
+    const first = isFirstSubagentTransition(previous, next)
+    previous = next
+    if (!first) return
+
+    done = true
+    stop()
+    // The user's own side-card prefs win. `openTab` refuses a disabled type
+    // anyway, so asking first keeps this from being a silent disappointment.
+    if (reveal.isTabEnabled?.(TAB_TYPE_ID) === false) return
+    try {
+      openTab.call(service, { type: TAB_TYPE_ID, title: t('tabTitle'), reveal: true })
+    } catch {
+      // Never let a foreign implementation take the plugin down; the tab stays
+      // reachable from the + menu.
+    }
+  }
+
+  timer = setInterval(tick, FIRST_TEAM_POLL_MS)
+  return stop
+}
+
 /**
  * Register the tab descriptor and return the service's disposer.
  *
  * @param ctx - context used for logging only.
  * @param service - the probed better-sidebar service.
  * @returns the registration disposer (a no-op when registration was refused).
- */
-function registerTab(ctx: Context, service: BetterSidebarTabService): () => void {
+ */function registerTab(ctx: Context, service: BetterSidebarTabService): () => void {
   // Built ONCE per registration, outside the `component` lambda (which React
   // calls on every render): the board must see a stable function identity, or a
   // callback in a dependency array would re-run its effects on every render.

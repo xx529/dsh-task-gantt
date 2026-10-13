@@ -149,16 +149,12 @@ describe('defect 1: the left edge must not collect messages from outside the ran
     for (const marker of atStart) expect(marker.viewX).toBe(0)
   })
 
-  it('a lane whose messages are ALL before the window contributes no marker and no band', () => {
+  it('a lane whose messages are ALL before the window contributes no marker', () => {
     const result = layout(100, RANGE_15M)
     expect(result.messages.some((marker) => marker.laneId === 'lane-c'), 'lane-c is entirely out of range').toBe(false)
-    const bandLanes = result.messageBands.map((band) => (band as { laneId?: string }).laneId)
-    expect(bandLanes).not.toContain('lane-c')
-    // The other three lanes DO have in-range messages, so their bands stay.
-    expect(new Set(bandLanes)).toEqual(new Set(['lead', 'lane-a', 'lane-b']))
   })
 
-  it('a lane straddling the window start keeps its band, with only in-range markers', () => {
+  it('a lane straddling the window start keeps only in-range markers', () => {
     const result = layout(100, RANGE_15M)
     for (const marker of result.messages) {
       expect(inWindow(marker.time, marker.time, window15), `${marker.key} is out of range`).toBe(true)

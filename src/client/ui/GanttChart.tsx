@@ -45,6 +45,7 @@ import type {
   TimelineTask,
 } from '../../shared/contract.ts'
 import { format, t } from '../i18n.ts'
+import { laneActivity } from './lane-activity.ts'
 import { clipBounds } from './overlay-position.ts'
 import { taskRunTimes } from './task-times.ts'
 import { uiLabel } from './labels.ts'
@@ -777,27 +778,6 @@ export function GanttChart(props: GanttChartProps): ReactNode {
               {waitBands.map((band) => (
                 <WaitBand key={`wait:${band.laneId}:${band.start}:${band.end ?? 'open'}`} band={band} />
               ))}
-              {/* Per-lane message rhythm: the TRUE first→last extent of every
-                  message, so decimated markers can never shrink the reported
-                  span of when a lane was talking. */}
-              {layout.messageBands.map((band) => (
-                <span
-                  key={`band:${band.laneId}`}
-                  className="dtg-msg-band"
-                  style={{
-                    left: band.x,
-                    top: band.y,
-                    width: band.w,
-                    height: band.h,
-                    background: laneColors.get(band.laneId)?.bar,
-                  }}
-                  title={uiLabel('messageBandTitle', {
-                    count: band.count,
-                    from: formatClock(band.firstTime, tzOffsetMinutes),
-                    to: formatClock(band.lastTime, tzOffsetMinutes),
-                  })}
-                />
-              ))}
               {/* Two passes so every faint turn band paints UNDER every solid
                   step bar, whatever order the host folded the spans in. These are
                   ALWAYS drawn: the 活动+消息 switch that could hide this layer was
@@ -1018,30 +998,6 @@ function spanKey(span: SpanRect): string {
   return `${span.laneId}:${span.kind}:${span.start}:${span.end}:${span.turn ?? ''}:${span.step ?? ''}`
 }
 
-/**
- * Is this lane's agent CURRENTLY WORKING — the signal behind the head spinner.
- *
- * Two existing fields, no new heuristic:
- *   - `lane.status === 'running'` (`MemberStatus` is
- *     `'running' | 'idle' | 'provisioning' | 'failed'`): the agent is live. This is the
- *     user's own phrase — "正在活动的 agent" — read directly.
- *   - an OPEN (unclosed) turn span: the lane's own activity track says a turn is in
- *     flight right now, which covers a board whose status has not been refreshed yet.
- *
- * Deliberately NOT "has any span at all": a finished lane is full of spans and is idle.
- *
- * Consequences, stated because they are the interesting cases:
- *   - FROZEN/IDLE lane that still has an unclosed span → this returns TRUE (an open turn
- *     is direct evidence of work). If that is wrong for a paused session, the fix belongs
- *     in the host's span closing, not in a client-side guess.
- *   - `unassigned` → whatever its `status` says; it is an ordinary lane here, so an
- *     `unassigned` lane marked running spins like any other. No special case.
- */
-function laneIsWorking(lane: TimelineLane): boolean {
-  if (lane.status === 'running' || lane.status === 'provisioning') return true
-  // `end === null` is the layout's own "not finished" marker for a turn.
-  return (lane.spans ?? []).some((span) => span.kind === 'turn' && span.end === null)
-}
 
 function statusText(status: string | undefined): string {
   if (status === undefined) return '—'
@@ -1078,7 +1034,8 @@ function LaneHead({
 }): ReactNode {
   const lane = box.lane
   const status = lane.status ?? 'idle'
-  const working = laneIsWorking(lane)
+  const activity = laneActivity(lane)
+  const working = activity.working
   const ink = `dtg-ink dtg-ink-${status}`
   const spans = lane.spans.length
   const messages = lane.messages?.length ?? 0
@@ -1140,6 +1097,24 @@ function LaneHead({
           means "status", so two status marks in a 24px row would crowd it, and the head
           must not grow. The glyph returns the moment the lane stops working.
         */}
+        {/*
+          The status TEXT, next to the spinner. The user: "你现在只有转圈圈的东西没有像这个
+          有简单状态文本的展示" — they want the state word, like the other panel's
+          `运行中  正在分析请求`.
+
+          Only a WORD, because the data has no description to offer: a turn span carries
+          `kind`/`time`/`end`/`from`/`sessionId` and nothing else (see `lane-activity.ts`
+          for the checked evidence). Inventing "正在分析请求" here would be fiction.
+
+          Placed in the TOP row, not the meta line: the meta line is at its exact limit
+          (measured 108px of text in a 108px column), whereas this row has room and the
+          word belongs beside the status mark it explains.
+        */}
+        {activity.statusKey === null ? null : (
+          <span className="dtg-head-status" aria-hidden="true">
+            {uiLabel(activity.statusKey)}
+          </span>
+        )}
         <span className={ink} aria-hidden="true">
           {working ? (
             <span className="dtg-spin" />
@@ -1166,7 +1141,7 @@ function LaneHead({
         */}
         <span
           className="dtg-head-meta-text"
-          title={messages > 0 ? uiLabel('messageBandTitle', { count: messages, from: '', to: '' }) : undefined}
+          title={messages > 0 ? uiLabel('messageCountLabel', { count: messages }) : undefined}
         >
           {/*
             NO status word here. The user: "「空闲」这个状态文本我觉得没必要了" — the

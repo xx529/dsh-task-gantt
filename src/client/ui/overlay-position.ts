@@ -36,29 +36,24 @@ export interface OverlayBounds {
  *   than this is skipped, because clamping into it would clip the overlay just as
  *   badly; widths below this are also why the walk keeps going outwards.
  */
+/**
+ * Options for {@link clipBounds}.
+ *
+ * There is no `scope` option any more. One was added for the teammate filter menu (to
+ * reach the outermost clipper, the panel) and then made OBSOLETE: on a short docked panel
+ * that bound squeezed the menu to nearly zero height, so the menu now measures against the
+ * WINDOW instead — see `BoardView.tsx`. The hover popover never wanted the outer bound; it
+ * wants the FIRST clipper (the scrolling lane area). With one caller left, the option and
+ * the walk it enabled are gone rather than left as a knob nobody turns.
+ */
 export interface ClipBoundsOptions {
   /** Smallest ancestor width that could host the overlay. Narrower boxes are skipped. */
   minWidth?: number
-  /**
-   * Which clipping ancestor to use.
-   *
-   * `'inner'` (the default) stops at the FIRST clipper, which is what the hover
-   * popover wants: it should stay inside the scrolling lane area rather than sprawl
-   * across a wide panel.
-   *
-   * `'outer'` keeps walking to the LAST clipper. The filter menu needs this: the first
-   * clipping ancestor is the 29px-tall toolbar (it is `overflow-x: auto`), and clamping
-   * a 240px menu into a 29px box produced nonsense offsets — measured, the menu landed
-   * at top 672 of a 420px panel and was cut off by the panel's bottom edge, which is
-   * exactly the reported bug. The outermost clipper is the panel itself.
-   */
-  scope?: 'inner' | 'outer'
 }
 
 export function clipBounds(anchor: HTMLElement, options: ClipBoundsOptions | number = {}): OverlayBounds {
   const opts: ClipBoundsOptions = typeof options === 'number' ? { minWidth: options } : options
   const minWidth = opts.minWidth ?? 160
-  const scope = opts.scope ?? 'inner'
   const viewportWidth = typeof window === 'undefined' ? 1024 : window.innerWidth
   const viewportHeight = typeof window === 'undefined' ? 768 : window.innerHeight
   const viewport: OverlayBounds = {
@@ -69,18 +64,18 @@ export function clipBounds(anchor: HTMLElement, options: ClipBoundsOptions | num
     width: viewportWidth,
   }
   if (typeof document === 'undefined') return viewport
-  let found: OverlayBounds | null = null
   let el: Element | null = anchor.parentElement
   while (el !== null && el !== document.documentElement) {
     const cs = getComputedStyle(el)
     if (cs.overflow !== 'visible' || cs.overflowX !== 'visible' || cs.overflowY !== 'visible') {
       const r = el.getBoundingClientRect()
+      // A box with no height cannot host an overlay; keep walking rather than clamping
+      // into a zero-height sliver.
       if (r.width >= minWidth && r.height > 0) {
-        found = { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width }
-        if (scope === 'inner') return found
+        return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width }
       }
     }
     el = el.parentElement
   }
-  return found ?? viewport
+  return viewport
 }

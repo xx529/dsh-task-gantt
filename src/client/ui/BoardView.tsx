@@ -106,13 +106,17 @@ function LaneFilterMenu({
   anchor,
   lanes,
   hidden,
+  workingOnly,
   onToggle,
+  onToggleWorking,
   onClose,
 }: {
   anchor: HTMLElement
   lanes: readonly TimelineLane[]
   hidden: ReadonlySet<string>
+  workingOnly: boolean
   onToggle: (laneId: string) => void
+  onToggleWorking: () => void
   onClose: () => void
 }): ReactNode {
   const ref = useRef<HTMLDivElement | null>(null)
@@ -137,47 +141,49 @@ function LaneFilterMenu({
 
   const rect = anchor.getBoundingClientRect()
   /**
-   * The PANEL, not the toolbar.
+   * THE VIEWPORT IS THE BOUND, not the panel.
    *
-   * `scope: 'outer'` is essential here. The nearest clipping ancestor is the toolbar
-   * itself (`overflow-x: auto`, 29px tall), and clamping a 240px menu into a 29px box
-   * produced nonsense: measured on a 420px panel the menu was placed at top 672 and cut
-   * off by the panel's bottom edge — the reported bug. The outermost clipper is the
-   * panel, which is the box the menu actually has to live in.
+   * 0.2.26 clamped the menu into the outermost clipping ancestor (the panel) so it
+   * could not be cut off by the panel's edge. That fix had a副作用 on SHORT panels: the
+   * available height drove `maxHeight` towards zero, so in a bottom-docked panel the menu
+   * became invisible — the user's "在矮的面板里点了没反应，够高的时候才见到", with a
+   * screenshot of the nine checkboxes proving the click HAD worked.
+   *
+   * A dropdown is allowed to overflow its panel; `position: fixed` gives it that freedom,
+   * and the previous fix was us clamping it back in. So the bound is the WINDOW:
+   *   - room is measured from the trigger to the window's edges;
+   *   - the menu flips to the side with more room;
+   *   - it keeps a MINIMUM usable height (≈3 rows) and scrolls internally, so it can never
+   *     collapse to zero or become untouchable.
    */
-  const bounds = clipBounds(anchor, { minWidth: 120, scope: 'outer' })
   const MARGIN = 6
-  const width = Math.min(240, Math.max(120, bounds.width - 2 * MARGIN))
-  // Space actually available on each side of the trigger.
-  // Room is limited by BOTH the panel and the window: a panel can extend past the
-  // bottom of the window, and clamping only to the panel would let the menu be cut off
-  // by the window edge instead.
-  const limitBottom = Math.min(bounds.bottom, window.innerHeight)
-  const limitTop = Math.max(bounds.top, 0)
-  const roomBelow = limitBottom - rect.bottom - MARGIN
-  const roomAbove = rect.top - limitTop - MARGIN
+  /** ~3 rows, so the menu is always recognisable and scrollable rather than a sliver. */
+  const MIN_USABLE_H = 90
   const MAX_H = 240
-  /**
-   * Flip to the side with room, preferring BELOW.
-   *
-   * The old test compared `rect.bottom + margin + MAX_H` against the bound and then, on
-   * flipping, anchored the menu's bottom to the PANEL's bottom (`bounds.bottom - rect.top
-   * + MARGIN`) instead of to the TRIGGER's top — which dropped the menu far down the
-   * panel instead of just above the button. Both halves are fixed here: flip when the
-   * space below cannot hold the menu, then pin it `MARGIN` above the trigger.
-   */
+  const viewportW = window.innerWidth
+  const viewportH = window.innerHeight
+  const width = Math.min(240, Math.max(120, viewportW - 2 * MARGIN))
+  const roomBelow = viewportH - rect.bottom - 2 * MARGIN
+  const roomAbove = rect.top - 2 * MARGIN
+  // Flip only when below cannot hold the menu AND above is genuinely better.
   const flipAbove = roomBelow < MAX_H && roomAbove > roomBelow
+  const room = Math.max(0, flipAbove ? roomAbove : roomBelow)
+  const maxHeight = Math.max(MIN_USABLE_H, Math.min(MAX_H, room))
   /**
-   * Always positioned with `top`, never with `bottom`: a `bottom` offset is measured
-   * from the VIEWPORT, so on a panel that does not reach the window's bottom edge the
-   * menu would be dragged below the panel. `top` from the panel's own box keeps it
-   * inside whatever container it was clamped to.
+   * Horizontal: prefer the trigger's own left edge, then keep the menu inside the window.
+   * Clamped to the WINDOW for the same reason as the vertical bound — the panel can be
+   * narrower than the menu and must not clip it.
    */
-  const left = Math.min(Math.max(bounds.left + MARGIN, rect.left), Math.max(bounds.left + MARGIN, bounds.right - width - MARGIN))
+  const left = Math.min(Math.max(MARGIN, rect.left), Math.max(MARGIN, viewportW - width - MARGIN))
+  /**
+   * Positioned with `top` only (a `bottom` offset is measured from the viewport, which
+   * misplaced the menu badly on a docked panel). When flipped, the menu sits `MARGIN`
+   * above the trigger.
+   */
   const style: CSSProperties = {
     left,
-    top: flipAbove ? rect.top - MARGIN - Math.min(MAX_H, roomAbove) : rect.bottom + MARGIN,
-    maxHeight: Math.max(80, flipAbove ? roomAbove : roomBelow),
+    top: flipAbove ? rect.top - MARGIN - maxHeight : rect.bottom + MARGIN,
+    maxHeight,
     width,
   }
 
@@ -187,6 +193,29 @@ function LaneFilterMenu({
 
   return (
     <div className="dtg-menu" style={style} ref={ref} role="group" aria-label={uiLabel('laneFilterLabel')}>
+      {/*
+        The SPECIAL row, above the per-teammate checkboxes and visually distinct from
+        them: it is a mode, not one more lane. The user: "上面筛选 teammate 地方，多一个
+        特殊的筛选就是筛选当前正在工作中的".
+
+        It is a `role="switch"` with a painted track rather than a checkbox, so it does
+        not read as "another teammate to tick", and it carries an explicit state word
+        (开/关 via aria-checked + the track) so the visual difference is not the only cue.
+      */}
+      <button
+        type="button"
+        className={workingOnly ? 'dtg-menu-mode dtg-menu-mode-on' : 'dtg-menu-mode'}
+        onClick={onToggleWorking}
+        role="switch"
+        aria-checked={workingOnly}
+        aria-label={uiLabel('laneFilterWorking')}
+      >
+        <span className="dtg-menu-mode-track" aria-hidden="true">
+          <span className="dtg-menu-mode-knob" aria-hidden="true" />
+        </span>
+        <span className="dtg-menu-mode-label">{uiLabel('laneFilterWorking')}</span>
+      </button>
+      <div className="dtg-menu-sep" aria-hidden="true" />
       {pinned.map((lane) => (
         <div className="dtg-menu-row dtg-menu-row-pinned" key={lane.id}>
           <input type="checkbox" checked disabled aria-label={`${lane.name} · ${uiLabel('laneFilterPinned')}`} readOnly />
@@ -260,6 +289,12 @@ export function BoardView({ sessionId, visible, routeBase, navigate }: BoardView
    * excluded by a list written before it existed.
    */
   const [hiddenLanes, setHiddenLanes] = useState<ReadonlySet<string>>(() => new Set())
+  /**
+   * The special "working only" view. ANDed with the hidden set by `filterTimelineLanes`,
+   * so the two compose instead of fighting. Held in BoardView (not in the payload), so it
+   * survives the 5s poll exactly like the hidden set does.
+   */
+  const [workingOnly, setWorkingOnly] = useState(false)
   const [filterOpen, setFilterOpen] = useState(false)
   const filterButtonRef = useRef<HTMLButtonElement | null>(null)
 
@@ -270,8 +305,8 @@ export function BoardView({ sessionId, visible, routeBase, navigate }: BoardView
    * once and no second filter is needed (or wanted) inside the chart.
    */
   const shownData = useMemo(
-    () => (data === null ? null : filterTimelineLanes(data, hiddenLanes)),
-    [data, hiddenLanes],
+    () => (data === null ? null : filterTimelineLanes(data, hiddenLanes, data.lanes, workingOnly)),
+    [data, hiddenLanes, workingOnly],
   )
 
   useBoardStyles()
@@ -518,7 +553,12 @@ export function BoardView({ sessionId, visible, routeBase, navigate }: BoardView
           aria-expanded={filterOpen}
           aria-haspopup="true"
         >
-          {`${uiLabel('laneFilterLabel')} ${hiddenLanes.size === 0 ? '·' : `−${hiddenLanes.size}`}`}
+          {`${uiLabel('laneFilterLabel')} ${[
+            workingOnly ? uiLabel('laneFilterWorkingActive') : null,
+            hiddenLanes.size === 0 ? null : `−${hiddenLanes.size}`,
+          ]
+            .filter((part) => part !== null)
+            .join(' · ') || '·'}`}
         </button>
         <span className="dtg-chip" title={`${t('tabTitle')} · ${shownData.lanes.length}`}>
           {`${shownData.tasks.length} ${uiLabel('tasksLabel')}`}
@@ -539,7 +579,9 @@ export function BoardView({ sessionId, visible, routeBase, navigate }: BoardView
           anchor={filterButtonRef.current}
           lanes={data.lanes}
           hidden={hiddenLanes}
+          workingOnly={workingOnly}
           onToggle={toggleLane}
+          onToggleWorking={() => setWorkingOnly((value) => !value)}
           onClose={() => setFilterOpen(false)}
         />
       ) : null}

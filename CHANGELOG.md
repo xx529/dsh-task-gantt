@@ -1,5 +1,94 @@
 # Changelog
 
+## 0.2.29 — 2026-10-13
+
+**Working agents get a word; the panel reveals itself on the first team call; the lane-bottom band is
+gone; the filter menu survives a short panel**
+
+**1 — a status word beside the spinner, and an honest finding: we have no activity text**
+
+The user wanted the working lanes to carry text like another panel's `运行中  正在分析请求`. The
+investigation came first, and it settled the wording: `turnSpansFrom()` builds turn spans as
+`{kind, time, end, from, sessionId}` with no summary, tool name or activity text, and `ActivitySpan` /
+`SpanRect` have no text field either (raw fixture value: `{kind:'turn',start:…,end:…}`). So the panel
+shows a STATE WORD — `运行中` / `启动中` — and deliberately does not invent a sentence. A description
+would have to start being carried by the host.
+
+It sits on the top line, not the meta line: measured, the meta column has 108px, `3 任务 · ✉ 5` already
+takes 62px, and adding `运行中` (33px) would land exactly on 108px. Idle lanes get NO word, because the
+user removed 「空闲」 one round earlier as redundant. Explicit `idle`/`failed` beat an unclosed span
+(otherwise a frozen session that still holds an open span would spin forever); a missing status falls
+back to the open-span signal. A 40-character name yields to the status (the pill compresses to 51px and
+ellipsises internally) and the row stays 72px. Nine locks, teeth-calibrated.
+
+**2 — the panel reveals itself on the first team / sub-agent call**
+
+The Lead's premise for this task was WRONG and the teammate corrected it: the tab is registered by the
+CLIENT half, and `betterSidebar` is a client-only service — the host Inspect answers "no catalogued
+Service named betterSidebar", and the host's only outward channel (better-sidebar's `agent-opens`
+WebSocket) carries `file|folder|url` only. So the feature cannot live in `src/host/**`; it went into
+`src/client/index.ts`, with the deviation reported rather than hidden.
+
+The APIs were quoted from source, not guessed: `openTab(seed, scope)` (better-sidebar
+`src/client/service.ts:639`), `reveal?: boolean` (`:483-491`), `isTabEnabled(id)` (`:610`), and
+`features` containing `'targetedOpen'` (`:651-657`) — that last one is the documented basis for
+capability detection instead of a version check, and the code contains no version comparison (a lock
+asserts it). The built-in panel was traced the same way: a `0 -> N` transition in the number of
+sessions with `origin === 'subagent'` (`subagent-detect.ts:47-56`), a 500ms debounce
+(`use-host-feeds.ts:253/258`), and the reveal itself at `:130`. Our watcher reuses that same signal,
+is idempotent (a `done` flag plus `stop()`, asserted to fire exactly once across later joins/leaves),
+and is a silent no-op without `openTab` (it returns a no-op disposer before even creating the timer,
+and a lock asserts `console.warn` is never called). Published semantics match the built-in: a team that
+already exists at load does not trigger a reveal, so a page reload never steals focus.
+
+**3 — the lane-bottom message density band is deleted end to end**
+
+"这里每个泳道底部都有一个色条，我觉得这个逻辑可以不需要了". Removed cleanly rather than half-way: the
+`MESSAGE_BAND_*` constants, the `messageBands` result field, the `MessageBandRect` interface, the
+construction block, the render block with its lane-colour paint and tooltip, the `.dtg-msg-band` rule,
+the `messageBandTitle` key, and the prose that explained why the band was deliberately NOT
+range-scoped (the reasoning dies with the feature).
+
+MEASURED A/B on the same page and fixture, swapping only the bundle: before, every lane carried a 2px
+`.dtg-msg-band` at `+69..+71` painted in its lane colour (8 of them, opacity 0.35); after, ZERO, with no
+element <=3px tall at any lane bottom and none anywhere on the canvas. Everything else is
+byte-for-byte equal: lane height 72, header 28, canvas 676, markers 33, tasks 24, waits 18, task events
+51, turn 54, step 57, head lines one row at 62/62 with nothing ellipsised. The deepest track child fell
+71 -> 62, which is why the lane height stays 72: the band sat BELOW the deepest child, so removing it
+frees no space (measured, not assumed). Locks were re-based rather than dropped wholesale — every
+band-only assertion was deleted, but the marker half of each mixed lock was kept because it guards the
+real clamp/phantom defect from 0.2.12. The teammate also improved on the approved plan: instead of
+adding a `messageCountTitle` key it reused the existing `messageCountLabel`
+(101 -> 100 keys per locale, parity intact), avoiding two identical strings that would drift.
+
+**4 — the filter menu now works in a SHORT panel (the Lead's own regression from 0.2.26)**
+
+Reported as "点击筛选 teammate 没有反应" in a bottom-docked panel. The menu was never failing to open —
+it was being clamped to nothing: the 0.2.26 fix had changed the clamp boundary from the viewport to the
+panel (`scope: 'outer'`), so a short panel drove `max-height` toward zero and the menu became
+invisible. The clamp now uses the WINDOW, with `maxHeight = clamp(room, 90, 240)` — a hard floor of
+about three rows and internal scrolling — flipping to whichever side has more room, positioned from
+`top`. MEASURED at bottom-docked panel heights 410 / 250 / 160 / 100px: the menu is present,
+`aria-expanded: true`, height 221px, `elementFromPoint` at its centre hits a menu row, and
+`.dtg-scroll` stays 361/288 in all four. Before the fix the 100px case had `max-height: 80px` and sat at
+`744..824` against a 813px viewport, i.e. off-screen. The now-dead `scope: 'outer'` option was deleted
+along with its walk (the popovers keep the default and were regression-verified).
+
+**5 — a special "working only" filter**
+
+"上面筛选 teammate 地方，多一个特殊的筛选就是筛选当前正在工作中的". A `role="switch"` row (not a
+checkbox) sits above the per-teammate list, with new keys in both locales (102 each). It shares the
+spinner's predicate — importing the same `laneActivity` rather than growing a second copy — is ANDed
+with the per-teammate hidden set, survives the 5s poll, and is reflected in the trigger
+(`筛选 teammate 工作中 · −1`). The pinned lane survives even when idle (the user's standing rule that
+the Lead cannot be filtered), and an empty result shows the pinned row rather than a blank board.
+
+Tests: 716 passed / 1 skipped, 34 files; typecheck 0 errors; verify-build and verify-meta OK. The
+verifier is not used for this round; every claim above is accompanied by the measurement it came from,
+and the two items the implementers could not verify are stated as such.
+
+The footer build identity is now `v0.2.29 · working-lanes`.
+
 ## 0.2.28 — 2026-10-13
 
 **A working spinner in the lane head for currently active agents**

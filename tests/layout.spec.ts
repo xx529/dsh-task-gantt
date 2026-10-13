@@ -1064,7 +1064,7 @@ describe('frozen window semantics (live ⇔ range.end)', () => {
   })
 })
 
-describe('message markers and density bands', () => {
+describe('message markers', () => {
   /** 51 messages inside a 10px-wide window: decimation must engage. */
   function crowded(count = 51): TimelineResponse {
     const messages: MessageSpan[] = Array.from({ length: count }, (_, index) => ({
@@ -1095,12 +1095,6 @@ describe('message markers and density bands', () => {
     for (const marker of layout.messages) expect(raw, `marker time ${marker.time}`).toContain(marker.time)
     expect(layout.droppedMessageCount).toBe(raw.length - layout.messages.length)
     expect(layout.messageCount).toBe(raw.length)
-  })
-
-  it('keeps the density band at the TRUE first→last extent (decimation cannot shrink it)', () => {
-    const layout = layoutTimeline(crowded(), VIEWPORT, { now: 11_000, msPerPx: 100, tzOffsetMinutes: 0 })
-    expect(layout.messageBands).toHaveLength(1)
-    expect(layout.messageBands[0]).toMatchObject({ count: 51, firstTime: 1_000, lastTime: 2_000 })
   })
 
   it('separates kept markers by the documented minimum gap', () => {
@@ -1199,8 +1193,8 @@ describe('message markers and density bands', () => {
  *   2. "当时间线不是选 all 的时候，发送收取消息的 icon 多了很多 +n 的标记"
  *
  * Both had ONE cause. Every other rect builder in this module asks `inWindow`
- * before drawing — `spanRect` and `taskCardRect` both do; the message markers and
- * the message bands did not. Because a marker's x is
+ * before drawing — `spanRect` and `taskCardRect` both do; the message markers
+ * did not. Because a marker's x is
  * `(clamp(time, win.start, win.end) - win.start) / msPerPx`, an out-of-range
  * message was never dropped: it was CLAMPED onto the window's left edge and drawn
  * there. And `droppedBefore` ran over the lane's whole list, so the badge counted
@@ -1282,13 +1276,11 @@ describe('layoutTimeline — the message layer is scoped to the selected range',
     expect(filtered().window).toMatchObject({ start: WINDOW_START, end: NOW, live: true })
   })
 
-  it('draws no marker and no band for a lane whose messages are all older than the window', () => {
+  it('draws no marker for a lane whose messages are all older than the window', () => {
     // The clamp used to turn each of these 20 messages into a marker pinned at
-    // x === 0 — the phantom at the very start of the timeline. The band did the same
-    // thing as a 2px stub, because its own x0/x1 are clamped too.
+    // x === 0 — the phantom at the very start of the timeline.
     const layout = filtered()
     expect(layout.messages.filter((marker) => marker.laneId === 'early')).toHaveLength(0)
-    expect(layout.messageBands.filter((band) => band.laneId === 'early')).toHaveLength(0)
   })
 
   it('keeps every marker inside the window and still draws a message that sits ON an edge', () => {
@@ -1344,25 +1336,6 @@ describe('layoutTimeline — the message layer is scoped to the selected range',
       expect(marker.time).toBeGreaterThanOrEqual(layout.window.start)
       expect(marker.time).toBeLessThanOrEqual(layout.window.end)
     }
-    // …and the band that a filter cannot shrink is still reported for every lane.
-    expect(layout.messageBands.map((band) => band.laneId).sort()).toEqual(['early', 'edges', 'inside', 'spanning'])
-  })
-
-  it('keeps the band at the TRUE first→last extent, and only when the window touches it', () => {
-    const layout = filtered()
-    // Deliberately NOT range-scoped: "this lane was talking from here to there and it
-    // keeps talking past the edge you selected" is the fact the strip carries, and its
-    // tooltip names the true endpoints. Only the phantom case is dropped.
-    expect(layout.messageBands.find((band) => band.laneId === 'spanning')).toMatchObject({
-      count: 30 + 12,
-      firstTime: at(2_900_000),
-      lastTime: at(3_525_000),
-      x: 0,
-    })
-    // A band that begins at the window's left edge is not a phantom: the lane really
-    // has messages on both sides of it.
-    expect(layout.messageBands.find((band) => band.laneId === 'edges')?.w).toBeCloseTo(layout.dataWidth, 6)
-    expect(layout.messageBands.find((band) => band.laneId === 'edges')?.count).toBe(2)
   })
 })
 

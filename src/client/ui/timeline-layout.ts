@@ -166,7 +166,7 @@
  * in the DOM, not correctness). Lanes are always returned.
  *
  * `visible` is decided in VIEW space by {@link rectVisible} for every rect
- * family (spans, task cards, message markers, message bands): a rect that has
+ * family (spans, task cards, message markers): a rect that has
  * been scrolled out of the band is not visible, and one scrolled into it is —
  * regardless of how far into the content it sits.
  *
@@ -249,7 +249,7 @@ export const STEP_BAR_HEIGHT = 8
  * assert the three of them never overlap — the regression lock for the crowded
  * 56px lane, where the message markers sat on top of the task label.
  *
- *   track 1  message   markers (+ the density band along the lane's bottom edge)
+ *   track 1  message   markers
  *   track 2  activity  turn band + step bar
  *   track 3  task      the duration bar + its label chip
  */
@@ -480,10 +480,6 @@ export const MESSAGE_MARKER_TOP = MESSAGE_TRACK_TOP
  * message of every pixel bucket, so a lane also stops at this count.
  */
 export const MESSAGE_MARKER_MAX = 40
-/** A lane's message-density band is never thinner than this (px). */
-export const MESSAGE_BAND_MIN_PX = 2
-/** Height of that band (px); it sits on the lane's own bottom edge. */
-export const MESSAGE_BAND_HEIGHT = 2
 
 /** The tick ladder, ascending. Chosen so every step <= 1h is epoch-aligned. */
 export const TICK_STEPS: readonly number[] = [
@@ -766,8 +762,6 @@ export interface TimelineLayout {
   tasks: TaskCardRect[]
   /** Rendered message markers, every one datable to its exact `time`. */
   messages: MessageMarkerRect[]
-  /** Per-lane message-density bands: the true first→last message extent. */
-  messageBands: MessageBandRect[]
   /** Message candidates the markers were decimated from (after turn de-duping). */
   messageCount: number
   /** How many candidates decimation dropped (never re-dated, only omitted). */
@@ -823,30 +817,6 @@ export interface MessageMarkerRect {
   messageIndex: number
   /** Markers of the same lane dropped just before this one by decimation. */
   droppedBefore: number
-  x: number
-  y: number
-  w: number
-  h: number
-  viewX: number
-  visible: boolean
-}
-
-/**
- * A lane's message-density band: the honest first→last extent of its messages.
- *
- * This exists so that decimation can thin the MARKERS without hiding the fact
- * that a lane was chatty for three minutes: the band spans the true range of
- * every message, so it can never misreport when messages arrived.
- */
-export interface MessageBandRect {
-  laneId: string
-  laneIndex: number
-  /** Earliest message time on the lane. */
-  firstTime: number
-  /** Latest message time on the lane. */
-  lastTime: number
-  /** How many messages the band covers. */
-  count: number
   x: number
   y: number
   w: number
@@ -1199,9 +1169,10 @@ export function computeWindow(
  *  5. At most `maxPerLane` markers survive.
  *
  * Every dropped marker is counted in the next kept marker's
- * {@link MessageMarkerRect.droppedBefore}, and the lane's true first→last
- * extent is reported separately as a {@link MessageBandRect} — so "here are 5
- * of 51 messages" stays visible instead of the chart implying there were five.
+ * {@link MessageMarkerRect.droppedBefore}, and the layout also reports
+ * {@link TimelineLayout.messageCount} / {@link TimelineLayout.droppedMessageCount}
+ * — so "here are 5 of 51 messages" stays visible instead of the chart implying
+ * there were five.
  *
  * @param list - the lane's messages, in any order (sorted internally by time,
  *   then by index, so equal timestamps stay stable).
@@ -1290,7 +1261,7 @@ export function decimateMarkers(
   // alone with the spacing rule relaxed — it keeps the direction visible at a
   // couple of extra overlapping pixels, which is emphatically better than a lane
   // that shows replies but never replies. Markers still keep their exact times
-  // and the lane's own `messageBands` still reports the true extent either way.
+  // either way; the relaxed pass only ever adds a marker, it never re-dates one.
   const directionsWithData = new Set(ordered.map((index) => {
     const span = list[index]
     return span === undefined ? 'any' : kindOf(span)
@@ -2023,7 +1994,6 @@ export function layoutTimeline(
   const gapPx = num(options.messageMinGapPx, MESSAGE_MARKER_MIN_GAP_PX)
   const maxPerLane = num(options.messageMaxPerLane, MESSAGE_MARKER_MAX)
   const messages: MessageMarkerRect[] = []
-  const messageBands: MessageBandRect[] = []
   let messageCount = 0
   let droppedTotal = 0
   for (let index = 0; index < lanesInput.length; index += 1) {
@@ -2034,45 +2004,8 @@ export function layoutTimeline(
     )
     if (list.length === 0) continue
     const laneY = headerHeight + index * laneHeight
-    // The band is the lane's TRUE extent: it is built from every message, so
-    // decimation of the markers below can never shrink the reported span. It is
-    // deliberately NOT range-scoped the way the markers are — "this lane was talking
-    // from here to there, and it keeps talking past the edge of what you selected" is
-    // exactly the fact the strip exists to carry, and its own tooltip names the true
-    // endpoints. What it must never do is exist for a lane whose messages the window
-    // does not touch AT ALL: `clamp` would collapse that to a 2px stub at x=0, i.e. a
-    // phantom mark at the very start of the timeline (see the `inWindow` guard below).
-    let firstTime = Number.POSITIVE_INFINITY
-    let lastTime = Number.NEGATIVE_INFINITY
-    for (const message of list) {
-      const time = num(message?.time, Number.NaN)
-      if (!Number.isFinite(time)) continue
-      if (time < firstTime) firstTime = time
-      if (time > lastTime) lastTime = time
-    }
-    if (Number.isFinite(firstTime) && Number.isFinite(lastTime) && inWindow(firstTime, lastTime, win)) {
-      const x0 = clamp(firstTime, win.start, win.end)
-      const x1 = clamp(lastTime, win.start, win.end)
-      const x = (x0 - win.start) / msPerPx
-      const w = Math.max(MESSAGE_BAND_MIN_PX, (x1 - x0) / msPerPx)
-      const viewX = x - scrollLeft
-      const band: MessageBandRect = {
-        laneId: lane.id,
-        laneIndex: index,
-        firstTime,
-        lastTime,
-        count: list.length,
-        x,
-        y: laneY + laneHeight - MESSAGE_BAND_HEIGHT - 1,
-        w,
-        h: MESSAGE_BAND_HEIGHT,
-        viewX,
-        visible: rectVisible(viewX, w, width),
-      }
-      if (!cull || band.visible) messageBands.push(band)
-    }
 
-    /* ---- the markers ARE range-scoped; the band above is not ---------------- */
+    /* ---- the markers ARE range-scoped --------------------------------------- */
     //
     // THE BUG THIS REPLACES. Both this candidate list and the count behind the "+n"
     // badge used to be the lane's WHOLE message list. Because a marker's x is
@@ -2188,7 +2121,6 @@ export function layoutTimeline(
     spans,
     tasks,
     messages,
-    messageBands,
     ticks,
     endSource,
     endMarker,

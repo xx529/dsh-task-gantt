@@ -1,4 +1,5 @@
 import type { TimelineLane, TimelineTask } from '../../shared/contract.ts'
+import { laneActivity } from './lane-activity.ts'
 
 /**
  * The teammate filter: which lanes the board draws.
@@ -23,20 +24,56 @@ import type { TimelineLane, TimelineTask } from '../../shared/contract.ts'
  * deliberately NOT pinned: it is a bucket, not a teammate, and the user asked to be
  * able to filter the agents.
  *
+ * ── THE SECOND FILTER: "working only" ──────────────────────────────────────
+ * The user: "上面筛选 teammate 地方，多一个特殊的筛选就是筛选当前正在工作中的". It is a
+ * SECOND, independent condition, combined with the hidden set by AND:
+ *
+ *   visible = isPinnedLane(lane)
+ *          || ( !hidden.has(lane.id) && (!workingOnly || laneActivity(lane).working) )
+ *
+ * The predicate is `laneActivity` — the SAME pure function the head spinner uses, so
+ * the filter can never disagree with the spinner about who is working.
+ *
+ * A PINNED lane survives BOTH filters, even when idle: "lead 是不能筛选的，一定要显示"
+ * is an explicit user rule, and a special view must not silently overturn it. That is
+ * also what makes the empty case sane — if nobody is working the board shows the pinned
+ * row alone rather than nothing at all, so the panel never appears broken/blank.
+ *
  * @param data - the response as fetched, before any filtering.
  * @param hidden - lane ids the user has unticked. Order and contents are irrelevant.
- * @returns `data` ITSELF when nothing is hidden, so the identity case allocates
+ * @param allLanes - the UNFILTERED lane list, so a hidden peer can be told from an
+ *   off-roster one when dropping messages.
+ * @param workingOnly - when `true`, keep only working lanes (plus pinned ones).
+ * @returns `data` ITSELF when nothing is filtered out, so the identity case allocates
  *   nothing and keeps object identity (a caller may compare references); otherwise a
- *   shallow copy with the hidden lanes and their top-level tasks removed, in the
+ *   shallow copy with the dropped lanes and their top-level tasks removed, in the
  *   original order.
  */
 export function filterTimelineLanes<T extends { lanes: TimelineLane[]; tasks: TimelineTask[] }>(
   data: T,
   hidden: ReadonlySet<string>,
   allLanes: readonly TimelineLane[] = data.lanes,
+  workingOnly = false,
 ): T {
-  if (hidden.size === 0) return data
-  const lanes = data.lanes.filter((lane) => isPinnedLane(lane) || !hidden.has(lane.id))
+  /**
+   * A lane the working-only view re-inserts. Computed up front so the two conditions
+   * can be applied in one pass and the message sweep can treat both kinds of removal
+   * identically.
+   */
+  const working = new Map<string, boolean>()
+  const isWorking = (lane: TimelineLane): boolean => {
+    const cached = working.get(lane.id)
+    if (cached !== undefined) return cached
+    const value = laneActivity(lane).working
+    working.set(lane.id, value)
+    return value
+  }
+  const lanes = data.lanes.filter((lane) => {
+    if (isPinnedLane(lane)) return true
+    if (hidden.has(lane.id)) return false
+    if (workingOnly && !isWorking(lane)) return false
+    return true
+  })
   if (lanes.length === data.lanes.length) return data
   // A lane that is gone must not leave its tasks behind: they would be drawn with no
   // row to belong to, and the task count in the toolbar would still include them.
@@ -52,7 +89,19 @@ export function filterTimelineLanes<T extends { lanes: TimelineLane[]; tasks: Ti
     for (const key of speakerKeysOf(candidate)) laneBySpeaker.set(key, candidate.id)
   }
   const laneIdOf = (speakerId: string): string | null => laneBySpeaker.get(speakerId) ?? null
-  return { ...data, lanes: lanes.map((lane) => dropHiddenPeerMessages(lane, hidden, laneIdOf)), tasks }
+  /**
+   * Lanes that are gone from THIS render, whatever removed them. The working-only view
+   * has to feed this too: a message whose counterpart is filtered out has no lane to
+   * borrow a colour from, and would otherwise be drawn in the neutral "peer not on this
+   * board" grey — the exact artefact the hidden-set sweep exists to prevent. The sweep
+   * fixes it at the data layer instead of inventing a colour.
+   */
+  const gone = new Set<string>()
+  for (const lane of data.lanes) {
+    if (!lanes.includes(lane)) gone.add(lane.id)
+  }
+  const dropFrom = hidden.size === 0 ? gone : new Set([...hidden, ...gone])
+  return { ...data, lanes: lanes.map((lane) => dropHiddenPeerMessages(lane, dropFrom, laneIdOf)), tasks }
 }
 
 /**

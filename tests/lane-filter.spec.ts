@@ -21,10 +21,15 @@ import type { TimelineLane, TimelineTask } from '../src/shared/contract.ts'
 
 const colour = { bar: '--dsw-alias-brand-primary', on: '--dsw-alias-label-primary-inverted' }
 
-const lane = (id: string, role: TimelineLane['role'] = 'teammate'): TimelineLane => ({
+const lane = (
+  id: string,
+  role: TimelineLane['role'] = 'teammate',
+  status?: TimelineLane['status'],
+): TimelineLane => ({
   id,
   name: id,
   role,
+  status,
   hasHistory: true,
   spans: [],
   messages: [],
@@ -259,5 +264,113 @@ describe('filterTimelineLanes', () => {
     const out = filterTimelineLanes(fixture(), new Set(['alpha', 'bravo', 'unassigned']))
     expect(ids(out)).toEqual(['lead'])
     expect(taskIds(out)).toEqual(['t-lead'])
+  })
+})
+
+/**
+ * The SPECIAL "working only" view, and how it composes with the per-teammate hidden set.
+ *
+ * The user: "上面筛选 teammate 地方，多一个特殊的筛选就是筛选当前正在工作中的". The two
+ * conditions are ANDed, and both are applied at the single filtering point, so nothing
+ * downstream can disagree.
+ *
+ * The predicate itself is `laneActivity` — the SAME pure function the lane-head spinner
+ * uses. Its own full truth table lives in `tests/lane-activity.spec.ts`; this block locks
+ * what the FILTER does with it, which is where the composition and the pinned rule live.
+ */
+describe('the working-only view', () => {
+  /** lead pinned + idle, alpha running, bravo idle, unassigned idle. */
+  const board = () => ({
+    lanes: [lane('lead', 'lead', 'idle'), lane('alpha', 'teammate', 'running'), lane('bravo', 'teammate', 'idle'), lane('unassigned', 'unknown', 'idle')],
+    tasks: [task('t-lead', 'lead'), task('t-alpha', 'alpha'), task('t-bravo', 'bravo'), task('t-none', 'unassigned')],
+  })
+
+  it('keeps only working lanes, plus the pinned one', () => {
+    const out = filterTimelineLanes(board(), new Set(), board().lanes, true)
+    // alpha works; lead is pinned even though it is idle; bravo and unassigned drop.
+    expect(ids(out)).toEqual(['lead', 'alpha'])
+  })
+
+  it('the pinned lane survives the working filter even when IDLE', () => {
+    // "lead 是不能筛选的，一定要显示" is an explicit user rule. A special view must not
+    // silently overturn it, so an idle pinned lane stays on the board.
+    const out = filterTimelineLanes(board(), new Set(), board().lanes, true)
+    expect(ids(out)).toContain('lead')
+    expect(taskIds(out)).toContain('t-lead')
+  })
+
+  it('when nobody is working the board shows the pinned lane alone, not nothing', () => {
+    // The empty case for this view. Returning nothing at all would make the panel look
+    // broken; the pinned row is always a sane, honest result.
+    const idle = {
+      lanes: [lane('lead', 'lead', 'idle'), lane('bravo', 'teammate', 'idle')],
+      tasks: [task('t-lead', 'lead'), task('t-bravo', 'bravo')],
+    }
+    const out = filterTimelineLanes(idle, new Set(), idle.lanes, true)
+    expect(ids(out)).toEqual(['lead'])
+    expect(taskIds(out)).toEqual(['t-lead'])
+  })
+
+  it('ANDs with the hidden set: a hidden working lane stays hidden', () => {
+    // BOTH set: hiding alpha while alpha works must still remove it — the hidden set is
+    // the more specific statement about that lane.
+    const data = board()
+    const out = filterTimelineLanes(data, new Set(['alpha']), data.lanes, true)
+    expect(ids(out)).toEqual(['lead'])
+  })
+
+  it('ANDs the other way too: working-only removes an unticked idle lane', () => {
+    const data = board()
+    const out = filterTimelineLanes(data, new Set(), data.lanes, true)
+    expect(ids(out)).not.toContain('bravo')
+    expect(ids(out)).not.toContain('unassigned')
+  })
+
+  it('unassigned is NOT pinned, so the working view can drop it', () => {
+    // It is a bucket, not a teammate — the same rule the hidden set already follows.
+    const data = board()
+    const out = filterTimelineLanes(data, new Set(), data.lanes, true)
+    expect(ids(out)).not.toContain('unassigned')
+  })
+
+  it('an unclosed turn span makes a lane count as working for the filter too', () => {
+    // The filter must agree with the spinner, which treats an open turn as work when the
+    // reported status is missing.
+    const open = lane('delta', 'teammate')
+    open.spans = [{ kind: 'turn', start: 1, end: null }]
+    const data = { lanes: [lane('lead', 'lead', 'idle'), open], tasks: [] }
+    expect(ids(filterTimelineLanes(data, new Set(), data.lanes, true))).toEqual(['lead', 'delta'])
+  })
+
+  it('a lane whose turns all CLOSED does not count as working', () => {
+    // The load-bearing negative: a busy board is full of finished spans.
+    const done = lane('delta', 'teammate', 'idle')
+    done.spans = [{ kind: 'turn', start: 1, end: 2 }]
+    const data = { lanes: [lane('lead', 'lead', 'idle'), done], tasks: [] }
+    expect(ids(filterTimelineLanes(data, new Set(), data.lanes, true))).toEqual(['lead'])
+  })
+
+  it('working-only off is byte-for-byte the old behaviour', () => {
+    const data = board()
+    expect(filterTimelineLanes(data, new Set(), data.lanes, false)).toBe(data)
+    // ...and so is the default when the argument is omitted.
+    expect(filterTimelineLanes(data, new Set())).toBe(data)
+  })
+
+  it('drops a surviving lane\'s messages whose peer the working view removed', () => {
+    // Same reasoning as the hidden set: a counterpart with no lane on the board has no
+    // colour to borrow and would be drawn in the neutral grey. Measured before this
+    // sweep existed the markers lingered as "peer not on this board".
+    const lead = lane('lead', 'lead', 'running')
+    lead.messages = [
+      { kind: 'message', time: 1, end: 1, from: { kind: 'lead', id: 'lead', name: 'lead' }, to: { kind: 'teammate', id: 'alpha', name: 'alpha' }, sessionId: 'lead' },
+      { kind: 'message', time: 2, end: 2, from: { kind: 'lead', id: 'lead', name: 'lead' }, to: { kind: 'teammate', id: 'outsider', name: 'outsider' }, sessionId: 'lead' },
+    ]
+    const data = { lanes: [lead, lane('alpha', 'teammate', 'idle')], tasks: [] }
+    const out = filterTimelineLanes(data, new Set(), data.lanes, true)
+    const surviving = out.lanes.find((l) => l.id === 'lead')
+    // alpha is filtered out by the working view, so that message goes; the off-roster
+    // peer was never on the board and therefore stays.
+    expect((surviving?.messages ?? []).map((m) => m.to?.id)).toEqual(['outsider'])
   })
 })
