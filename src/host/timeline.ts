@@ -694,6 +694,17 @@ async function deriveTimeline(ctx: Context, sessionId: string, generatedAt: numb
   // ---- 5. read every lane's own log (spans + tool-call attribution) --------
   const folds = new Map<string, FoldedSession>()
   folds.set(rootSessionId, rootFold)
+  /**
+   * Sessions whose log was ACTUALLY read.
+   *
+   * `folds` cannot serve as that record: the root fold is seeded unconditionally, so
+   * an unreadable root still has a (empty) fold. Anything that must distinguish
+   * "we read it" from "we made it up" has to ask this set — the live-activity mount
+   * below is exactly that case, because `'thinking'` is a CLAIM and a failed read must
+   * degrade to an absent field, not to a claim.
+   */
+  const readableLogs = new Set<string>()
+  if (rootRead.ok) readableLogs.add(rootSessionId)
   const allToolCalls: ToolCallTransition[] = [...rootFold.toolCalls]
   const diagnostics: FoldDiagnostics[] = [rootFold.activity.diagnostics]
   let readable = rootRead.ok ? 1 : 0
@@ -710,6 +721,7 @@ async function deriveTimeline(ctx: Context, sessionId: string, generatedAt: numb
       continue
     }
     readable += 1
+    readableLogs.add(id)
     const fold = foldSessionEvents(read.events, id)
     folds.set(id, fold)
     allToolCalls.push(...fold.toolCalls)
@@ -847,10 +859,11 @@ async function deriveTimeline(ctx: Context, sessionId: string, generatedAt: numb
       if (laneFold !== undefined && laneFold.waits.length > 0) lane.waits = laneFold.waits
     }
     // What this lane's agent is doing right now. Attached ONLY when the lane's own log
-    // was readable — the field is optional by contract, and an unreadable log must stay
-    // indistinguishable from today's payload rather than defaulting to a guess
-    // (`'thinking'` would be a claim, not a degradation).
-    if (draft.sessionId !== undefined) {
+    // was actually READ (`readableLogs`, not `folds` — the root fold exists even when
+    // its read failed). The field is optional by contract, and `'thinking'` is a claim:
+    // an unreadable log must stay indistinguishable from today's payload rather than
+    // asserting that an agent we could not observe is thinking.
+    if (draft.sessionId !== undefined && readableLogs.has(draft.sessionId)) {
       const laneFold = folds.get(draft.sessionId)
       if (laneFold !== undefined) lane.activity = laneFold.laneActivity
     }

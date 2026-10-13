@@ -33,6 +33,7 @@ import {
   toolActivityKind,
   type RawSessionEvent,
 } from './fold.ts'
+import { buildTimeline } from './timeline.ts'
 import { MESSAGE_PREVIEW_MAX } from '../shared/contract.ts'
 
 /**
@@ -466,6 +467,72 @@ assert(
   realToolNames.size > 0 && unmapped.length > 0,
   "the built-in table's catch-all is exercised by real tool names, not just by a fixture",
 )
+
+// ---- end-to-end mount over the REAL logs -----------------------------------
+// The unit spec locks the rule with constructed events; this drives the REAL
+// `buildTimeline` over every real log, so the MOUNT itself — not just the fold — is
+// pinned. It is the lock against the exact regression that shipped: the lane carried no
+// `activity`, the client fell back to its status word, and the feature looked absent
+// even though the host code was correct.
+console.log('\n=== buildTimeline over the REAL logs (stubbed live host) ===')
+const byId = new Map(loaded.map((s) => [s.id, s]))
+const stubCtx = {
+  logger: undefined,
+  get: (key: string) => {
+    if (key !== 'agents') return undefined
+    return {
+      get: (id: string) => {
+        const bare = id.replace(/^session-/, '')
+        const session = byId.get(bare) ?? byId.get(id)
+        if (session === undefined) return undefined
+        return {
+          id: bare,
+          status: 'running',
+          options: { model: 'dev-verify' },
+          session: { header: {}, snapshotEvents: () => session.events },
+        }
+      },
+    }
+  },
+} as never
+
+const rootSession = loaded.find((s) => {
+  const header = s.events.find((e) => (e as { type?: unknown }).type === 'session') as
+    | Record<string, unknown>
+    | undefined
+  return header !== undefined && header.parentSession === undefined
+})
+if (rootSession === undefined) {
+  console.log('  (no root session found; skipping the end-to-end mount check)')
+} else {
+  const response = await buildTimeline(stubCtx, rootSession.id)
+  console.log(`  root=${rootSession.id.slice(0, 8)} source=${response.source} lanes=${response.lanes.length}`)
+  for (const lane of response.lanes) {
+    console.log(
+      `    lane ${lane.id.slice(0, 8)} status=${String(lane.status).padEnd(12)}` +
+        ` activity=${JSON.stringify(lane.activity ?? null)}`,
+    )
+  }
+  const missing = response.lanes.filter((lane) => lane.activity === undefined).map((lane) => lane.id)
+  assert(
+    missing.length === 0,
+    `every lane of a readable real log carries activity (missing: ${missing.join(', ') || 'none'})`,
+  )
+  assert(
+    response.lanes.every(
+      (lane) =>
+        lane.activity === undefined ||
+        (lane.activity.evidence === 'running-tool') === (lane.activity.toolName !== undefined),
+    ),
+    'toolName is present exactly when evidence is running-tool',
+  )
+  // The wire form is what the client actually sees.
+  const wire = JSON.parse(JSON.stringify(response)) as { lanes: { activity?: unknown }[] }
+  assert(
+    wire.lanes.every((lane) => lane.activity !== undefined),
+    'the mount survives JSON serialization (the route ships JSON, not objects)',
+  )
+}
 
 console.log(failures === 0 ? '\nALL CHECKS PASSED' : `\n${failures} CHECK(S) FAILED`)
 process.exitCode = failures === 0 ? 0 : 1

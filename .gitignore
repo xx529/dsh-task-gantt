@@ -8,3 +8,5 @@ coverage/
 # GitHub with no build step (`dsh plugin add "dsh-task-gantt@github:…"`), which
 # is how dsh-better-sidebar / dsh-ego-browser / dsh-github-workbench ship too.
 # `pnpm run check` runs `git diff --exit-code -- lib` so a stale lib/ fails CI.
+
+dist/

@@ -530,7 +530,7 @@ task-16：8791 服务文件 917fceca426dbe57216cb66b9bc1ea53  151057 B
 
 **替代它的新锁（task-47 补齐，见 §3 的 spec 清单）**：
 - `tests/layout.spec.ts`：`src/` 全树 0 命中 `messageBands` / `MessageBandRect` / `MESSAGE_BAND_` / `dtg-msg-band`（防回流）；泳道高与轨道栈一致性（用 `laneTracks()` 的真实 y/h，最深轨道底 + `LANE_BOTTOM_PAD` ≤ `DEFAULT_LANE_HEIGHT`，且 `layoutTimeline` 产出的 span/task/marker/wait 四族 rect 都不得越过 `laneHeight`）。
-- `tests/lane-head.spec.ts`（新）：泳道头 counts 是**一个** `' · '` 连接的文本节点（不是三个节点）；状态词是 **meta 行**里的独立 `.dtg-head-status` 节点、绝不折进 counts 节点，且只对工作泳道生成（0.2.30 起；该锁刻意与"词在哪一行、有几个词"无关 —— 词在 22:35 从顶行搬进 meta 行、0.2.30 又加入活动短词，两次都没让这条锁变红，见 §1.24）。
+- `tests/lane-head.spec.ts`（新）：泳道头 counts 是**一个** `' · '` 连接的文本节点（不是三个节点）；状态词是**独立的一行**（`.dtg-head-activity`，行内为 `.dtg-head-status` span）—— **不折进 counts 节点**，且只对工作泳道生成（0.2.30 定型：三行头 = top / counts / activity；该锁刻意与"词在哪一行、有几个词"无关，见 §1.24.6）。
 
 **浏览器复核（我这一轮实测，替代原来只靠目视的那条）**：服务产物剥掉前两行 shim 后 `md5 = a1c0de92179d3fc3940fb03f60f871a9`，与仓库 `lib/client.js` 逐字节 `IDENTICAL`；页面 `http://127.0.0.1:8791/demo/index.html?v=mine`。**before**（`git show HEAD:lib/client.js`，剥 shim 后 `a95339c1065fbc3fd520d1ce7cc91517`）：`.dtg-msg-band` 8 个，各 `h=2`、`top=+69`、`bottom=+71`、背景 = 泳道色、`opacity 0.35`，且每泳道"最深 track 子元素" = **+71**（band 就是最深那个）。**after**：`.dtg-msg-band` **0 个**，`+69..+71` 无任何元素，每泳道最深 track 子元素回落到 **+62**；`laneHeight 72`、`headerHeight 28`、`canvasHeight 676`（28+9×72）、`.dtg-msg 33` / `.dtg-task 24` / `.dtg-wait 18` / `.dtg-task-event 51` / `.dtg-turn 54` / `.dtg-step 57` **before→after 完全相等**。
 
@@ -543,14 +543,14 @@ task-16：8791 服务文件 917fceca426dbe57216cb66b9bc1ea53  151057 B
 ### 1.24.1 活动短词（`lane.activity` → 一个词）
 - **信号**：宿主新增 `LaneLiveActivity`（`kind` + `detail` + `toolName?` + `evidence`），客户端 `lane-activity.ts` 把 `kind` 映到 2–4 字短词（`laneActThinking` → `分析中`，共 **14 个 kind**，zh/en 两份）。
 - **回退链**：`activity → 运行中/启动中（status 兜底）→ 不给词`（`idle`/`failed` 且无 descriptor 时不给词；这条链的判定归 `tests/lane-activity.spec.ts`）。
-- **头部行实测**（ui-2 交付报告，`ui` 未独立复跑）：`运行命令 · 5 · ✉ 259`。
+- **头部行实测**（ui-2 交付报告，`ui` 未独立复跑）：中间态为**单行** `运行命令 · 5 · ✉ 259`；**0.2.30 定型后是三行** —— 药丸行 / `5 任务 · ✉ 259` / `运行命令`。
 - **逐节点宽度**（ui-2 报告，**三档 480/420/300px 结果相同**）：`name 88/88`、`status 53/53`、`counts 50/50`；**`failingNodes = 0`、`namesTruncated = 0`**。
-- **值得记住的假绿教训**：上一轮 counts 节点曾被**静默截断**（实测 `clientWidth 54 < scrollWidth 62`），而"看起来正常"；改紧凑计数后为 `50/50`。最紧组合 `运行命令 + ✉ 259 = 103px ≤ 107px`（余 **4px**）—— 余量只够一个 3 字词，这是"短词必须 2–4 字"这一约束的来源。
+- **值得记住的假绿教训**：上一轮 counts 节点曾被**静默截断**（实测 `clientWidth 54 < scrollWidth 62`），而"看起来正常"；改紧凑计数后为 `50/50`。最紧组合 `运行命令 + ✉ 259 = 103px ≤ 107px`（余 **4px**）—— 余量只够一个 3 字词，这是"短词必须 2–4 字"这一约束的来源（也是 §1.24.6 里紧凑计数的成因）。
 
 ### 1.24.2 紧凑计数
-- 行内为 `5 · ✉ 259`：任务数是**裸数字**、消息数保留 `✉` 前缀（`任务`/`消息`两个词移出可见文本）。
-- **词没有丢**：完整措辞 `5 个任务 · 259 条消息` 进**行 tooltip / 无障碍名**，新 key `countsFullLabel`（zh `{tasks} 个任务 · {messages} 条消息` / en `{tasks} tasks · {messages} messages`）。
-- **`ui` 的锁（本轮落地）**：`tests/lane-head.spec.ts` 13 例 —— counts 是**单一文本节点**且形如 `[裸任务数, ✉ 消息数].filter(present).join(' · ')`；counts 节点**不含任何状态词或活动词**；行 `title` 含 `countsFullLabel`；meta 行 = `1 counts 节点 + 0..2 个 inline 词 span`，其余节点（含块级元素）报错；活动词存在时头部只印**最具体的那个词**（`laneActCommands` 而非 `运行中`）；`.dtg-head-status` 只对工作泳道生成。**牙齿**：谓词级标定（两个 counts 兄弟节点 / 第三个陌生节点 / `div` 块级节点 / 3 个词 span / counts 文本含活动词 全部为红；0、1、2 个词均为绿）+ 真树 liveness（把期望泳道换成隔壁 → 3 条真红）。
+- 行内为 `5 任务 · ✉ 259`：**完整措辞已回归**（0.2.30 定型）。紧凑写法（`5 · ✉ 259`，任务数裸数字、`✉` 前缀保留）只是**中间态**，仅在"活动词与 counts 抢同一个盒子、107px 装不下"时存在；活动词移到独立行后不再需要。
+- **词没有丢（现在有两处）**：完整措辞 `5 个任务 · 259 条消息` 既在**可见行内**，也在**行 tooltip / 无障碍名**里，新 key `countsFullLabel`（zh `{tasks} 个任务 · {messages} 条消息` / en `{tasks} tasks · {messages} messages`）。
+- **`ui` 的锁（0.2.30 定型口径）**：`tests/lane-head.spec.ts` 13 例 —— 谓词 `headProblems(rows, words, expectActivity)` 断言 ①**行序**恰为 `[dtg-head-top, dtg-head-meta]` 或 `[dtg-head-top, dtg-head-meta, dtg-head-activity]`（`expectActivity` 由真 oracle `laneActivity(lane).statusKey !== null` 喂入，缺行与多行都红）；②**每行内部无块级后代**（判据逐行施加，因为 `.dtg-head-activity` 本身就是设计上的块级行）；③counts 行**恰好 1 个** `.dtg-head-meta-text` 且是**单一文本节点**、形如 `[N 任务, ✉ M].filter(present).join(' · ')`、**不含任何状态/活动词**、**不嵌套任何词节点**；④活动行**恰好 1 个** `.dtg-head-status` span；⑤行 `title` 含 `countsFullLabel`。**牙齿**：谓词级标定 **8 种坏形状全红**（行序错位 / 工作泳道缺第三行 / 空闲泳道多第三行 / 行内块级后代 / 两个 counts 节点 / 词折进 counts 文本 / 词节点嵌在 counts 行 / 活动行两个词 span），两种诚实形状全绿；另加**3 处真树/谓词标定**（把 `expectActivity` 恒真 → 两条红；工作泳道期望两行 → 红；`countsFullLabel` 用错数字 → `expected 'alpha · Lead · Running …' to contain '3 tasks · 2 messages'`）。
 
 ### 1.24.3 面板菜单定位（filter 菜单）
 - **根因**：菜单用 `fixed`，而"包含块"被祖先 `transform` 劫持 —— 合成复现的 `Δtop +406` / `Δleft +600` 与该包含块的视口位置**逐一对上**（不是猜的）。
@@ -559,6 +559,7 @@ task-16：8791 服务文件 917fceca426dbe57216cb66b9bc1ea53  151057 B
 
 ### 1.24.4 证据口径与缺口
 - 口径沿用 §1.23：**部署产物剥掉前两行 shim 后的 md5** + 与仓库 `lib/client.js` **逐字节一致** + 页面 URL + before/after 计数对拍 + 截图。
+- ⚠️ **locale 口径（`ui` 亲踩，值得每个写断言的人读一遍）**：**vitest 环境的 locale 是 `en`**（无 `document`/`navigator` → i18n 兜底成英文：渲染出 `Running`、`countsFullLabel = '3 tasks · 2 messages'`），而**浏览器里是 `zh`**（`运行中`、`3 个任务 · 2 条消息`）。所以断言里**不许硬编码渲染出来的词**，一律走 `uiLabel()` / `t()`；`ui` 第一次做谓词标定时把 `运行中` 硬编码进 counts 文本，结果 `AssertionError` 红在了**错误的位置**（`expected '' to contain 'carries the word'` —— 谓词没报错，因为那个词根本不在本次运行的词表里）。文档里凡引用"渲染出来的词"也必须注明是哪一侧（浏览器 zh / vitest en）。
 - ❓ **本节缺的字段**：三件各自那套 md5 / 页面 URL / 截图由 `ui-2` 的交付报告持有，**我（ui）没有独立复跑，故不在此填写**；`host-data` 的守卫真值表见 `tests/host-live-activity.spec.ts`（**17 条**）。
 - **锁的归属（只做指针，不复制断言）**：活动短词 → `tests/lane-head.spec.ts`（可见契约，`ui` 所有）+ `tests/lane-activity.spec.ts`（descriptor→key 表，其 owner 所有）；菜单定位 → `overlay-position` 侧锁；宿主字段真值表 → `tests/host-live-activity.spec.ts`。
 
@@ -568,6 +569,11 @@ task-16：8791 服务文件 917fceca426dbe57216cb66b9bc1ea53  151057 B
 3. **非 `transform` 的包含块祖先**（`filter` / `perspective` / `will-change` / `contain`）只做了**代码层判定**，未逐一实测。
 4. `activity.detail` 含**换行或超长中文**时的头部/tooltip 表现未测（宿主侧已裁到 160 字符并压成一行，但客户端未实测）。
 5. **`preparing`（准备读取文件）不可复现**：该信号只存在于客户端实时流、不落盘，因此**没有**对应的 fixture 与锁。
+
+### 1.24.6 0.2.30 定型更正（这一节自己推翻了自己两次，留痕）
+- **紧凑计数是中间态，已回归完整措辞**：`5 · ✉ 259`（裸任务数）不是偏好，而是被 107px 头列**逼出来的** —— 活动词当时和 counts 抢同一个盒子，`运行命令 + ✉ 259 = 103px` 已到极限。活动词移到独立行后，counts 拿回整列，于是 `5 任务 · ✉ 259` 回归（完整措辞现在同时在可见行与 tooltip/无障碍名里，见 §1.24.2）。
+- **活动词改版三次，两个方向都跟着用户当场反馈走**：① 顶行（只有转圈，用户要"简单状态文本"）→ ② `dtg-head-meta` 里的 chip（与 counts 抢空间，逼出紧凑计数）→ ③ **独立第三行**（用户：「这个文本应该出现在统计数据的下方（任务数和消息数）」）。所以 `tests/lane-head.spec.ts` 的锁刻意**与"词在哪一行、有几个词"无关**，只锁用户可见契约（行序、每行一行、counts 单一节点且不含词、活动行恰好一个词 span、无障碍名含完整措辞）。
+- **定型后的守护与实测**：`tests/lane-head.spec.ts`（md5 `6fdef12fe62477724f9b9016bbbab171`，**13 例**，牙齿 = 8 种坏形状全红 + 3 处真树/谓词标定）；`pnpm run typecheck` exit 0、`npx vitest run` exit 0（**36 files / 776 passed | 1 skipped**）。写断言的 locale 陷阱见 §1.24.4。
 
 ## 2. 环境（实测值）
 

@@ -4,10 +4,19 @@
  * `src/client/i18n.ts` (owned by the `shell` teammate) carries the keys the TAB
  * needs; the board needs more strings than it declares, and a teammate must not
  * edit another owner's file — so the board keeps its own dictionary here and
- * resolves the locale through the SAME detection the shell already made
- * (`locale` from `../i18n.ts`). One detector, two dictionaries, no drift.
+ * resolves the locale through the SAME detector the shell uses, but **at CALL time**
+ * (`currentLocale()` from `../i18n.ts`). One detector, two dictionaries, no drift.
+ *
+ * DO NOT reintroduce the module-load snapshot (`locale` from `../i18n.ts`, deprecated
+ * for exactly this reason). The DSH shell injects this bundle and only THEN writes
+ * `document.documentElement.lang`, so a snapshot taken at import time froze to `'en'`
+ * no matter what language the user was in — and because the en dictionary's
+ * `laneActThinking` reads `thinking`, the board captioned every lane `thinking` instead
+ * of `分析中`. Worse, it was a RACE: whether the panel came out zh or en depended on
+ * whether the shell happened to set `lang` before our factory ran. Resolving on each
+ * call follows a live language switch and removes the race entirely.
  */
-import { locale } from '../i18n.ts'
+import { currentLocale } from '../i18n.ts'
 
 const zh = {
   zoomIn: '放大',
@@ -283,7 +292,7 @@ const dictionaries: Record<'zh' | 'en', Record<UiMessageKey, string>> = { zh, en
 
 /** Translate one UI-local key, substituting `{name}` placeholders. */
 export function uiLabel(key: UiMessageKey, vars?: Record<string, string | number>): string {
-  const table = dictionaries[locale] ?? en
+  const table = dictionaries[currentLocale()] ?? en
   const template = table[key] ?? en[key] ?? key
   if (vars === undefined) return template
   return template.replace(/\{(\w+)\}/g, (_match, name: string) => {
@@ -292,7 +301,7 @@ export function uiLabel(key: UiMessageKey, vars?: Record<string, string | number
   })
 }
 
-/** The dictionary of the active locale (for tests / debugging). */
+/** The dictionary of the active locale, resolved NOW (for tests / debugging). */
 export function uiMessages(): Record<UiMessageKey, string> {
-  return { ...(dictionaries[locale] ?? en) }
+  return { ...(dictionaries[currentLocale()] ?? en) }
 }

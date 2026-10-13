@@ -1137,16 +1137,7 @@ function LaneHead({
           filter/styling can treat it independently, and so the counts keep their own
           ellipsis behaviour.
         */}
-        {/*
-          THE WORD FIRST: `分析中 · 5 任务 · ✉ 259`, or `运行中 · …` when the host has not
-          sent an activity descriptor yet (fallback chain in `lane-activity.ts`). An idle
-          lane still gets no word at all.
-        */}
-        {activity.statusKey === null ? null : (
-          <span className="dtg-head-status" aria-hidden="true" title={statusTitle}>
-            {`${uiLabel(activity.statusKey)} · `}
-          </span>
-        )}
+
         {/* NO role badge here. It was a bordered chip printing the role, and for the Lead
             it printed "Lead" directly under a name pill that already said the same word
             — the user's "下面多了一个白色框+ agent名称，这个已经是多余的了". Removing it
@@ -1176,24 +1167,35 @@ function LaneHead({
             to fit inside the head column instead of being ellipsised away.
           */}
           {/*
-            COMPACT COUNTS, by the Lead's ruling after the measurement came back: with a
-            real task count the full wording (N 任务 · ✉ M = 62-80px) plus any 2-4 character
-            activity word (35-57px) cannot fit the 107px column, and the COUNTS TEXT itself
-            was being silently ellipsised (measured clientWidth 54 vs scrollWidth 62).
-
-            So the row says `5 · ✉ 259` — bare task number, `✉` prefix kept because it is
-            the only thing distinguishing the two numbers. The words 任务/消息 are NOT lost:
-            they move to the accessible name and the row tooltip, which use the full
-            phrasing (see `countsFull` below).
+            FULL COUNT WORDING IS BACK (`5 任务 · ✉ 407`). The compact `5 · ✉ 407` existed
+            only because the activity word shared this box and the pair could not fit the
+            107px column — that was a compromise against silent truncation, never a
+            preference. With the word moved to its own row below, the counts have the whole
+            column again (measured: `5 任务 · ✉ 1234` is ~80px of 107px), so the words
+            任务/消息 belong here for everyone, not just in the tooltip.
           */}
           {[
-            drawnTasks > 0 ? `${drawnTasks}` : null,
+            drawnTasks > 0 ? `${drawnTasks} ${uiLabel('tasksLabel')}` : null,
             messages > 0 ? `✉ ${messages}` : null,
           ]
             .filter((part) => part !== null)
             .join(' · ')}
         </span>
       </div>
+      {/*
+        THE ACTIVITY WORD GETS ITS OWN ROW, BELOW THE COUNTS. The user: "这个文本应该出现
+        在统计数据的下方（任务数和消息数）". Three rows total: the pill row, the counts row,
+        and this line.
+
+        Only a working lane has a word (idle lanes say nothing, unchanged). The fallback
+        chain still applies: `lane.activity` present → its short word; absent but the lane
+        is working → 运行中 / 启动中; idle → nothing.
+      */}
+      {activity.statusKey === null ? null : (
+        <div className="dtg-head-activity" title={statusTitle}>
+          <span className="dtg-head-status" aria-hidden="true">{uiLabel(activity.statusKey)}</span>
+        </div>
+      )}
     </>
   )
 

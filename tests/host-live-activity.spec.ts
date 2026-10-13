@@ -264,3 +264,75 @@ describe('foldSessionEvents carries the live activity', () => {
     expect(fold.laneActivity.kind).toBe('thinking')
   })
 })
+
+/* ------------------------------------------------- end-to-end mount locks */
+
+describe('the lane mount: present when the log was read, absent when it was not', () => {
+  /** A host context whose only service is `agents`, backed by one fake session. */
+  function stubCtx(eventsFor: (id: string) => readonly unknown[] | undefined): never {
+    return {
+      logger: undefined,
+      get: (key: string) => {
+        if (key !== 'agents') return undefined
+        return {
+          get: (id: string) => {
+            const events = eventsFor(id)
+            if (events === undefined) return undefined
+            return { id, status: 'running', options: {}, session: { header: {}, snapshotEvents: () => events } }
+          },
+        }
+      },
+    } as never
+  }
+
+  it('an ACTIVE lane keeps `activity` even with NO open turn (the reported symptom)', async () => {
+    // This is the shape the live host serves: a lane whose log is readable but whose
+    // turn is already closed. The truth table says `thinking`, NOT "omit the field" —
+    // omitting it is what makes the client fall back to the bare status word.
+    const { buildTimeline } = await import('../src/host/timeline.ts')
+    const events = [TURN_OPEN, STEP_OPEN, TURN_CLOSE]
+    const response = await buildTimeline(stubCtx((id) => (id === 'lead' ? events : undefined)), 'lead')
+    const lead = response.lanes.find((lane) => lane.id === 'lead')
+    expect(lead, 'the lead lane exists').toBeDefined()
+    expect(lead?.activity, 'a readable log must ALWAYS produce an activity object').toEqual({
+      kind: 'thinking',
+      detail: '',
+      evidence: 'no-running-tool',
+    })
+    // And it must survive JSON, which is how the route ships it.
+    const wire = JSON.parse(JSON.stringify(response)) as { lanes: { id: string; activity?: unknown }[] }
+    expect(wire.lanes.find((lane) => lane.id === 'lead')?.activity).toEqual({
+      kind: 'thinking',
+      detail: '',
+      evidence: 'no-running-tool',
+    })
+  })
+
+  it('carries a RUNNING tool through to the wire', async () => {
+    const { buildTimeline } = await import('../src/host/timeline.ts')
+    const events = [TURN_OPEN, STEP_OPEN, call(2, 'c1', 'bash', { command: 'pwd' })]
+    const response = await buildTimeline(stubCtx((id) => (id === 'lead' ? events : undefined)), 'lead')
+    const wire = JSON.parse(JSON.stringify(response)) as { lanes: { id: string; activity?: unknown }[] }
+    expect(wire.lanes.find((lane) => lane.id === 'lead')?.activity).toEqual({
+      kind: 'commands',
+      detail: 'pwd',
+      toolName: 'bash',
+      evidence: 'running-tool',
+    })
+  })
+
+  it('OMITS the field when the log could not be read, rather than claiming `thinking`', async () => {
+    // The readability gate. `'thinking'` is a claim about an agent we could not
+    // observe; the contract says an unreadable lane must look exactly like an older
+    // payload, so the key must be absent — not present-and-thinking.
+    const { clearSessionLogCache } = await import('../src/host/session-log.ts')
+    const { buildTimeline } = await import('../src/host/timeline.ts')
+    clearSessionLogCache()
+    const response = await buildTimeline(stubCtx(() => undefined), 'ghost-session')
+    const lane = response.lanes[0]
+    expect(lane, 'the panel still renders a lane').toBeDefined()
+    expect(Object.keys(lane ?? {}), 'no activity key at all').not.toContain('activity')
+    expect(response.source, 'and the payload says so').toBe('live')
+    expect(response.notes.join(' ')).toContain('unavailable')
+  })
+})

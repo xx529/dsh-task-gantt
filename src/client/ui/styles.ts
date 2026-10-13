@@ -594,6 +594,21 @@ export const BOARD_CSS = `
 }
 .dtg-menu input { margin: 0; flex: 0 0 auto; }
 
+/* THE ACTIVITY LINE — its own row under the counts, per the user's "这个文本应该出现在统计
+   数据的下方（任务数和消息数）". It is a block row (not a flex row) so it owns the full head
+   column width and can ellipsise on its own terms. Row height is one 11px line box, which
+   the head has room for: measured inner content goes from ~43px to ~56px against the 65px
+   available inside the 72px lane. */
+.dtg-head-activity {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxxs-11);
+  line-height: 1.2;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 /* The status word beside the spinner ("运行中"). A fixed flex basis so it is never
    squeezed, and it is small text on the head background, so the ordinary label token
    gives it contrast in both skins. */

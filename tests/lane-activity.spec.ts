@@ -211,11 +211,40 @@ describe('laneActivity with a host activity descriptor', () => {
     expect(out.reason).toBe('status')
   })
 
-  it('idle stays wordless even WITH a descriptor', () => {
-    // The descriptor describes what is happening; an idle lane is not happening.
+  it('THE GATE: an IDLE lane stays wordless even WITH a descriptor', () => {
+    // The bug the user photographed: all nine lanes, including the plainly idle ones,
+    // captioned `thinking`. `lane.activity` is NOT evidence of work — the host clears it
+    // to `thinking` for any lane that merely has an agent, and its own contract says the
+    // word is only for a lane already shown as active.
     const out = laneActivity(withActivity('idle', { kind: 'thinking', detail: '', evidence: 'no-running-tool' }))
-    expect(out.statusKey).toBe('laneActThinking')
-    expect(out.working).toBe(true)
+    expect(out).toEqual({ working: false, statusKey: null, reason: 'none', tooltipKey: null, tooltipDetail: null })
+    // ...and no tooltip either, or the idle lane would still be captioned in a hover.
+    expect(activityTooltip(out)).toBeNull()
+  })
+
+  it('THE GATE: a FAILED lane stays wordless with a descriptor', () => {
+    const out = laneActivity(withActivity('failed', { kind: 'commands', detail: 'x', evidence: 'running-tool' }))
+    expect(out.statusKey).toBeNull()
+    expect(activityTooltip(out)).toBeNull()
+  })
+
+  it('THE GATE: a descriptor on an idle lane does not make it work', () => {
+    // The state must not flip to working just because a word is available — that is what
+    // produced a spinner on idle lanes too.
+    expect(laneActivity(withActivity('idle', { kind: 'thinking', detail: '', evidence: 'no-running-tool' })).working).toBe(false)
+  })
+
+  it('a descriptor on a lane with NO status but an OPEN turn does render', () => {
+    // The gate passes via the span fallback, so the richer word is still used.
+    const lane = { ...makeLane(undefined, [turn(null)]), activity: { kind: 'webFetch', detail: '', evidence: 'running-tool' } } as unknown as TimelineLane
+    const out = laneActivity(lane)
+    expect(out).toEqual({ working: true, statusKey: 'laneActWebFetch', reason: 'activity', tooltipKey: 'laneActWebFetch', tooltipDetail: null })
+  })
+
+  it('a descriptor on an IDLE lane with a stale open turn still does not render', () => {
+    // Explicit status wins over the span, so the gate stays shut.
+    const lane = { ...makeLane('idle', [turn(null)]), activity: { kind: 'thinking', detail: '', evidence: 'running-tool' } } as unknown as TimelineLane
+    expect(laneActivity(lane).statusKey).toBeNull()
   })
 
   it('NO activity ⇒ byte-for-byte the old result (the progressive-enhancement lock)', () => {

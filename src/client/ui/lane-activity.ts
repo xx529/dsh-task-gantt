@@ -96,7 +96,13 @@ const ACTIVITY_FULL_KEY: Record<string, UiMessageKey> = {
  * @returns the full-phrase key (or `null` when the lane gets no word) and the detail.
  */
 export function activityTooltip(activity: LaneActivity): { fullKey: UiMessageKey; detail: string | null } | null {
-  if (activity.tooltipKey === null) return null
+  /**
+   * No word in the row ⇒ no word in the title. This is the same gate as the row itself
+   * (`statusKey` is only non-null for a lane that is genuinely working), so an idle lane
+   * does not get a `正在分析请求` tooltip either — which was the second half of the user's
+   * complaint.
+   */
+  if (activity.statusKey === null || activity.tooltipKey === null) return null
   const full = ACTIVITY_FULL_KEY[activity.tooltipKey]
   return { fullKey: full ?? activity.tooltipKey, detail: activity.tooltipDetail }
 }
@@ -169,40 +175,46 @@ const WORKING_STATUS_KEY: Partial<Record<MemberStatus, 'laneWorking' | 'laneProv
  */
 export function laneActivity(lane: TimelineLane): LaneActivity {
   /**
-   * 1. The host's own activity descriptor wins when present — it is the only signal that
-   *    can say WHAT the agent is doing, not merely that it is busy.
+   * ── THE GATE: IS THE LANE ACTUALLY WORKING? ────────────────────────────────
+   *
+   * This is decided FIRST and independently of any word, because `lane.activity` is NOT
+   * evidence of work. The host clears the descriptor to `thinking` for lanes that merely
+   * HAVE an agent, and its own contract says so:
+   *
+   *   > `thinking` is only rendered for a lane already shown as active (otherwise an idle
+   *   > agent would be captioned "正在分析请求")
+   *
+   * Shipping without that gate produced exactly the user's screenshot: all nine lanes,
+   * including the plainly idle ones (`packaging` / `shell` / `verify` / `docs`), shown as
+   * `thinking`. The rule is: the word ADORNS a working lane; it never makes one working.
+   *
+   * Same predicate as the spinner, so the two can never disagree.
+   */
+  const openTurn = (lane.spans ?? []).some(isOpenTurn)
+  const statusWorking = lane.status === undefined ? undefined : WORKING_STATUS_KEY[lane.status]
+  /**
+   * An EXPLICIT status is final, in both directions: `idle` / `failed` mean not working
+   * (and are not overridden by a stale open span), `running` / `provisioning` mean working
+   * even with no spans at all. Only a MISSING status falls through to the spans.
+   */
+  const working = statusWorking !== undefined ? true : lane.status !== undefined ? false : openTurn
+
+  if (!working) {
+    return { working: false, statusKey: null, reason: 'none', tooltipKey: null, tooltipDetail: null }
+  }
+
+  /**
+   * WORKING. Which word?
+   *   1. The host's descriptor, when it sent one — it is the only signal that can say WHAT
+   *      the agent is doing, not merely that it is busy.
+   *   2. Otherwise `运行中` / `启动中`, so an older host still gets a word.
    */
   const fields = activityFields(lane)
   if (fields.statusKey !== null) {
     return { working: true, ...fields, reason: 'activity' }
   }
-  const statusKey = lane.status === undefined ? undefined : WORKING_STATUS_KEY[lane.status]
-  if (statusKey !== undefined) {
-    return { working: true, statusKey, reason: 'status', tooltipKey: statusKey, tooltipDetail: null }
-  }
-  /**
-   * An EXPLICIT non-working status is final. `idle` / `failed` mean the agent is not
-   * working, and that must not be overridden by the span fallback below — otherwise a
-   * frozen session that left one span open would show a spinner forever. Only a MISSING
-   * status falls through to the spans.
-   */
-  if (lane.status !== undefined) {
-    return { working: false, statusKey: null, reason: 'none', tooltipKey: null, tooltipDetail: null }
-  }
-  /**
-   * FALLBACK, used only when `lane.status` is ABSENT — not an override.
-   *
-   * An open (unclosed) turn span is evidence of work when the payload tells us nothing
-   * else. It deliberately does not fire for a lane that explicitly says `idle`: the
-   * reported status is the operator's own answer, and overriding it would leave a frozen
-   * session looking permanently busy. `end === null` is the contract's "not finished"
-   * mark; the layout's `open: true` is accepted too.
-   */
-  const openTurn = (lane.spans ?? []).some(isOpenTurn)
-  if (openTurn) {
-    return { working: true, statusKey: 'laneWorking', reason: 'open-turn', tooltipKey: 'laneWorking', tooltipDetail: null }
-  }
-  return { working: false, statusKey: null, reason: 'none', tooltipKey: null, tooltipDetail: null }
+  const statusKey = statusWorking ?? 'laneWorking'
+  return { working: true, statusKey, reason: statusWorking === undefined ? 'open-turn' : 'status', tooltipKey: statusKey, tooltipDetail: null }
 }
 
 /**
