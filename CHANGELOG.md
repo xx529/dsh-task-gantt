@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.2.28 — 2026-10-13
+
+**A working spinner in the lane head for currently active agents**
+
+"现在我先对正在活动的 agent 在这里显示一下工作的状态，就好像 任务管理那个插件一样". The reference
+plugin was identified rather than guessed: `dsh-turn-outline`, installed in the same profile, whose
+shipped bundle renders `<span className="ttl-spin">{spinnerIcon()}</span>` with `@keyframes ttl-spin`
+plus a no-animation variant. Our own `.dtg-spin` reproduces that pattern (11x11 ring,
+`@keyframes dtg-spin`, and `@media (prefers-reduced-motion: reduce) { animation: none }`) — the code
+was not copied.
+
+The working signal is an existing field, not a new heuristic:
+`lane.status === 'running' || 'provisioning' || any turn span with end === null`. `status` is the
+contract's own member status and matches "正在活动的 agent" exactly; the unclosed turn span covers the
+tick before the host refreshes the status. Deliberately NOT "has any span" (a finished lane is full of
+spans and is idle). A lane whose span is unclosed is treated as working even if its status says idle —
+an unclosed turn is direct evidence of work, and closing it is the host's job rather than something to
+guess at on the client. `unassigned` gets no special case.
+
+MEASURED at 480 / 420 / 300px on a 9-lane fixture with a running and an idle lane: 4 spinners and 5
+static glyphs at every width, per-lane `animation-name: dtg-spin` / `duration 0.8s` for exactly the
+running lanes and none for the idle ones, head row height unchanged at 72px, meta height 13px,
+`scrollWidth === clientWidth` and `ellipsisedCount 0/9` — nothing new is truncated and no lane grew.
+With `prefers-reduced-motion: reduce` emulated: `animation-name: none`, `duration 0s`, and the ring
+still 11x11 and visible (static, not gone). The ring is drawn with a border token plus
+`currentColor`, so it follows the same ink as the static glyph in both skins.
+
+Recorded honestly: this is backed by browser measurement only, with NO regression lock. The spinner's
+presence and its animation are DOM-observable, while the repo's element-tree tests use a React stub
+(`useState` returns only the initial value, no effects) and so cannot see a computed
+`animation-name`; pulling GanttChart.tsx into a unit test would need React render facilities the
+project does not have. The suggested fix — extracting `laneIsWorking(lane)` into its own pure module
+so a truth table can cover running/idle/provisioning/failed/open-turn/closed-turn — was NOT done
+unilaterally and is left as a decision.
+
+Also not measured: the dark skin (no dark demo), a lane whose status is idle while its span is
+unclosed (the fixture has no such lane, so the branch is reasoned rather than exercised), and the
+visual rotation itself (only the computed animation properties and the reduced-motion zeroing were
+verified, not frame-by-frame angles).
+
+The footer build identity is now `v0.2.28 · working-spinner`.
+
 ## 0.2.27 — 2026-10-13
 
 **The lane head drops the status word, which also un-truncates the message count**

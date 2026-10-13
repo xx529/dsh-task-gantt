@@ -527,6 +527,38 @@ export const BOARD_CSS = `
 }
 .dtg-menu input { margin: 0; flex: 0 0 auto; }
 
+/* --- working spinner (lane head) ---------------------------------------- */
+
+/* A lane whose agent is working shows this instead of the static status glyph. Same
+   IDEA as the dsh-turn-outline plugin's in-progress spinner, with our own markup,
+   tokens and keyframes — nothing copied from it.
+
+   Drawn with a BORDER RING, not a background image: a ring is one element, needs no
+   asset, and takes its colours from currentColor + a theme token, so it is legible in
+   both skins for free. 11px keeps it inside the head's existing 24px top row, and
+   a fixed flex basis stops it being squeezed by a long name. */
+.dtg-spin {
+  display: block;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 1.5px solid var(--dsw-alias-border-l2);
+  border-top-color: currentColor;
+  animation: dtg-spin 0.8s linear infinite;
+}
+@keyframes dtg-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+/* Respect the OS setting: no animation at all, and the ring still reads as a
+   "something is happening here" dot rather than disappearing. */
+@media (prefers-reduced-motion: reduce) {
+  .dtg-spin {
+    animation: none;
+  }
+}
+
 /* --- wait blocks (wait_agent) ------------------------------------------- */
 
 /* A wait is a PERIOD: it means "blocked, waiting for a teammate", which is the

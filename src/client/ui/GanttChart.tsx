@@ -41,6 +41,7 @@ import type {
   MessageSpan,
   TaskEvent,
   TimelineResponse,
+  TimelineLane,
   TimelineTask,
 } from '../../shared/contract.ts'
 import { format, t } from '../i18n.ts'
@@ -1017,6 +1018,31 @@ function spanKey(span: SpanRect): string {
   return `${span.laneId}:${span.kind}:${span.start}:${span.end}:${span.turn ?? ''}:${span.step ?? ''}`
 }
 
+/**
+ * Is this lane's agent CURRENTLY WORKING — the signal behind the head spinner.
+ *
+ * Two existing fields, no new heuristic:
+ *   - `lane.status === 'running'` (`MemberStatus` is
+ *     `'running' | 'idle' | 'provisioning' | 'failed'`): the agent is live. This is the
+ *     user's own phrase — "正在活动的 agent" — read directly.
+ *   - an OPEN (unclosed) turn span: the lane's own activity track says a turn is in
+ *     flight right now, which covers a board whose status has not been refreshed yet.
+ *
+ * Deliberately NOT "has any span at all": a finished lane is full of spans and is idle.
+ *
+ * Consequences, stated because they are the interesting cases:
+ *   - FROZEN/IDLE lane that still has an unclosed span → this returns TRUE (an open turn
+ *     is direct evidence of work). If that is wrong for a paused session, the fix belongs
+ *     in the host's span closing, not in a client-side guess.
+ *   - `unassigned` → whatever its `status` says; it is an ordinary lane here, so an
+ *     `unassigned` lane marked running spins like any other. No special case.
+ */
+function laneIsWorking(lane: TimelineLane): boolean {
+  if (lane.status === 'running' || lane.status === 'provisioning') return true
+  // `end === null` is the layout's own "not finished" marker for a turn.
+  return (lane.spans ?? []).some((span) => span.kind === 'turn' && span.end === null)
+}
+
 function statusText(status: string | undefined): string {
   if (status === undefined) return '—'
   return status === 'pending' ||
@@ -1052,6 +1078,7 @@ function LaneHead({
 }): ReactNode {
   const lane = box.lane
   const status = lane.status ?? 'idle'
+  const working = laneIsWorking(lane)
   const ink = `dtg-ink dtg-ink-${status}`
   const spans = lane.spans.length
   const messages = lane.messages?.length ?? 0
@@ -1104,8 +1131,21 @@ function LaneHead({
         >
           {lane.name}
         </span>
+        {/*
+          A small rotating spinner while the agent is working, the same IDEA as the
+          `dsh-turn-outline` plugin the user pointed at ("就好像 任务管理那个插件一样") but
+          with our own markup, tokens and keyframes.
+
+          It REPLACES the static glyph rather than sitting beside it: the glyph already
+          means "status", so two status marks in a 24px row would crowd it, and the head
+          must not grow. The glyph returns the moment the lane stops working.
+        */}
         <span className={ink} aria-hidden="true">
-          <span className="dtg-glyph">{STATUS_GLYPH[status] ?? '·'}</span>
+          {working ? (
+            <span className="dtg-spin" />
+          ) : (
+            <span className="dtg-glyph">{STATUS_GLYPH[status] ?? '·'}</span>
+          )}
         </span>
       </div>
       <div className="dtg-head-meta">
