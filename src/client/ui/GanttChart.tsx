@@ -48,7 +48,7 @@ import { format, t } from '../i18n.ts'
 import { activityTooltip, laneActivity } from './lane-activity.ts'
 import { clipBounds } from './overlay-position.ts'
 import { taskRunTimes } from './task-times.ts'
-import { uiLabel } from './labels.ts'
+import { messageRouteKey, uiLabel } from './labels.ts'
 import {
   STATUS_GLYPH,
   historyActionText,
@@ -814,11 +814,7 @@ export function GanttChart(props: GanttChartProps): ReactNode {
                       message: (
                         <MessagePopoverBody
                           kind={marker.kind}
-                          route={
-                            resolved.direction === 'outgoing'
-                              ? `${uiLabel('messageSentTo')} ${resolved.peerName}`
-                              : `${uiLabel('messageReceivedFrom')} ${resolved.peerName}`
-                          }
+                          route={`${uiLabel(messageRouteKey(marker.kind, resolved.direction === 'outgoing'))} ${resolved.peerName}`}
                           when={formatDateTime(marker.time, tzOffsetMinutes)}
                           preview={marker.preview ?? ''}
                         />
@@ -1646,6 +1642,19 @@ function MessageMarker({
   const isUser = paint.isUser
   const classes = ['dtg-msg', isUser ? 'dtg-msg-user' : 'dtg-msg-agent', outgoing ? 'dtg-msg-out' : 'dtg-msg-in']
   if (marker.kind === 'turn') classes.push('dtg-msg-turn')
+  /**
+   * A dispatch is partially special-cased, and ONLY here: it keeps the ordinary arrow
+   * path (so the parent -> child direction still reads exactly like every other transfer)
+   * but gains a class the stylesheet uses for a DASHED stroke. That is the one treatment
+   * that says "derived" rather than "recorded", which is precisely what the contract says
+   * a dispatch is, and it is unmistakable at 11px next to the solid message arrows.
+   *
+   * This branch is load-bearing for a different reason too: `kind` is an open union that
+   * has already grown once (`'dispatch'` was added after this file existed), and a new
+   * member that no branch mentions would render as a plain teammate arrow with no error.
+   * Naming it here means the next kind added has an obvious place to be handled.
+   */
+  if (marker.kind === 'dispatch') classes.push('dtg-msg-dispatch')
   if (selected) classes.push('dtg-msg-active')
   const when = formatDateTime(marker.time, tzOffsetMinutes)
   // The route is stated from THIS lane's point of view, so it is self-evident
@@ -1973,11 +1982,20 @@ function MessagePopoverBody({
       <div className="dtg-popover-meta">{when}</div>
       {preview === '' ? null : (
         <>
-          <div className="dtg-popover-desc">{uiLabel('messagePopoverPreview')}</div>
+          {/* A dispatch body is the hand-off's DESCRIPTION, not a message body: calling it
+              "message content" would describe it in the vocabulary of the thing it is not. */}
+          <div className="dtg-popover-desc">
+            {uiLabel(kind === 'dispatch' ? 'messageDispatchedPreview' : 'messagePopoverPreview')}
+          </div>
           <div className="dtg-popover-body">{preview}</div>
         </>
       )}
       {kind === 'turn' ? <div className="dtg-popover-meta">{uiLabel('waitLegend')}</div> : null}
+      {/* Why a dispatch looks different from a message: saying so in the popover is how a
+          reader learns the convention without a legend entry. */}
+      {kind === 'dispatch' ? (
+        <div className="dtg-popover-meta">{uiLabel('messageDispatchedHint')}</div>
+      ) : null}
     </>
   )
 }
@@ -2016,7 +2034,7 @@ function ArrowIcon({
       strokeWidth={ARROW_STROKE}
       strokeLinecap="round"
       strokeLinejoin="round"
-      transform={direction === 'out' ? undefined : 'scale(-1,-1)'}
+      transform={direction === 'out' ? undefined : RECEIVED_ARROW_TRANSFORM}
     >
       <path d={ARROW_PATH} />
     </svg>
@@ -2077,6 +2095,68 @@ const ARROW_PATH = 'M3.3 9.7 L6.6 6.4 M3.7 3 H9.8 V9.1'
  * the diagonal and by the marker's own shape, never by weight. See {@link ArrowIcon}.
  */
 const ARROW_STROKE = 2
+
+/**
+ * How the received arrow is derived from the sent one.
+ *
+ * NOT a 180-degree rotation. The user: "现在 ui 上接收信息的 icon 是从右上指向左下，改成从
+ * 左上指向右下" — i.e. the received diagonal must run the OTHER way (`↖` -> `↘`), which is a
+ * reflection, not a rotation. `scale(-1,-1)` (the old value) is a 180-degree turn and maps
+ * the shaft `↗` to `↙`; the requested end state is the MIRROR of the sent glyph, so a
+ * single-axis flip is what expresses the intent.
+ *
+ * Kept as a named constant, with this note, so a later reader cannot "simplify" it back to
+ * `scale(-1,-1)` on the theory that a flipped icon is the same thing: it is not, and the
+ * two differ in which corner the head lands on.
+ *
+ * WHY THE TIP STILL SITS ON THE TIME COORDINATE: `marker.x` is the message's time
+ * coordinate and the marker is placed with `left: marker.x`, so the anchor is the marker's
+ * left edge. `scale(1,-1)` reflects VERTICALLY ONLY, so every x — including the tip's — is
+ * unchanged, and the tip keeps the same distance from the anchor that it had before. (The
+ * old `scale(-1,-1)` moved x as well, which is why its ink started 1.7px in.) No
+ * `transform-origin` or anchor change is needed precisely because the flip is vertical;
+ * that is a second, independent reason to prefer a single-axis reflection here.
+ *
+ * There is deliberately still NO `filled` parameter: the two directions remain the same
+ * glyph in the same style, and only the direction differs.
+ */
+const RECEIVED_ARROW_TRANSFORM = 'scale(1,-1)'
+
+/**
+ * WHERE THE TIP SITS RELATIVE TO THE TIME COORDINATE — and why nothing moves it.
+ *
+ * The user: "箭头是指向时间点". The message's time coordinate is `marker.x`, and the marker
+ * is placed with `left: marker.x`, so the anchor is the marker's LEFT EDGE. The tip (the
+ * sharp end of the diagonal) is authored at x=9.8 in the 12-unit icon box, and the 12px
+ * icon is centred in the 11px marker box (`MESSAGE_MARKER_WIDTH`), handing back 0.5px:
+ *
+ *     tip x on screen = boxLeft - 0.5 + 9.8 = boxLeft + 9.3
+ *
+ * Measured on the live markers with the CTM, for BOTH directions:
+ *
+ *     sent (no transform)       tip - time = +9.29
+ *     received (scale(1,-1))    tip - time = +9.29
+ *
+ * The two are IDENTICAL because the received aim is a VERTICAL-ONLY reflection: `scale(1,-1)`
+ * negates y and leaves every x untouched. The tip therefore keeps exactly the distance from
+ * the anchor that the sent arrow has — the "same convention as the sent side" the task asks
+ * for — and the sent side is not moved, as required.
+ *
+ * DO NOT "fix" this 9.3px by sliding the icon inside its box with a negative inline-start
+ * margin. An earlier attempt did that and it is wrong twice over: it overshoots (the sweep
+ * is 1:1, so the value that would zero the gap is 9.3, not 12), AND it drags the glyph
+ * clear of the
+ * 11px marker box that carries `boxShadow: 0 0 0 1.5px` — the surface halo that is the only
+ * thing making a lane-coloured arrow legible on the panel. The halo would stay behind as a
+ * detached empty ring. If the tip must land exactly ON the coordinate, move the marker box
+ * (`left`) so the halo travels with the glyph, and do it for BOTH directions so the two
+ * stay symmetric.
+ *
+ * This constant exists only to be asserted against, so the 9.3px relationship above cannot
+ * drift unnoticed.
+ */
+export const ARROW_TIP_INSET_PX = 9.3
+
 
 /**
  * One glyph per dated task transition.

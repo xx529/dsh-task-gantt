@@ -32,6 +32,10 @@ const zh = {
   noHistory: '无历史记录（实时态，日志里没有可用的时间锚点）',
   taskCreatedAt: '创建',
   messageSentTo: '发出 →',
+  messageDispatchedTo: '派发给',
+  messageDispatchedFrom: '接收自',
+  messageDispatchedHint: '子代理派发（由父子会话关系推断，非日志消息）',
+  messageDispatchedPreview: '派发说明',
   waitStillBlocking: '仍在等待',
   waitSeconds: '{count} 秒',
   waitOutcomeOpen: '仍在等待（尚无结果）',
@@ -168,6 +172,10 @@ const en: Record<UiMessageKey, string> = {
   noHistory: 'No history (live state — the log carried no usable time anchor)',
   taskCreatedAt: 'created',
   messageSentTo: 'sent to',
+  messageDispatchedTo: 'dispatched to',
+  messageDispatchedFrom: 'dispatched from',
+  messageDispatchedHint: 'subagent dispatch (inferred from the parent/child session link, not a journal message)',
+  messageDispatchedPreview: 'dispatch brief',
   waitStillBlocking: 'still blocking',
   waitSeconds: '{count}s',
   waitOutcomeOpen: 'still blocking (no result yet)',
@@ -304,4 +312,27 @@ export function uiLabel(key: UiMessageKey, vars?: Record<string, string | number
 /** The dictionary of the active locale, resolved NOW (for tests / debugging). */
 export function uiMessages(): Record<UiMessageKey, string> {
   return { ...(dictionaries[currentLocale()] ?? en) }
+}
+
+/**
+ * Which label states a message marker's direction, from THIS lane's point of view.
+ *
+ * A `dispatch` is not a journalled message — the contract defines it as "a directed
+ * hand-off inferred from the parent/child relationship, NOT a journal message" — so
+ * "sent to" / "received from" would describe it in the vocabulary of the thing it is
+ * not: it would read as if a teammate had addressed a message to the subagent. The
+ * wording therefore says 派发 / dispatch, which is what actually happened.
+ *
+ * Pure and exported so the mapping can be unit-tested without pulling React and the
+ * renderer into the test graph; the renderer and the test cannot disagree about it.
+ *
+ * @param kind - the span's `kind`; only `'dispatch'` is special-cased.
+ * @param outgoing - `true` when this lane is the one doing the handing off.
+ */
+export function messageRouteKey(
+  kind: string,
+  outgoing: boolean,
+): 'messageSentTo' | 'messageReceivedFrom' | 'messageDispatchedTo' | 'messageDispatchedFrom' {
+  if (kind === 'dispatch') return outgoing ? 'messageDispatchedTo' : 'messageDispatchedFrom'
+  return outgoing ? 'messageSentTo' : 'messageReceivedFrom'
 }

@@ -90,6 +90,7 @@ import type {
   LaneLiveActivityKind,
   LaneWait,
   MemberPhase,
+  SubagentDispatch,
   TaskEvent,
   TaskStatus,
 } from '../shared/contract.ts'
@@ -165,13 +166,28 @@ export interface FoldedTeamTask {
 export interface FoldedTeamMember {
   id: string
   name: string
-  /** Latest durable phase. */
-  phase: MemberPhase
+  /**
+   * Latest durable phase.
+   *
+   * OPTIONAL, and absent for a `subagent/catalog` row. That is deliberate: a
+   * catalog row records that a child session was CREATED, not that its member is
+   * provisioning, and a hard-coded `'provisioning'` here used to pin every
+   * sub-agent lane's status to `provisioning` for the rest of the session — the
+   * permanent spinner the user reported. No evidence, no phase.
+   */
+  phase?: MemberPhase
+  /**
+   * True when {@link name} is only the child session id, i.e. no better name was
+   * found in THIS log's `subagent/catalog` label or in the dispatching
+   * `tool/call`. A caller that can also read the child's own log may upgrade it
+   * (see the `session/title` fallback).
+   */
+  nameIsFallback?: boolean
   description?: string
   error?: string
-  /** Time of the earliest `team/member` event for this id. */
+  /** Time of the earliest event that introduced this member. */
   firstSeenAt: number
-  /** Time of the latest `team/member` event for this id. */
+  /** Time of the latest event that updated this member. */
   lastSeenAt: number
   /** Phase transitions in log order (provisioning → active → …). */
   phases: { phase: MemberPhase; time: number }[]
@@ -187,6 +203,14 @@ export interface FoldedTeam {
   sessionCreatedAt?: number
   /** Session header `parentSession` — the upward link to the team root. */
   sessionParentId?: string
+  /**
+   * The session's own title, from `session/title` — but ONLY when DSH produced a
+   * real one. A `source.kind === 'fallback'` title is the first line of the
+   * prompt, so all five mapper sub-agents in the real `HtDot` run carried the
+   * same `"You are a codebase mapper"` and using it would rename five lanes to
+   * one string. Absent is better than useless.
+   */
+  sessionTitle?: string
   /** Tasks in first-appearance order. */
   tasks: FoldedTeamTask[]
   taskById: Map<string, FoldedTeamTask>
@@ -866,6 +890,100 @@ export function deriveTaskAction(
 }
 
 /**
+ * The `subagent` tool names whose call is a dispatch to a child session.
+ *
+ * `subagent` is the one observed in the real `HtDot` logs; the `subagent_` prefixed
+ * forms are the same built-in family the activity mapper recognises
+ * (`toolActivityKind`), included so a fork/continuation is not missed.
+ */
+const SUBAGENT_TOOL_NAMES: readonly string[] = ['subagent', 'subagent_spawn', 'subagent_fork']
+
+/**
+ * The acknowledgement the `subagent` tool returns, which is the ONLY field that
+ * links a dispatch `callId` to its child session id.
+ *
+ * Verified verbatim against the real log:
+ * `tool/result` seq 45 → `"started subagent 27f5e98f-1b2f-4160-89ed-c5ad33d5c6a1"`.
+ */
+const SUBAGENT_ACK = /\bstarted subagent\s+(session-)?([0-9a-fA-F][0-9a-fA-F-]{7,})/
+
+/** The `description` of a dispatch's `arguments` JSON, or `''`. */
+function dispatchDescription(argumentsRaw: unknown): string {
+  if (typeof argumentsRaw !== 'string') return ''
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(argumentsRaw)
+  } catch {
+    return ''
+  }
+  const args = asRecord(parsed)
+  return args === undefined ? '' : (asText(args.description) ?? '')
+}
+
+/** The child session id an acknowledgement names, or `undefined`. */
+function ackChildId(message: Record<string, unknown> | undefined): string | undefined {
+  if (message === undefined) return undefined
+  const content = message.content
+  if (!Array.isArray(content)) return undefined
+  let text = ''
+  for (const block of content) {
+    const record = asRecord(block)
+    if (record === undefined) continue
+    if (typeof record.text === 'string') text += record.text
+  }
+  const match = SUBAGENT_ACK.exec(text)
+  return match?.[2]
+}
+
+/**
+ * Every sub-agent hand-off visible in ONE log (normally the parent's).
+ *
+ * Pairs `tool/call name=subagent` with the acknowledgement that names the child.
+ * A call whose acknowledgement never arrived is DROPPED rather than guessed at:
+ * the `subagent/catalog` labels are ambiguous on the real data (two dispatches
+ * shared `Map conventions and testing`), so label-matching would mispair arrows,
+ * and an arrow pointing at the wrong lane is worse than no arrow.
+ *
+ * @param events - raw events of ONE session (any order, any shape).
+ * @returns dispatches in log order, each with a resolved `childId`.
+ */
+export function foldSubagentDispatches(events: readonly unknown[]): SubagentDispatch[] {
+  const byCallId = new Map<string, SubagentDispatch>()
+  const out: SubagentDispatch[] = []
+  for (const item of inLogOrder(indexEvents(events))) {
+    const type = eventType(item)
+    const data = eventData(item)
+    if (data === undefined) continue
+    if (type === 'tool/call') {
+      const name = asText(data.name)
+      const callId = asText(data.callId)
+      const time = item.time
+      if (name === undefined || callId === undefined || time === undefined) continue
+      if (!SUBAGENT_TOOL_NAMES.includes(name)) continue
+      const dispatch: SubagentDispatch = {
+        time,
+        callId,
+        childId: '',
+        description: dispatchDescription(data.arguments),
+      }
+      byCallId.set(callId, dispatch)
+      out.push(dispatch)
+      continue
+    }
+    if (type !== 'tool/result') continue
+    const message = asRecord(data.message)
+    const source = message === undefined ? undefined : asRecord(message.source)
+    const callId = asText(source?.callId) ?? asText(message?.toolCallId) ?? asText(data.callId)
+    if (callId === undefined) continue
+    const dispatch = byCallId.get(callId)
+    if (dispatch === undefined) continue
+    const childId = ackChildId(message)
+    if (childId !== undefined) dispatch.childId = childId
+  }
+  return out.filter((dispatch) => dispatch.childId !== '')
+}
+
+/**
  * Fold one session log's durable Team journal.
  *
  * @param events - raw events of ONE session (normally the Lead's).
@@ -889,9 +1007,37 @@ export function foldTeamEvents(events: readonly unknown[], sessionId: string): F
     diagnostics,
   }
 
+  /**
+   * `childId → arguments.description`, from this log's own dispatches.
+   *
+   * The second rung of the name fallback chain: `subagent/catalog` normally carries
+   * its own `label`, but when it does not, the call that spawned the child still
+   * holds the task name. Built from a pre-scan because a catalog event and its
+   * dispatching call can arrive in either order within the log.
+   */
+  const descriptionByChildId = new Map<string, string>()
+  for (const dispatch of foldSubagentDispatches(events)) {
+    // An unusable `arguments` payload yields `''`, which must count as ABSENT: storing
+    // it would let an empty string win the `??` chain below and name the lane `''`.
+    if (dispatch.description === '') continue
+    if (!descriptionByChildId.has(dispatch.childId)) descriptionByChildId.set(dispatch.childId, dispatch.description)
+  }
+
   for (const item of inLogOrder(indexed)) {
     const type = eventType(item)
     if (type === undefined) continue
+
+    if (type === 'session/title') {
+      // Only a REAL title: a `fallback` title is the prompt's first line, and using
+      // it would name every mapper sub-agent "You are a codebase mapper".
+      const data = eventData(item)
+      if (data === undefined) continue
+      const title = asText(data.title)
+      const source = asRecord(data.source)
+      if (title === undefined || asText(source?.kind) === 'fallback') continue
+      team.sessionTitle ??= title
+      continue
+    }
 
     if (type === 'session') {
       // The header is the ONE event that is not wrapped in `data`: it is stored
@@ -916,19 +1062,29 @@ export function foldTeamEvents(events: readonly unknown[], sessionId: string): F
       const existing = team.memberById.get(childId)
       if (existing !== undefined) {
         existing.childCreatedAt ??= childCreatedAt
-      } else {
-        const placeholder: FoldedTeamMember = {
-          id: childId,
-          name: childId,
-          phase: 'provisioning',
-          firstSeenAt: item.time ?? childCreatedAt,
-          lastSeenAt: item.time ?? childCreatedAt,
-          phases: [],
-          childCreatedAt,
-        }
-        team.memberById.set(childId, placeholder)
-        team.members.push(placeholder)
+        continue
       }
+      // THE NAME. `catalog.label` is the human task name the parent gave this child
+      // ("Map codebase concerns"), and on the real logs it equals the dispatching
+      // `tool/call`'s `arguments.description`. Using the child session id here is what
+      // made every sub-agent lane read `4b877229-…` in the panel.
+      const label = asText(data.label)
+      const description = descriptionByChildId.get(childId)
+      const name = label ?? description
+      const placeholder: FoldedTeamMember = {
+        id: childId,
+        name: name ?? childId,
+        ...(name === undefined ? { nameIsFallback: true } : {}),
+        // NO `phase`: a catalog row says the child session was CREATED, which is not
+        // evidence of `provisioning`. Writing one here pinned the lane's status to
+        // `provisioning` forever (the permanent spinner).
+        firstSeenAt: item.time ?? childCreatedAt,
+        lastSeenAt: item.time ?? childCreatedAt,
+        phases: [],
+        childCreatedAt,
+      }
+      team.memberById.set(childId, placeholder)
+      team.members.push(placeholder)
       continue
     }
 
@@ -960,6 +1116,9 @@ export function foldTeamEvents(events: readonly unknown[], sessionId: string): F
       if (!team.memberIdByName.has(member.name)) team.memberIdByName.set(member.name, member.id)
       // The journal is append-only and ordered, so the last row wins.
       record.name = member.name
+      // A real `team/member` row IS the authoritative name, so a catalog row that
+      // had fallen back to the session id is no longer a fallback.
+      delete record.nameIsFallback
       record.phase = member.phase
       record.lastSeenAt = time
       if (member.description !== undefined) record.description = member.description

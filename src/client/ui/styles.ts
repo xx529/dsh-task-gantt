@@ -916,6 +916,22 @@ export const BOARD_CSS = `
 /* A turn marker is a context tick, not a message: it keeps the small flat glyph
    so it is never mistaken for a person's arrow. */
 .dtg-msg-turn { background: none; }
+/* A DISPATCH keeps the ordinary arrow SHAPE — the parent -> child direction must read
+   exactly like every other transfer — but takes a DASHED stroke. A dispatch is not a
+   journalled message: the contract calls it "a directed hand-off inferred from the
+   parent/child relationship, NOT a journal message", and a dashed line is the universal
+   "derived / provisional" convention. At 11px it is the cheapest treatment that stays
+   unmistakable beside the solid teammate arrows, where a second glyph at this size would
+   just be noise. */
+.dtg-msg-dispatch .dtg-msg-arrow path {
+  /* The gap MUST exceed the stroke width, and the cap must be square.
+     Measured: with the arrow's own round caps and a 1.4-unit gap at stroke-width 2 the
+     two 1-unit round caps bled across the gap and the arrow rendered SOLID — a dashed
+     pattern that is invisible is worse than none, because it reads as "we tried and it
+     did not work". Square caps plus an equal dash/gap keep real holes at 12px. */
+  stroke-dasharray: 1.6 1.2;
+  stroke-linecap: butt;
+}
 .dtg-msg .dtg-msg-glyph { font-size: 10px; line-height: 1; }
 /* The legend arrows use the SAME SVG geometry as the markers, so the key cannot
    drift from the thing it explains. */

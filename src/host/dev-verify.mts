@@ -29,6 +29,7 @@ import {
   dateTaskFromToolCalls,
   foldMessageRecords,
   foldSessionEvents,
+  foldSubagentDispatches,
   foldTeamEvents,
   toolActivityKind,
   type RawSessionEvent,
@@ -167,7 +168,15 @@ for (const record of messages.records.slice(0, 6)) {
   )
 }
 
-assert(messages.records.length > 0, `the real lead log yielded message records (${messages.records.length})`)
+// Team-specific: a workspace where only plain sub-agents ran has no mailbox at all
+// (the HtDot run has zero `team/message/*`), so these two locks are conditional on
+// this slug actually carrying a team log.
+const isTeamWorkspace = messages.records.length > 0
+if (isTeamWorkspace) {
+  assert(true, `the real lead log yielded message records (${messages.records.length})`)
+} else {
+  console.log('  (no `team/message/*` in this workspace — a sub-agent-only slug; team locks skipped)')
+}
 assert(
   messages.diagnostics.queued + messages.diagnostics.unpairedDeliveries ===
     messages.records.length,
@@ -192,10 +201,12 @@ assert(
 // 140 cap would have clipped nearly all of them.
 const bodyLengths = messages.records.map((r) => r.preview?.length ?? 0).sort((a, b) => a - b)
 const bodyMedian = bodyLengths[Math.floor(bodyLengths.length / 2)] ?? 0
-assert(
-  bodyMedian > 140,
-  `the median real body (${bodyMedian}) proves the old 140 cap clipped every message`,
-)
+if (isTeamWorkspace) {
+  assert(
+    bodyMedian > 140,
+    `the median real body (${bodyMedian}) proves the old 140 cap clipped every message`,
+  )
+}
 assert(
   messages.records.every((record) => record.truncated !== true),
   'no real body was clipped by the 16384 cap (max observed 8003)',
@@ -485,9 +496,13 @@ const stubCtx = {
         const bare = id.replace(/^session-/, '')
         const session = byId.get(bare) ?? byId.get(id)
         if (session === undefined) return undefined
+        // Mirrors what a real `agents.get()` probe reports: a session with no
+        // unclosed turn is not running any more. Hard-coding 'running' here would
+        // hide exactly the permanent-spinner defect this section exists to catch.
+        const open = foldSessionEvents(session.events, bare).activity.spans.some((span) => span.end === null)
         return {
           id: bare,
-          status: 'running',
+          status: open ? 'running' : 'inactive',
           options: { model: 'dev-verify' },
           session: { header: {}, snapshotEvents: () => session.events },
         }
@@ -532,7 +547,55 @@ if (rootSession === undefined) {
     wire.lanes.every((lane) => lane.activity !== undefined),
     'the mount survives JSON serialization (the route ships JSON, not objects)',
   )
+  const provisioning = response.lanes.filter((lane) => lane.status === 'provisioning').length
+  const idNamed = response.lanes.filter((lane) => lane.name === lane.id && lane.id !== 'lead').length
+  assert(
+    provisioning === 0,
+    `no real lane claims \`provisioning\` (the permanent spinner); found ${provisioning}`,
+  )
+  assert(
+    idNamed === 0,
+    `no real lane is NAMED after its session id; found ${idNamed}`,
+  )
 }
+
+// ---- sub-agent compatibility over the REAL logs ----------------------------
+// Runs against whatever workspace slug this script was pointed at. Point it at a
+// workspace where plain sub-agents ran to exercise the whole chain:
+//   node --experimental-strip-types src/host/dev-verify.mts --Users-lzx-Documents-GitHub-HtDot--
+console.log('\n=== sub-agent compatibility (real logs) ===')
+let dispatchesSeen = 0
+let labelledMembers = 0
+let idNamedMembers = 0
+for (const session of loaded) {
+  const team = foldTeamEvents(session.events, session.id)
+  const dispatches = foldSubagentDispatches(session.events)
+  dispatchesSeen += dispatches.length
+  if (dispatches.length > 0) {
+    console.log(`  ${session.id.slice(0, 8)}: ${dispatches.length} dispatch(es)`)
+    for (const d of dispatches.slice(0, 3)) {
+      console.log(`    child=${d.childId.slice(0, 8)} time=${d.time} description=${JSON.stringify(d.description)}`)
+    }
+  }
+  for (const member of team.members) {
+    const labelled = member.nameIsFallback !== true
+    if (labelled) labelledMembers += 1
+    if (member.name === member.id) idNamedMembers += 1
+    if (!labelled && team.sessionTitle !== undefined) {
+      // The child's own log gave a real title; the lane name would come from there.
+      labelledMembers += 1
+    }
+  }
+}
+console.log(`  dispatches total: ${dispatchesSeen}; lane rows named by something other than their id: ${labelledMembers}; still id-named: ${idNamedMembers}`)
+assert(
+  idNamedMembers === 0,
+  `no roster row may be NAMED after its own session id (found ${idNamedMembers})`,
+)
+assert(
+  dispatchesSeen === 0 || loaded.some((s) => foldSubagentDispatches(s.events).every((d) => d.childId !== '')),
+  'every dispatch that survived carries a resolved child session id',
+)
 
 console.log(failures === 0 ? '\nALL CHECKS PASSED' : `\n${failures} CHECK(S) FAILED`)
 process.exitCode = failures === 0 ? 0 : 1

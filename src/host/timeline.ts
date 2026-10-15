@@ -48,6 +48,7 @@ import {
   attributeTransitions,
   dateTaskFromToolCalls,
   foldSessionEvents,
+  foldSubagentDispatches,
   mergeDiagnostics,
   type FoldDiagnostics,
   type FoldedMessageRecord,
@@ -222,6 +223,12 @@ interface LaneDraft {
   /** The member's own session id — the lane's log and the live-agent key. */
   sessionId?: string
   phase?: MemberPhase
+  /**
+   * True when {@link name} is only the child session id — a `subagent/catalog` row
+   * that carried neither a `label` nor a dispatching `description`. Such a name is
+   * upgraded from the child's own `session/title` once its log has been read.
+   */
+  nameIsFallback?: boolean
   /** Raw `agentTeams` view status, mapped to the contract's status later. */
   viewStatus?: string
   createdAt?: number
@@ -232,6 +239,10 @@ interface LaneDraft {
 /** Map a durable phase plus live activity onto the contract's member status. */
 function deriveStatus(phase: MemberPhase | undefined, running: boolean | undefined, hasOpenSpan: boolean): MemberStatus {
   if (phase === 'failed') return 'failed'
+  // `provisioning` is only honoured when something actually SAID so. A catalog row
+  // carries no phase (see `FoldedTeamMember.phase`), which is what lets the
+  // span-derived answers below be reached at all — the fix for the lane whose
+  // spinner never stopped.
   if (phase === 'provisioning') return 'provisioning'
   if (running === true) return 'running'
   if (running === false) return 'idle'
@@ -303,8 +314,10 @@ function teammateDraftFromJournal(member: FoldedTeamMember): LaneDraft {
     name: member.name,
     role: 'teammate',
     sessionId: member.id,
-    phase: member.phase,
   }
+  // Only when the journal actually said so. A catalog row carries no phase.
+  if (member.phase !== undefined) draft.phase = member.phase
+  if (member.nameIsFallback === true) draft.nameIsFallback = true
   const createdAt = member.childCreatedAt ?? member.firstSeenAt
   if (createdAt !== undefined) draft.createdAt = createdAt
   if (member.error !== undefined) draft.error = member.error
@@ -546,7 +559,10 @@ function speakerOfLane(lane: TimelineLane): SpanSpeaker {
 
 /** Ascending by `(time, end)`, with `turn` under `message`/`user-prompt`. */
 function sortMessageSpans(spans: MessageSpan[]): MessageSpan[] {
-  const rank = (span: MessageSpan): number => (span.kind === 'turn' ? 0 : span.kind === 'message' ? 1 : 2)
+  // A dispatch sits with the exchanges (it IS one, in the parent's direction) and
+  // before the bare prompts.
+  const rank = (span: MessageSpan): number =>
+    span.kind === 'turn' ? 0 : span.kind === 'message' ? 1 : span.kind === 'dispatch' ? 2 : 3
   return spans.sort((a, b) => a.time - b.time || rank(a) - rank(b))
 }
 
@@ -705,6 +721,9 @@ async function deriveTimeline(ctx: Context, sessionId: string, generatedAt: numb
    */
   const readableLogs = new Set<string>()
   if (rootRead.ok) readableLogs.add(rootSessionId)
+  /** The RAW events per readable session, for the passes that need more than a fold. */
+  const rawBySession = new Map<string, readonly unknown[]>()
+  if (rootRead.ok) rawBySession.set(rootSessionId, rootRead.events)
   const allToolCalls: ToolCallTransition[] = [...rootFold.toolCalls]
   const diagnostics: FoldDiagnostics[] = [rootFold.activity.diagnostics]
   let readable = rootRead.ok ? 1 : 0
@@ -722,12 +741,27 @@ async function deriveTimeline(ctx: Context, sessionId: string, generatedAt: numb
     }
     readable += 1
     readableLogs.add(id)
+    rawBySession.set(id, read.events)
     const fold = foldSessionEvents(read.events, id)
     folds.set(id, fold)
     allToolCalls.push(...fold.toolCalls)
     diagnostics.push(fold.activity.diagnostics)
   }
   allToolCalls.sort((a, b) => a.time - b.time || a.seq - b.seq)
+
+  // ---- 5b. upgrade a fallback lane name from the CHILD's own log -----------
+  // Last rung of the name chain: the parent's log gave only the session id
+  // (neither `catalog.label` nor a dispatch `description`), but the child's own
+  // `session/title` may still name the work. Only a REAL title counts —
+  // `foldTeamEvents` already drops `source.kind === 'fallback'` ones, because on the
+  // real data all five mapper sub-agents carried the same fallback string.
+  for (const draft of drafts) {
+    if (draft.nameIsFallback !== true || draft.sessionId === undefined) continue
+    const title = folds.get(draft.sessionId)?.team.sessionTitle
+    if (title === undefined) continue
+    draft.name = title
+    delete draft.nameIsFallback
+  }
 
   // ---- 6. tasks: board state + dated history ------------------------------
   const byId = new Map<string, TaskDraft>()
@@ -831,16 +865,34 @@ async function deriveTimeline(ctx: Context, sessionId: string, generatedAt: numb
     // `running` is only trusted when the probe answered with a real boolean.
     const runningKnown = typeof running === 'boolean'
     const coldSession = draft.sessionId !== undefined && !runningKnown
-    const status: MemberStatus =
-      fromView === 'running' || fromView === 'idle'
+    /**
+     * Is there anything at all that lets us STATE a status?
+     *
+     * A live probe that answered, a durable phase that actually said something, a
+     * projection row, or a log we really read. Without one of those the honest
+     * answer is no status — the field is optional by contract, and a lane whose log
+     * could not be read must not claim `idle` any more than it may claim
+     * `provisioning`. (The old code always had a value here; the catalog rows'
+     * hard-coded phase is what made that value a permanent `provisioning`.)
+     */
+    const logRead = draft.sessionId !== undefined && readableLogs.has(draft.sessionId)
+    const statusKnown =
+      fromView === 'running' ||
+      fromView === 'idle' ||
+      draft.phase === 'failed' ||
+      draft.phase === 'provisioning' ||
+      runningKnown ||
+      logRead
+    const status: MemberStatus | undefined = statusKnown
+      ? fromView === 'running' || fromView === 'idle'
         ? fromView
         : deriveStatus(draft.phase, runningKnown ? running : undefined, coldSession ? false : hasOpenSpan)
+      : undefined
 
     const lane: TimelineLane = {
       id: draft.id,
       name: draft.name,
       role: draft.role,
-      status,
       // `hasHistory` is true only when the log was readable AND yielded spans:
       // the flag tells the UI "this is durable history", not "a log exists".
       hasHistory: fold !== undefined && spans.length > 0,
@@ -851,6 +903,7 @@ async function deriveTimeline(ctx: Context, sessionId: string, generatedAt: numb
       color: laneColorTokens(draft.id, laneIndex),
       tasks: [],
     }
+    if (status !== undefined) lane.status = status
     // The time this lane spent WAITING on its peers rather than working. Read from
     // the lane's OWN log, which is where its `wait_agent` calls live: a wait is
     // something an agent does to itself, so unlike a message it is not dual-written.
@@ -974,6 +1027,49 @@ async function deriveTimeline(ctx: Context, sessionId: string, generatedAt: numb
       if (target !== undefined && laneById.has(target.id)) {
         place(target.id, `prompt:${span.time}:${span.preview ?? ''}`, span)
       }
+    }
+  }
+
+  // ---- 7c. dispatch markers: the sub-agent hand-off (parent → child) -------
+  //
+  // A plain sub-agent has NO mailbox: the real `HtDot` logs contain no
+  // `team/message/*` at all, and no tool that sends a child anything. So the ONLY
+  // directed fact available is the parent's own `tool/call name=subagent`, linked to
+  // its child by the acknowledgement text `started subagent <id>`.
+  //
+  // That is why these carry `kind: 'dispatch'` instead of reusing `'message'`: the
+  // journal-message kind means "DSH recorded an exchange with a targetId", and this
+  // is an inference from the parent/child relationship. Nothing comes BACK — the
+  // parent never receives the child's output — so there is deliberately no
+  // child → parent dispatch and no completion marker here.
+  let dispatchesPlaced = 0
+  for (const [sessionId, events] of rawBySession) {
+    for (const dispatch of foldSubagentDispatches(events)) {
+      const parentLane = laneById.get(laneByMemberId.get(sessionId) ?? sessionId)
+      const childLane = laneById.get(laneByMemberId.get(dispatch.childId) ?? dispatch.childId)
+      // No arrow when either end is off this roster: a marker pointing at nothing is
+      // worse than a missing one.
+      if (parentLane === undefined || childLane === undefined) continue
+      const span: MessageSpan = {
+        kind: 'dispatch',
+        time: dispatch.time,
+        // A dispatch is an instant, not a duration: it is the moment the work was
+        // handed over. `end` mirrors the instant so the client can draw it as a point.
+        end: dispatch.time,
+        from: speakerOfLane(parentLane),
+        to: speakerOfLane(childLane),
+        preview: dispatch.description === '' ? undefined : dispatch.description,
+        messageId: dispatch.callId,
+        sessionId,
+      }
+      const key = `dispatch\u0000${dispatch.callId}`
+      if (spanByKey.has(key)) continue
+      spanByKey.set(key, span)
+      dispatchesPlaced += 1
+      // Both rows, exactly like an exchange: the row is the perspective, so the
+      // parent reads it as "sent to X" and the child as "received from Y".
+      place(parentLane.id, `dispatch:${dispatch.callId}`, span)
+      place(childLane.id, `dispatch:${dispatch.callId}`, span)
     }
   }
   for (const lane of lanes) lane.messages = sortMessageSpans(lane.messages)

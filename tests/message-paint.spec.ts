@@ -426,7 +426,23 @@ describe('the direction cue does not depend on colour', () => {
     expect(source).toContain('<BubbleIcon className="dtg-msg-bubble"')
     expect(source).toContain('function ArrowIcon')
     // The aim: one path, mirrored for the incoming direction.
-    expect(source).toContain("transform={direction === 'out' ? undefined : 'scale(-1,-1)'}")
+    //
+    // RE-BASED in the round where the user said the received icon "是从右上指向左下，改成从
+    // 左上指向右下". `scale(-1,-1)` is a 180-degree ROTATION and maps the diagonal ↗ to ↙;
+    // the requested end state is the MIRROR of the sent glyph, so the received aim is now a
+    // SINGLE-AXIS reflection. The property this lock has always protected is unchanged — the
+    // two directions must differ by SHAPE, never by colour or weight — and it is still
+    // pinned to a literal so it cannot drift silently. Old → new value of the pin:
+    //     old: transform={direction === 'out' ? undefined : 'scale(-1,-1)'}
+    //     new: transform={direction === 'out' ? undefined : RECEIVED_ARROW_TRANSFORM}
+    //          with RECEIVED_ARROW_TRANSFORM = 'scale(1,-1)'
+    expect(source).toContain("transform={direction === 'out' ? undefined : RECEIVED_ARROW_TRANSFORM}")
+    const received = /const RECEIVED_ARROW_TRANSFORM = '([^']+)'/.exec(source)
+    expect(received, 'the received aim must be a named constant, not an inline literal').not.toBeNull()
+    // Vertical-only: negates y, leaves x alone. A 180-degree rotation would negate both and
+    // is exactly what the user rejected.
+    expect(received?.[1], 'a single-axis reflection, NOT a 180-degree rotation').toBe('scale(1,-1)')
+    expect(source, 'the 180-degree rotation must not come back').not.toContain("'scale(-1,-1)'")
     // Both directions are strokes with no fill, so neither is heavier than the other.
     expect(source).toContain('fill="none"')
     const path = /const ARROW_PATH = '([^']+)'/.exec(source)
@@ -439,6 +455,18 @@ describe('the direction cue does not depend on colour', () => {
     const stroke = Number(/const ARROW_STROKE = ([\d.]+)/.exec(source)?.[1])
     expect(stroke, 'a single stroke weight must be a real number').toBeGreaterThan(0)
     expect(stroke, 'the stroke must stay thin enough to read as an outline').toBeLessThanOrEqual(2.5)
+    // THE TIP AND THE TIME COORDINATE. The user: "箭头是指向时间点". The marker is placed
+    // with `left: marker.x` (the time coordinate), the tip is authored at x=9.8 in the
+    // 12-unit box, and the 12px icon is centred in the 11px marker box, so the tip sits
+    // 9.3px right of the coordinate — for BOTH directions, because a vertical-only mirror
+    // does not move x. Measured on the live markers with the CTM: +9.29 sent, +9.29
+    // received. The constant is pinned so that relationship cannot drift, and the icon must
+    // NOT be slid inside its box (that detaches the 1.5px surface halo from the glyph).
+    const inset = Number(/export const ARROW_TIP_INSET_PX = ([\d.]+)/.exec(source)?.[1])
+    expect(inset, 'the measured tip inset must be a real number').toBeGreaterThan(0)
+    expect(inset).toBeCloseTo(9.8 - (12 - 11) / 2, 1)
+    expect(source, 'sliding the icon inside its box detaches the halo').not.toContain('marginInlineStart')
+
     // The centreline must stay inside the 12x12 box even after the 2px stroke adds
     // ~1 unit either side.
     const nums = [...(path?.[1] ?? '').matchAll(/(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)/g)]

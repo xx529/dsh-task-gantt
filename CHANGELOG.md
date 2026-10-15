@@ -1,5 +1,80 @@
 # Changelog
 
+## 0.2.32 — 2026-10-15
+
+**子智能体适配（名字 / 状态 / 派发标记）+ 接收箭头改为垂直镜像**
+
+### 1 — 接收箭头：`↙` → `↘`，用**垂直镜像**而非 180° 旋转
+
+用户指出接收图标"从右上指向左下"，要求"从左上指向右下"。抽成命名常量 `RECEIVED_ARROW_TRANSFORM`：
+`scale(-1,-1)`（旋转 180°）→ **`scale(1,-1)`（垂直镜像）**。注释写明了区别与实测依据
+（`rotate(180 6 6)` 同样得到 `↙`，所以旋转不是目标态），后人无法"化简"回去。**发送侧未动**
+（字形/方向/粗细/填充全未改），两枚仍是同一字形、只有方向不同；两方向尖端 x 一致（+9.29，
+因垂直镜像不动 x），与发送侧既有口径相同。图例两个 swatch 与 marker 逐项相等。
+
+### 2 — 子代理泳道的名字：会话 id → 真实任务名
+
+根因是**我们自己代码的 bug**：`src/host/fold.ts` 的 `subagent/catalog` 分支把 lane 名**硬写成
+子会话 id**，而该事件的 data **本来就带 `label`**、全文件从未读取。真实值（HtDot 会话实测）：
+`Map codebase concerns` / `Map conventions and testing` / `Map architecture and structure` /
+`Map tech stack and integrations` —— 与父会话 `subagent` 工具的 `arguments.description` 一致。
+回退链：`catalog.label` → 派发的 `arguments.description` → 子会话 `session/title`（**仅当
+`source.kind !== 'fallback'`** —— 实测那 7 个子会话的 title 全都是 "You are a codebase mapper"，
+没有区分度）→ 会话 id。**7/7 泳道已从 id 前缀变成真实任务名。**
+
+长名（最长 31 字符）在 132px 头部列里必然省略（92/198，隐藏约 54%），**完整名 100% 保留在
+药丸 `title` 与行 `aria-label` 里**。经评审决定**不加宽头部列**（会等量吃掉时间轴宽度）也不做
+字符串截断（与 CSS 省略号信息量相同却会丢尾部差异）——完整名走悬浮与无障碍名。
+
+### 3 — 子代理泳道的状态：不再永远"分析中"
+
+三行连坐把状态钉死：`fold.ts` 写死 `phase:'provisioning'` → 放进 draft → `deriveStatus` **第一
+优先**判 provisioning，后面基于 live agent 与 span 的判据**永远轮不到**，于是转圈永不结束。
+结束信号用**子会话自己的 `turn/end`**（实测 `4b877229` 253 个事件、最后一条就是 `turn/end`；
+仍在跑的会话有未闭合 span）。父会话里那条 `subagent` 的 `tool/result` **只是 ack**
+（正文 `started subagent <id>`、调用后约 400ms 返回），它真正的价值是**父 callId → 子会话 id 的
+链接**；`session/end` 之类**不存在**。
+
+修法：catalog 占位行**不再写死 phase**（`phase` 改可选，写死就是编造），改用子会话日志的 span
+状态推导 —— **有未闭合 span ⇒ `running`；可读且无未闭合 ⇒ `idle`；读不到且探针无回答 ⇒
+省略 `status`**（未知，不再撒谎）。因为 `mode:'continuable'` 的子代理可被再次唤醒，`turn/end`
+只代表"当前不在工作"，所以取 **`idle`**，不新造"已完成"状态。为了用**真实日志**证明"仍在跑"
+那一档，把真实子日志截断到第一个 `step/end` 之前（39/207 事件，即面板当时那一瞬）重放 ⇒
+`running`；同一批真实日志现在 7/7 为 `idle`（都已跑完）。客户端对 `status` **缺席**的渲染是
+"静态 ⏸ + 不转圈 + 不给活动词"，即除"不工作"外不作任何断言。
+
+### 4 — 派发标记（诚实版：只画能观测的方向）
+
+teammate 的箭头**只**来自 `team/message/queued` + `delivered` 成对事件（要求收件人 `targetId`），
+而子代理场景父会话**完全没有** `team/message/*` 事件、也没有发消息的工具调用 ⇒ **子→父的定向
+箭头在数据里不存在，不画**（契约 JSDoc 逐条写明为何不可观测）。可观测的是**父→子派发**：
+新增 `kind: 'dispatch'`，`from` = 父 lane、`to` = 子 lane、`time` = 父会话 `tool/call` 的时刻
+（**不是** ack）、`preview` = 该次派发的 description、`messageId` = 父 `callId`；同一条 span
+**双向落位**（父侧读作"派发给 X"、子侧读作"接收自 Y"）。契约里写明它**不是** journal 的定向
+消息，而是按父子关系推出的有向派发。**ack 未到的派发直接丢弃** —— 真实数据里有两条共用同一
+label，按 label 配对会画错箭头，宁可不画也不猜。
+
+视觉上它与日志消息区分：同一个箭头字形，但**描边改虚线**、措辞独立（`messageDispatchedTo/From`、
+派发说明）。实测 6 条 dispatch 与 3 条普通消息在真实 DOM 中的 class、`stroke-dasharray`、
+`transform`、以及尖端与时间坐标的差值（**≤0.01px**）。
+
+### 两条过程记录（都值得留痕）
+
+**"computed style 说虚线、截图却是实线"**：箭头自带 `stroke-linecap: round` + `stroke-width: 2`，
+两端各 1 单位的圆帽**跨过 1.4 的间隙把它填满**了。改成 `linecap: butt` + 间隙大于描边宽后虚线
+才真正出现 —— 只看 computed style 会漏掉这类缺陷，已写进锁（锁 `butt` 并注释"圆帽会吞掉间隙"）。
+
+**一张假绿截图**：第一版把 `<svg>` 单独克隆放大，**丢掉了 `.dtg-msg-dispatch` 祖先**，而虚线规则
+是后代选择器，克隆体自然没有虚线 ⇒ 截图假绿。改为克隆整个 marker 后重截。
+
+另有一处澄清（非缺陷）：`role` 的契约是 `'lead' | 'teammate' | 'unknown'`，**没有 `subagent`**；
+客户端落到 `unknown` 是正确行为，是测试 fixture 用了契约外的值。若 host 需要区分"子代理"这个
+角色，那是**契约变更**，不是客户端能猜的。
+
+Tests: 811 passed / 1 skipped, 39 files; typecheck 0 errors.
+
+The footer build identity is now `v0.2.32 · subagents`.
+
 ## 0.2.31 — 2026-10-14
 
 **活动词的三个缺陷一次收清：语言竞态、空闲泳道误报、以及词的位置**

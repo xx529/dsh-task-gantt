@@ -28,7 +28,7 @@ export const API_VERSION = 1 as const
  * or behaviour changes, and a tester can read the version off the screen
  * instead of guessing from a screenshot.
  */
-export const BUILD_LABEL = 'v0.2.31 · locale-gate' as const
+export const BUILD_LABEL = 'v0.2.32 · subagents' as const
 
 /** The sidebar tab type id registered through `ctx.betterSidebar.registerTab`. */
 export const TAB_TYPE_ID = 'dsh-task-gantt:board' as const
@@ -115,8 +115,14 @@ export interface SpanSpeaker {
  * is inferred from wall-clock arrival at the panel.
  */
 export interface MessageSpan {
-  /** What the span represents; drives the marker's glyph and shape. */
-  kind: 'turn' | 'message' | 'user-prompt'
+  /**
+   * What the span represents; drives the marker's glyph and shape.
+   *
+   * - `'turn'`, `'message'` and `'user-prompt'` are journalled by DSH itself.
+   * - `'dispatch'` is OURS: a **directed hand-off inferred from the parent/child
+   *   relationship**, NOT a journal message. See {@link SubagentDispatch}.
+   */
+  kind: 'turn' | 'message' | 'user-prompt' | 'dispatch'
   /** Epoch ms of the record that opened the span. */
   time: number
   /** Epoch ms the span closed; `null` while the turn is still open. */
@@ -124,20 +130,67 @@ export interface MessageSpan {
   /** Who produced it. */
   from: SpanSpeaker
   /**
-   * Who received it. Present for `kind: 'message'` (the journal's `targetId`);
-   * a turn or a user prompt has no addressee and leaves this `undefined`.
+   * Who received it. Present for `kind: 'message'` (the journal's `targetId`) and
+   * for `kind: 'dispatch'` (the child session the parent handed work to); a turn
+   * or a user prompt has no addressee and leaves this `undefined`.
    */
   to?: SpanSpeaker
   /**
    * The message's own text, whitespace-collapsed: the **full body**, not a
    * teaser. The marker shows a short prefix of it; clicking the marker shows
    * all of it.
+   *
+   * For `kind: 'dispatch'` this is the dispatch's `description` — the short task
+   * name the parent gave the child, e.g. `Map codebase concerns`.
    */
   preview?: string
-  /** The journal's message id, for correlating a queue with its delivery. */
+  /** The journal's message id, for correlating a queue with its delivery. For a dispatch it is the parent's `callId`. */
   messageId?: string
   /** The owning session whose log carries the event. */
   sessionId: string
+}
+
+/**
+ * A sub-agent hand-off observed in its **parent's** log.
+ *
+ * ## What it is
+ *
+ * A plain sub-agent has no mailbox: there is no `team/message/queued` /
+ * `delivered` pair, and no tool that sends it anything. What the parent's log
+ * DOES carry, and we can date exactly, is:
+ *
+ * 1. `tool/call` with `name: 'subagent'` — the dispatch itself, whose
+ *    `arguments` JSON holds `description` (the short task name) and `prompt`
+ *    (the full brief);
+ * 2. `tool/result` for that `callId` whose text is
+ *    `started subagent <childSessionId>` — which is what **links the call to the
+ *    child session**, because the `subagent` tool returns an acknowledgement and
+ *    the `subagent/catalog` event does not carry the `callId`.
+ *
+ * Verified on the real `HtDot` logs: 6 such calls, 6 acknowledgements, 6 catalogs,
+ * and the ack text resolved every `callId` to its child id.
+ *
+ * ## What it is NOT
+ *
+ * - **Not a completion signal.** The acknowledgement lands ~400 ms after the
+ *   call (call `1792035793723` → result `1792035796104`), while the child ran for
+ *   minutes. Completion is the CHILD's own `turn/end`.
+ * - **Not an exchange.** Nothing comes back: the parent never receives the
+ *   child's output as a message, so there is no `child → parent` dispatch and we
+ *   do not pretend otherwise.
+ * - **Not journalled.** It is inferred from the parent/child relationship, which
+ *   is why it gets its own {@link MessageSpan.kind} rather than wearing the
+ *   journal-message one.
+ */
+export interface SubagentDispatch {
+  /** Epoch ms of the parent's `tool/call` — when the work was handed over. */
+  time: number
+  /** The parent's `callId`, used to correlate the call with its acknowledgement. */
+  callId: string
+  /** The child session id resolved from the acknowledgement text. */
+  childId: string
+  /** The tool call's `arguments.description`, or `''` when absent. */
+  description: string
 }
 
 /**
