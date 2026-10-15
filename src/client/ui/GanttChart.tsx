@@ -1640,6 +1640,13 @@ function MessageMarker({
   const color = paint.paint
   const outgoing = paint.direction === 'outgoing'
   const isUser = paint.isUser
+  /**
+   * Does this marker draw an ARROW? Only an arrow has a tip, so only an arrow's box is
+   * pulled left to put that tip on the message's time coordinate (see `style.left`). The
+   * turn tick and the human's bubble keep the old anchor: for them the visual CENTRE is
+   * what reads, and shifting them 9.3px would be an unrequested move.
+   */
+  const arrowMarker = marker.kind !== 'turn' && !isUser
   const classes = ['dtg-msg', isUser ? 'dtg-msg-user' : 'dtg-msg-agent', outgoing ? 'dtg-msg-out' : 'dtg-msg-in']
   if (marker.kind === 'turn') classes.push('dtg-msg-turn')
   /**
@@ -1659,9 +1666,7 @@ function MessageMarker({
   const when = formatDateTime(marker.time, tzOffsetMinutes)
   // The route is stated from THIS lane's point of view, so it is self-evident
   // which way the message went and who the other side is.
-  const route = outgoing
-    ? `${uiLabel('messageSentTo')} ${paint.peerName}`
-    : `${uiLabel('messageReceivedFrom')} ${paint.peerName}`
+  const route = `${uiLabel(messageRouteKey(marker.kind, outgoing))} ${paint.peerName}`
   const peerNote = paint.peerMatched ? '' : ` · ${uiLabel('messagePeerUnknown')}`
   const dropped = marker.droppedBefore > 0 ? ` · ${uiLabel('messageOmitted', { count: marker.droppedBefore })}` : ''
   const label = uiLabel('messageAria', { time: when, route, preview: marker.preview ?? '' })
@@ -1691,7 +1696,22 @@ function MessageMarker({
    */
   const shape: 'solid' | 'hollow' = outgoing ? 'solid' : 'hollow'
   const style: CSSProperties = {
-    left: marker.x,
+    /**
+     * THE ARROW TIP IS THE ANCHOR.
+     *
+     * `marker.x` IS the message's time coordinate, and the tip is drawn 9.3px right of the
+     * box's left edge (tip at x=9.8 in the 12-unit icon, which is centred in the 11px
+     * marker box, handing back 0.5 — see ARROW_TIP_INSET_PX). So the box starts that much
+     * earlier and the tip lands exactly on the time.
+     *
+     * Before this the tip sat 9.29px PAST the time. Harmless in the middle of a lane, but
+     * a message close to `now` had its tip beyond the now line — the user, looking at
+     * exactly that: "接收消息箭头指向的位置在时间线后面，也就是箭头指向位置不是实际接收的
+     * 时间，不然不可能会超过时间线". The sent side moves too, deliberately: both directions
+     * had the SAME +9.29 offset, so shifting only one would have broken the symmetry that
+     * made them comparable.
+     */
+    left: arrowMarker ? marker.x - ARROW_TIP_INSET_PX : marker.x,
     top: marker.y,
     width: marker.w,
     height: marker.h,
@@ -2142,18 +2162,20 @@ const RECEIVED_ARROW_TRANSFORM = 'scale(1,-1)'
  * the anchor that the sent arrow has — the "same convention as the sent side" the task asks
  * for — and the sent side is not moved, as required.
  *
- * DO NOT "fix" this 9.3px by sliding the icon inside its box with a negative inline-start
- * margin. An earlier attempt did that and it is wrong twice over: it overshoots (the sweep
- * is 1:1, so the value that would zero the gap is 9.3, not 12), AND it drags the glyph
- * clear of the
- * 11px marker box that carries `boxShadow: 0 0 0 1.5px` — the surface halo that is the only
- * thing making a lane-coloured arrow legible on the panel. The halo would stay behind as a
- * detached empty ring. If the tip must land exactly ON the coordinate, move the marker box
- * (`left`) so the halo travels with the glyph, and do it for BOTH directions so the two
- * stay symmetric.
+ * THIS IS NOW A POSITIONING VALUE, not just a documented relationship: `style.left` is
+ * `marker.x - ARROW_TIP_INSET_PX`, which puts the tip on the time coordinate (measured
+ * 0.01px). It used to be documentation only, because the offset was harmless — until a
+ * message landed near `now` and the tip crossed the now line (see `style.left`).
  *
- * This constant exists only to be asserted against, so the 9.3px relationship above cannot
- * drift unnoticed.
+ * WHY THE MARKER BOX MOVES AND NOT THE ICON INSIDE IT. The obvious alternative is to slide
+ * the glyph left within its box with a negative inline-start margin. It was measured and it
+ * is wrong twice over: it overshoots (the response is 1:1, so the value that zeroes the gap
+ * is 9.3, not the icon's 12), AND it drags the glyph clear of the 11px marker box that
+ * carries `boxShadow: 0 0 0 1.5px` — the surface halo that is the ONLY thing making a
+ * lane-coloured arrow legible on the panel. The halo would stay put as a detached empty
+ * ring. Moving the whole box keeps the halo on the glyph, and moving it for BOTH directions
+ * (and for dispatches, which share this layout) keeps their offsets equal, which is what
+ * made them comparable in the first place.
  */
 export const ARROW_TIP_INSET_PX = 9.3
 

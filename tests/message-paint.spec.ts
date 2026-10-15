@@ -455,16 +455,24 @@ describe('the direction cue does not depend on colour', () => {
     const stroke = Number(/const ARROW_STROKE = ([\d.]+)/.exec(source)?.[1])
     expect(stroke, 'a single stroke weight must be a real number').toBeGreaterThan(0)
     expect(stroke, 'the stroke must stay thin enough to read as an outline').toBeLessThanOrEqual(2.5)
-    // THE TIP AND THE TIME COORDINATE. The user: "箭头是指向时间点". The marker is placed
-    // with `left: marker.x` (the time coordinate), the tip is authored at x=9.8 in the
-    // 12-unit box, and the 12px icon is centred in the 11px marker box, so the tip sits
-    // 9.3px right of the coordinate — for BOTH directions, because a vertical-only mirror
-    // does not move x. Measured on the live markers with the CTM: +9.29 sent, +9.29
-    // received. The constant is pinned so that relationship cannot drift, and the icon must
-    // NOT be slid inside its box (that detaches the 1.5px surface halo from the glyph).
+    // THE TIP ANCHORS THE MARKER — RE-BASED when the user's screenshot showed a received
+    // arrow's tip PAST the now line ("接收消息箭头指向的位置在时间线后面…不然不可能会超过
+    // 时间线"). The marker used to be placed at `left: marker.x`, which put the tip 9.29px
+    // BEYOND the time coordinate; the box now starts at `marker.x - ARROW_TIP_INSET_PX` so
+    // the tip lands ON it. Old -> new:
+    //     old: left: marker.x                                    tip at time + 9.29
+    //     new: left: marker.x - ARROW_TIP_INSET_PX                tip at time + 0.01
+    // The SAME shift applies to both directions and to dispatches, which is what keeps
+    // their offsets equal; the turn tick and the human's bubble are excluded, because only
+    // an arrow has a tip to anchor.
     const inset = Number(/export const ARROW_TIP_INSET_PX = ([\d.]+)/.exec(source)?.[1])
     expect(inset, 'the measured tip inset must be a real number').toBeGreaterThan(0)
     expect(inset).toBeCloseTo(9.8 - (12 - 11) / 2, 1)
+    // The constant must actually be USED to place the box, not merely documented.
+    expect(source, 'the tip inset must be the positioning value').toContain('marker.x - ARROW_TIP_INSET_PX')
+    // ...and only for arrows: the tick and the bubble keep the old anchor.
+    expect(source).toMatch(/arrowMarker \? marker\.x - ARROW_TIP_INSET_PX : marker\.x/)
+    expect(source).toContain("const arrowMarker = marker.kind !== 'turn' && !isUser")
     expect(source, 'sliding the icon inside its box detaches the halo').not.toContain('marginInlineStart')
 
     // The centreline must stay inside the 12x12 box even after the 2px stroke adds
@@ -478,8 +486,20 @@ describe('the direction cue does not depend on colour', () => {
       expect(y, `y=${y} would clip`).toBeGreaterThanOrEqual(stroke / 2)
     }
     expect(source).toMatch(/aria-label=\{label\}/)
-    expect(source).toContain('messageSentTo')
-    expect(source).toContain('messageReceivedFrom')
+    // The aria label must state the DIRECTION IN WORDS, and the two directions must read
+    // differently — RE-BASED when the wording moved behind a helper so a dispatch can be
+    // described as a hand-off instead of as a message. Old -> new:
+    //     old: two inline ternaries containing the literals 'messageSentTo'/'messageReceivedFrom'
+    //     new: uiLabel(messageRouteKey(kind, outgoing)), whose mapping is locked in
+    //          tests/message-dispatch.spec.ts
+    // The intent is unchanged, so both wordings must still exist and still differ.
+    expect(source).toContain('uiLabel(messageRouteKey(')
+    const labels = readFileSync(resolve(ROOT, 'src/client/ui/labels.ts'), 'utf8')
+    for (const key of ['messageSentTo', 'messageReceivedFrom']) {
+      expect(labels, key + ' must still be defined').toContain(key + ':')
+    }
+    expect(labels).toMatch(/messageSentTo: '([^']+)'/)
+    expect(labels).toMatch(/messageReceivedFrom: '([^']+)'/)
   })
 
   it('the marker keeps NO box: no disc, no plate, no frame around the arrow', () => {
