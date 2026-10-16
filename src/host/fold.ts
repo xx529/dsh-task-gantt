@@ -90,6 +90,9 @@ import type {
   LaneLiveActivityKind,
   LaneWait,
   MemberPhase,
+  QuestionDetail,
+  QuestionItem,
+  QuestionOption,
   SubagentDispatch,
   TaskEvent,
   TaskStatus,
@@ -255,6 +258,8 @@ export interface FoldedSession {
    * four are separate — a wait is not activity, not a task transition and not a message.
    */
   waits: LaneWait[]
+  /** Every question this session put to a human, in log order. */
+  questions: QuestionRecord[]
   /**
    * What this lane's agent is doing RIGHT NOW.
    *
@@ -981,6 +986,296 @@ export function foldSubagentDispatches(events: readonly unknown[]): SubagentDisp
     if (childId !== undefined) dispatch.childId = childId
   }
   return out.filter((dispatch) => dispatch.childId !== '')
+}
+
+/**
+ * The tool names that put a question to a HUMAN.
+ *
+ * `ask_user_question` is the only one that occurs in 237 real logs (63 calls);
+ * `request_user_input` is accepted because the built-in activity mapper treats the two
+ * as one category (`toolActivityKind`), so a deployment that renames it still works.
+ */
+const QUESTION_TOOL_NAMES: readonly string[] = ['ask_user_question', 'request_user_input']
+
+/** One question round-trip folded from a log. */
+export interface QuestionRecord {
+  /** The `tool/call`'s callId — the key that pairs the ask with its result. */
+  callId: string
+  /** Epoch ms the question was asked. */
+  time: number
+  /** Epoch ms the answer (or failure) landed; `null` while the ask is still open. */
+  end: number | null
+  detail: QuestionDetail
+}
+
+/** The `options` array of one question. */
+function questionOptions(value: unknown): QuestionOption[] {
+  if (!Array.isArray(value)) return []
+  const out: QuestionOption[] = []
+  for (const entry of value) {
+    const record = asRecord(entry)
+    if (record === undefined) continue
+    const label = asText(record.label)
+    if (label === undefined) continue
+    const option: QuestionOption = { label }
+    const description = asText(record.description)
+    if (description !== undefined) option.description = description
+    out.push(option)
+  }
+  return out
+}
+
+/**
+ * The `questions` array of an `ask_user_question` `tool/call`.
+ *
+ * Measured shape over 63 real calls: 1 to 4 entries, `header` always present,
+ * `options` always present and non-empty, `multi_select: true` on 6 of 98 questions.
+ * A malformed payload yields `[]` rather than a throw — the marker still appears at
+ * the right instant, it just has nothing to show behind the click.
+ */
+function questionItemsFromArguments(argumentsRaw: unknown): QuestionItem[] {
+  if (typeof argumentsRaw !== 'string') return []
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(argumentsRaw)
+  } catch {
+    return []
+  }
+  const raw = asRecord(parsed)?.questions
+  if (!Array.isArray(raw)) return []
+  const items: QuestionItem[] = []
+  for (const [index, entry] of raw.entries()) {
+    const question = asRecord(entry)
+    if (question === undefined) continue
+    const item: QuestionItem = {
+      id: asText(question.id) ?? `q${index + 1}`,
+      prompt: previewOf(typeof question.question === 'string' ? question.question : '') ?? '',
+      options: questionOptions(question.options),
+      multiSelect: question.multi_select === true,
+      selected: [],
+    }
+    const header = asText(question.header)
+    if (header !== undefined) item.header = header
+    items.push(item)
+  }
+  return items
+}
+
+/** The result's text, concatenated the way a streamed payload arrives. */
+function resultText(content: unknown): string {
+  if (!Array.isArray(content)) return ''
+  let text = ''
+  for (const block of content) {
+    const record = asRecord(block)
+    if (record === undefined) continue
+    if (typeof record.text === 'string') text += record.text
+  }
+  return text
+}
+
+/** Clip a raw payload to the same ceiling message bodies use. */
+function clipRaw(text: string): string {
+  return text.length <= PREVIEW_MAX ? text : `${text.slice(0, PREVIEW_MAX - 1)}\u2026`
+}
+
+/**
+ * Apply a `tool/result` to its question record.
+ *
+ * Three outcomes, all observed in the real logs:
+ *
+ * - **failed** — `message.isError === true` (real: `data.error = { name:
+ *   'UserQuestionError', code: 'DELEGATED_CALLER' }`, arriving 11 ms after the call).
+ *   The question never reached a human, so it is NOT `'answered'`.
+ * - **answered** — the text parsed as `{"answers":[{"id","selected","custom"}]}`;
+ *   each answer pairs to its question by `id`.
+ * - **answered but unparsed** — a result exists whose text is not that JSON. The raw
+ *   line is kept and `unparsed` set, so the UI shows it instead of an empty selection
+ *   that would read as "the human chose nothing".
+ *
+ * @param detail - the record's detail, mutated in place.
+ * @param data - the `tool/result` event's `data`.
+ * @param message - `data.message`, already narrowed.
+ */
+/**
+ * One raw `tool/result` seen for a question, before the authoritative one is chosen.
+ *
+ * A question can have SEVERAL results with the same `callId`, and that is not a
+ * transient: DSH's context compaction APPENDS a replacement whose text is
+ * `[dsh-jev-compaction] Historical tool output pruned from active model context.`
+ * Measured on the real session `52879591-…`: every one of its 4 questions had exactly
+ * two results — the original answer, and a pruning placeholder written **28 minutes
+ * later** (call `1791540551542` → answer at `1791540578598`, placeholder at
+ * `1791542257132`). Applying both in order is what produced a record that was
+ * simultaneously `UNPARSED` and holding `selected`, with `end` pushed to the later time.
+ */
+interface QuestionResultFact {
+  /** Epoch ms this result was written. */
+  time: number
+  /** `message.isError === true`, or a `data.error` was present. */
+  isError: boolean
+  /** `data.error.code` (e.g. `DELEGATED_CALLER`) or its `name`. */
+  errorCode?: string
+  /** The `message.content` text, concatenated. */
+  text: string
+  /** Whether {@link text} parsed into the documented `{ answers: [...] }` shape. */
+  answers: boolean
+}
+
+/**
+ * Pick the ONE result that speaks for a question.
+ *
+ * Same class of trap as a duplicated/appended record anywhere else in this file: a
+ * later rewrite must not be allowed to speak louder than the real one. The order is:
+ *
+ * 1. **a parsable answer** — the question really was answered, and this IS the answer.
+ *    The EARLIEST such result wins, because a later one can only be a rewrite;
+ * 2. otherwise **an error result** — the ask terminated without reaching a human;
+ * 3. otherwise **the earliest result at all**, surfaced as `unparsed` with its raw
+ *    text. That is the honest outcome when the original output was pruned away before
+ *    we ever read it: we know the ask completed, we do not know the answer, and the
+ *    raw line says so.
+ *
+ * @param facts - the results seen for one callId, in log order.
+ * @returns the authoritative fact, or `undefined` when the ask is still open.
+ */
+function chooseQuestionResult(facts: readonly QuestionResultFact[]): QuestionResultFact | undefined {
+  if (facts.length === 0) return undefined
+  const answered = facts.find((fact) => !fact.isError && fact.answers)
+  if (answered !== undefined) return answered
+  const failed = facts.find((fact) => fact.isError)
+  if (failed !== undefined) return failed
+  return facts[0]
+}
+
+/**
+ * Apply the authoritative result to a question record — exactly once.
+ *
+ * `selected` is written ONLY on the parsable path and `unparsed` ONLY on the other, so
+ * the two are mutually exclusive BY CONSTRUCTION rather than by luck.
+ *
+ * @param detail - the record's detail, mutated in place.
+ * @param fact - the chosen result.
+ */
+function applyChosenQuestionResult(detail: QuestionDetail, fact: QuestionResultFact): void {
+  if (fact.isError) {
+    detail.status = 'failed'
+    if (fact.errorCode !== undefined) detail.errorCode = fact.errorCode
+    const line = previewOf(fact.text) ?? fact.errorCode
+    if (line !== undefined) detail.errorText = line
+    return
+  }
+  detail.status = 'answered'
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(fact.text)
+  } catch {
+    detail.unparsed = true
+    detail.raw = clipRaw(fact.text)
+    return
+  }
+  const answers = asRecord(parsed)?.answers
+  if (!Array.isArray(answers)) {
+    detail.unparsed = true
+    detail.raw = clipRaw(fact.text)
+    return
+  }
+  const byId = new Map<string, Record<string, unknown>>()
+  for (const entry of answers) {
+    const answer = asRecord(entry)
+    if (answer === undefined) continue
+    const id = asText(answer.id)
+    if (id !== undefined) byId.set(id, answer)
+  }
+  for (const item of detail.questions) {
+    const answer = byId.get(item.id)
+    if (answer === undefined) continue
+    item.selected = asTextArray(answer.selected)
+    const custom = asText(answer.custom)
+    if (custom !== undefined) item.custom = custom
+  }
+}
+
+/** Read one `tool/result` event as a {@link QuestionResultFact}. */
+function questionResultFact(item: IndexedEvent, data: Record<string, unknown>): QuestionResultFact | undefined {
+  const time = item.time
+  if (time === undefined) return undefined
+  const message = asRecord(data.message)
+  const text = resultText(message?.content)
+  const isError = message?.isError === true || data.error !== undefined
+  const fact: QuestionResultFact = { time, isError, text, answers: false }
+  if (isError) {
+    const error = asRecord(data.error)
+    const code = asText(error?.code) ?? asText(error?.name)
+    if (code !== undefined) fact.errorCode = code
+    return fact
+  }
+  try {
+    fact.answers = Array.isArray(asRecord(JSON.parse(text))?.answers)
+  } catch {
+    fact.answers = false
+  }
+  return fact
+}
+
+/**
+ * Every question put to a human from ONE log.
+ *
+ * @param events - raw events of ONE session (any order, any shape).
+ * @returns one record per question call, in log order. Never throws.
+ */
+export function foldQuestionRecords(events: readonly unknown[]): QuestionRecord[] {
+  const byCallId = new Map<string, QuestionRecord>()
+  /** Every result seen per callId, in log order; exactly one is applied at the end. */
+  const factsByCallId = new Map<string, QuestionResultFact[]>()
+  const out: QuestionRecord[] = []
+  for (const item of inLogOrder(indexEvents(events))) {
+    const type = eventType(item)
+    const data = eventData(item)
+    if (data === undefined) continue
+    if (type === 'tool/call') {
+      const name = asText(data.name)
+      const callId = asText(data.callId)
+      const time = item.time
+      if (name === undefined || callId === undefined || time === undefined) continue
+      if (!QUESTION_TOOL_NAMES.includes(name)) continue
+      const record: QuestionRecord = {
+        callId,
+        time,
+        end: null,
+        detail: { status: 'waiting', questions: questionItemsFromArguments(data.arguments) },
+      }
+      byCallId.set(callId, record)
+      out.push(record)
+      continue
+    }
+    if (type !== 'tool/result') continue
+    // An undated result cannot close the span, and leaving the status `waiting` is the
+    // honest outcome: we know an answer exists but not when it landed.
+    if (item.time === undefined) continue
+    const message = asRecord(data.message)
+    const source = message === undefined ? undefined : asRecord(message.source)
+    const callId = asText(source?.callId) ?? asText(message?.toolCallId) ?? asText(data.callId)
+    if (callId === undefined) continue
+    if (!byCallId.has(callId)) continue
+    const fact = questionResultFact(item, data)
+    if (fact === undefined) continue
+    const facts = factsByCallId.get(callId)
+    if (facts === undefined) factsByCallId.set(callId, [fact])
+    else facts.push(fact)
+  }
+
+  // Resolve each question to ONE result. Doing it after the whole log is read is what
+  // makes "prefer the parsable answer" possible: the pruning placeholder is appended
+  // AFTER the answer, so a running "last one wins" would always pick the placeholder.
+  for (const record of out) {
+    const chosen = chooseQuestionResult(factsByCallId.get(record.callId) ?? [])
+    if (chosen === undefined) continue
+    // `end` is when the ask truly finished — the chosen result's own time, never the
+    // time of a later rewrite.
+    record.end = chosen.time
+    applyChosenQuestionResult(record.detail, chosen)
+  }
+  return out
 }
 
 /**
@@ -1730,6 +2025,7 @@ export function foldSessionEvents(events: readonly unknown[], sessionId: string)
     toolCalls: foldToolCallTransitions(events, sessionId),
     messages: foldMessageRecords(events),
     waits: foldWaitSpans(events, sessionId),
+    questions: foldQuestionRecords(events),
     laneActivity: foldLaneLiveActivity(events),
   }
 }

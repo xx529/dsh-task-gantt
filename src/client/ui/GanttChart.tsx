@@ -41,12 +41,14 @@ import type {
   MessageSpan,
   TaskEvent,
   TimelineResponse,
+  QuestionDetail,
   TimelineLane,
   TimelineTask,
 } from '../../shared/contract.ts'
 import { format, t } from '../i18n.ts'
 import { activityTooltip, laneActivity } from './lane-activity.ts'
-import { clipBounds } from './overlay-position.ts'
+import { overlaySpace } from './overlay-position.ts'
+import type { OverlayBounds } from './overlay-position.ts'
 import { taskRunTimes } from './task-times.ts'
 import { messageRouteKey, uiLabel } from './labels.ts'
 import {
@@ -489,6 +491,12 @@ export function GanttChart(props: GanttChartProps): ReactNode {
   // Shared with the layout's density pass and the details panel, so a speaker id
   // can never be mapped one way while being drawn another way.
   const laneIdOf = useMemo(() => speakerLaneMapper(data.lanes), [data])
+  /** Lane id -> display name, for the question popover's "who asked". */
+  const laneNameOf = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const lane of data.lanes) map.set(lane.id, lane.name)
+    return map
+  }, [data])
   const markerCount = data.lanes.reduce((total, lane) => total + (lane.messages?.length ?? 0), 0)
   /** Only show the wait legend when the board actually has waits to explain. */
   const waitBandCount = data.lanes.reduce((total, lane) => total + (lane.waits?.length ?? 0), 0)
@@ -798,6 +806,7 @@ export function GanttChart(props: GanttChartProps): ReactNode {
                 <MessageMarker
                   key={`msg:${marker.key}`}
                   marker={marker}
+                  laneName={laneNameOf.get(marker.laneId) ?? marker.laneId}
                   paint={markerPaint(marker, laneColors, laneIdOf, userPaint, systemPaint)}
                   selected={marker.key === selectedMessageKey}
                   onSelect={onSelectMessage}
@@ -808,17 +817,25 @@ export function GanttChart(props: GanttChartProps): ReactNode {
                       return
                     }
                     const resolved = markerPaint(marker, laneColors, laneIdOf, userPaint, systemPaint)
+                    const questionDetail = marker.question
                     setHoveredPopover({
                       anchor: element,
                       kind: 'message',
-                      message: (
-                        <MessagePopoverBody
-                          kind={marker.kind}
-                          route={`${uiLabel(messageRouteKey(marker.kind, resolved.direction === 'outgoing'))} ${resolved.peerName}`}
-                          when={formatDateTime(marker.time, tzOffsetMinutes)}
-                          preview={marker.preview ?? ''}
-                        />
-                      ),
+                      message:
+                        marker.kind === 'question' ? (
+                          <QuestionPopoverBody
+                            laneName={laneNameOf.get(marker.laneId) ?? marker.laneId}
+                            when={formatDateTime(marker.time, tzOffsetMinutes)}
+                            question={questionDetail}
+                          />
+                        ) : (
+                          <MessagePopoverBody
+                            kind={marker.kind}
+                            route={`${uiLabel(messageRouteKey(marker.kind, resolved.direction === 'outgoing'))} ${resolved.peerName}`}
+                            when={formatDateTime(marker.time, tzOffsetMinutes)}
+                            preview={marker.preview ?? ''}
+                          />
+                        ),
                     })
                   }}
                   isPopoverAnchor={isPopoverAnchor}
@@ -1620,6 +1637,7 @@ export function markerPaint(
 
 function MessageMarker({
   marker,
+  laneName,
   paint,
   tzOffsetMinutes,
   selected,
@@ -1627,7 +1645,13 @@ function MessageMarker({
   onHoverChange,
   isPopoverAnchor,
 }: {
+  /**
+   * Carries `question` itself for `kind: 'question'` (see `MessageMarkerRect.question`) —
+   * which is why this component no longer takes it as a separate prop.
+   */
   marker: MessageMarkerRect
+  /** The owning lane's display name, for the question aria label. */
+  laneName: string
   paint: MarkerPaint
   tzOffsetMinutes: number
   selected: boolean
@@ -1646,8 +1670,33 @@ function MessageMarker({
    * turn tick and the human's bubble keep the old anchor: for them the visual CENTRE is
    * what reads, and shifting them 9.3px would be an unrequested move.
    */
-  const arrowMarker = marker.kind !== 'turn' && !isUser
-  const classes = ['dtg-msg', isUser ? 'dtg-msg-user' : 'dtg-msg-agent', outgoing ? 'dtg-msg-out' : 'dtg-msg-in']
+  const arrowMarker = marker.kind !== 'turn' && marker.kind !== 'question' && !isUser
+  /**
+   * HOW MUCH THE BOX IS PULLED LEFT, per shape — the anchor is not the same for all three.
+   *
+   *   - an ARROW: its TIP is the anchor (the user: "箭头是指向时间点"), so the box gives up
+   *     ARROW_TIP_INSET_PX and the tip lands on the instant.
+   *   - a QUESTION: a `?` has no tip and no direction — it marks "something happened AT this
+   *     instant", so it is the glyph's CENTRE that belongs on the coordinate. The centre of
+   *     a box of width `marker.w` sits half a box in, so the inset is exactly that half:
+   *     derived from the box, not typed in.
+   *   - a turn tick / the human's bubble: unchanged, box left on the coordinate.
+   */
+  const anchorInset =
+    marker.kind === 'question' ? marker.w / 2 : arrowMarker ? ARROW_TIP_INSET_PX : 0
+  /**
+   * A QUESTION is not the human's own prompt, even though its `to` is the user — it is the
+   * LANE asking them. `isUser` is derived from the payload's addressing and therefore says
+   * "the user is one end of this", which for a question is the wrong end to name. Letting
+   * the user class through also dragged in `.dtg-msg-user .dtg-msg-glyph` (specificity
+   * 0,2,0), which repainted the glyph with the primary ink and silently defeated the
+   * per-status colours below it. So a question gets its own class and neither of the two.
+   */
+  const isQuestion = marker.kind === 'question'
+  const classes = ['dtg-msg']
+  if (isQuestion) classes.push('dtg-msg-question')
+  else classes.push(isUser ? 'dtg-msg-user' : 'dtg-msg-agent')
+  classes.push(outgoing ? 'dtg-msg-out' : 'dtg-msg-in')
   if (marker.kind === 'turn') classes.push('dtg-msg-turn')
   /**
    * A dispatch is partially special-cased, and ONLY here: it keeps the ordinary arrow
@@ -1662,6 +1711,24 @@ function MessageMarker({
    * Naming it here means the next kind added has an obvious place to be handled.
    */
   if (marker.kind === 'dispatch') classes.push('dtg-msg-dispatch')
+  /**
+   * A QUESTION marker: the model asked the human something at this instant.
+   *
+   * The user: "有提问的时候…在那一刻要有一个 ? 的 icon…点击问号可以看到问题的详情、状态、
+   * 以及选择的结果". It is a POINT event with no direction and no counterpart lane, so it
+   * carries its own glyph and states its STATUS instead of a lane colour.
+   *
+   * Only three statuses exist upstream (`waiting` / `answered` / `failed`) — the contract
+   * says there is no timeout state and no cancel event, so no branch is invented for them.
+   * `unparsed` is orthogonal: the ask still happened, we just could not structure the
+   * reply, so it keeps its status styling and changes only what the popover shows.
+   */
+  const question = marker.question
+  const questionStatus = question?.status ?? 'answered'
+  if (isQuestion) {
+    classes.push(`dtg-msg-q-${questionStatus}`)
+    if (question?.unparsed === true) classes.push('dtg-msg-q-unparsed')
+  }
   if (selected) classes.push('dtg-msg-active')
   const when = formatDateTime(marker.time, tzOffsetMinutes)
   // The route is stated from THIS lane's point of view, so it is self-evident
@@ -1669,7 +1736,20 @@ function MessageMarker({
   const route = `${uiLabel(messageRouteKey(marker.kind, outgoing))} ${paint.peerName}`
   const peerNote = paint.peerMatched ? '' : ` · ${uiLabel('messagePeerUnknown')}`
   const dropped = marker.droppedBefore > 0 ? ` · ${uiLabel('messageOmitted', { count: marker.droppedBefore })}` : ''
-  const label = uiLabel('messageAria', { time: when, route, preview: marker.preview ?? '' })
+  const label =
+    marker.kind === 'question'
+      ? uiLabel('questionAria', {
+          time: when,
+          lane: laneName,
+          status: uiLabel(
+            questionStatus === 'waiting'
+              ? 'questionStatusWaiting'
+              : questionStatus === 'failed'
+                ? 'questionStatusFailed'
+                : 'questionStatusAnswered',
+          ),
+        })
+      : uiLabel('messageAria', { time: when, route, preview: marker.preview ?? '' })
   /**
    * The counterpart's lane FILL — the marker's ink.
    *
@@ -1711,7 +1791,7 @@ function MessageMarker({
      * had the SAME +9.29 offset, so shifting only one would have broken the symmetry that
      * made them comparable.
      */
-    left: arrowMarker ? marker.x - ARROW_TIP_INSET_PX : marker.x,
+    left: marker.x - anchorInset,
     top: marker.y,
     width: marker.w,
     height: marker.h,
@@ -1721,7 +1801,21 @@ function MessageMarker({
     // punched-out white disc with a two-tone ring and a dark glyph inside, which the
     // user described exactly: "变成一个白色框黑心的东西". A disc plus a ring plus a dark
     // centre is three shapes at 11px; the bubble alone is one, and it says what it means.
-    color: isUser ? 'var(--dsw-alias-label-primary)' : arrowInk,
+    /**
+     * A question is ALWAYS the vivid static red the user asked for: "这个问号要用红色
+     * 鲜艳的那种红". `--dsw-static-red-600` is the theme's most saturated red and is a
+     * STATIC token, so it does not flip between skins — measured #ec1313, 4.50:1 on the
+     * light surface and 3.49:1 on the dark one (see the spec for both).
+     *
+     * Colour no longer distinguishes the three states, so they are told apart by SHAPE and
+     * MOTION instead: `waiting` pulses, `failed` carries a dashed outline, `answered` is
+     * plain. See the `.dtg-msg-q-*` rules.
+     */
+    color: marker.kind === 'question'
+      ? 'var(--dsw-static-red-600)'
+      : isUser
+        ? 'var(--dsw-alias-label-primary)'
+        : arrowInk,
   }
   /**
    * A hairline of the PANEL SURFACE behind every marker.
@@ -1779,6 +1873,11 @@ function MessageMarker({
     >
       {marker.kind === 'turn' ? (
         <span className="dtg-msg-glyph" aria-hidden="true">▸</span>
+      ) : marker.kind === 'question' ? (
+        // The user asked for exactly this: "一个 ? 的 icon". A question mark is already the
+        // universal "someone is being asked something", so it needs no invented glyph — and
+        // at 11px a drawn icon would be less legible than the character.
+        <span className="dtg-msg-glyph dtg-msg-question-glyph" aria-hidden="true">?</span>
       ) : isUser ? (
         // The human's own prompt is not a lane transfer, so it does not get an arrow.
         // It used to draw the same arrow in the punched-out disc, which the user read as
@@ -1871,30 +1970,139 @@ function HoverPopover({
   /** The body. Supplied by the caller so ONE popover serves tasks and markers. */
   children: ReactNode
 }): ReactNode {
+  const ref = useRef<HTMLDivElement | null>(null)
+  const [metrics, setMetrics] = useState<{ natural: number; childBottoms: number[] } | null>(null)
+  /**
+   * Measure the body BEFORE the browser paints, then position with the real height.
+   *
+   * The height decides whether the popover flips above the anchor and how much of the body
+   * is visible, so guessing it would either flip a short tooltip for no reason or clip a
+   * tall one. `useLayoutEffect` runs after the DOM is built but before paint, so the
+   * second render is the only one the user sees — there is no jump.
+   */
+  useLayoutEffect(() => {
+    const element = ref.current
+    if (element === null) return
+    const previous = element.style.maxHeight
+    element.style.maxHeight = 'none'
+    /**
+     * The BORDER box, which is what `max-height` bounds: `box-sizing` is border-box here,
+     * so the box's own border and padding come out of the allowance. Using `scrollHeight`
+     * instead measures content + padding and leaves the 2px border unaccounted for, which
+     * left every popover 2px too short and therefore permanently scrollable — measured on a
+     * SINGLE question, which should never scroll at all.
+     */
+    const height = Math.ceil(element.getBoundingClientRect().height)
+    /**
+     * WHERE THE CONTENT'S OWN BLOCKS END, measured from the border box's top while the box
+     * is unconstrained. The rendered height is later snapped to one of these, because a
+     * scroll container always cuts SOMEWHERE and cutting between two blocks is the only
+     * choice that never slices a line of text — which is the user's "被切在半行上".
+     */
+    const top = element.getBoundingClientRect().top
+    const childBottoms = Array.from(element.children).map((child) =>
+      Math.ceil(child.getBoundingClientRect().bottom - top),
+    )
+    element.style.maxHeight = previous
+    setMetrics((current) =>
+      current !== null && current.natural === height && current.childBottoms.join() === childBottoms.join()
+        ? current
+        : { natural: height, childBottoms },
+    )
+  }, [children])
+
   const rect = anchor.getBoundingClientRect()
   const GAP = 6
   const MARGIN = 8
   const MAX_W = 280
   /**
-   * The rectangle the popover has to stay inside.
+   * WHERE the popover may sit — expressed in the coordinate space its `top`/`left` are
+   * measured in, which is the viewport only while `position: fixed` resolves against the
+   * viewport. `overlaySpace` returns the containing block's offset (0 when there is none)
+   * so the same numbers land where the viewport arithmetic says, and the containing block's
+   * box so we never place the popover outside something that actually clips it.
    *
-   * The viewport is NOT enough. The panel that hosts this chart can itself be
-   * `overflow: hidden` and much narrower than the window — measured in the demo, an
-   * ancestor was 381px wide while the popover wanted 280px at x=339, so 239px of it
-   * (including every line of text) was clipped away. Walking up to the nearest
-   * clipping ancestor and clamping to ITS box is what actually keeps the popover
-   * on screen; the viewport is only the fallback when nothing clips.
+   * The bounds are the INTERSECTION of the viewport and that box. Clamping to the panel
+   * alone — which this used to do — is the trap the menu hit: a dropdown may overflow its
+   * panel and stay visible, so the viewport is the real limit, and the ancestor box only
+   * matters when a transform makes it a containing block that clips us.
    */
-  const bounds = clipBounds(anchor)
+  const space = overlaySpace(anchor)
+  const viewport: OverlayBounds = {
+    left: -space.offsetX,
+    right: (typeof window === 'undefined' ? 1024 : window.innerWidth) - space.offsetX,
+    top: -space.offsetY,
+    bottom: (typeof window === 'undefined' ? 768 : window.innerHeight) - space.offsetY,
+    width: 0,
+  }
+  viewport.width = viewport.right - viewport.left
+  const container: OverlayBounds = {
+    left: space.bounds.left - space.offsetX,
+    right: space.bounds.right - space.offsetX,
+    top: space.bounds.top - space.offsetY,
+    bottom: space.bounds.bottom - space.offsetY,
+    width: 0,
+  }
+  container.width = container.right - container.left
+  const bounds: OverlayBounds = {
+    left: Math.max(viewport.left, container.left),
+    right: Math.min(viewport.right, container.right),
+    top: Math.max(viewport.top, container.top),
+    bottom: Math.min(viewport.bottom, container.bottom),
+    width: 0,
+  }
+  bounds.width = bounds.right - bounds.left
+
+  const anchorTop = rect.top - space.offsetY
+  const anchorBottom = rect.bottom - space.offsetY
+  const anchorLeft = rect.left - space.offsetX
   const width = Math.min(MAX_W, Math.max(120, bounds.width - 2 * MARGIN))
-  const flipAbove = rect.bottom + GAP + 120 > bounds.bottom
+
+  /**
+   * The height, in three rules applied in order:
+   *
+   *  1. never taller than the body needs, so a short popover never scrolls;
+   *  2. never taller than the room between the anchor and the viewport edge;
+   *  3. when it MUST scroll, make the body box a WHOLE NUMBER OF LINE BOXES, so the bottom
+   *     edge falls between lines instead of slicing one in half — the user's "被切在半行上".
+   *     A scroll container always cuts somewhere; this makes the cut land on a boundary.
+   */
+  const natural = metrics?.natural ?? null
+  const wanted = Math.min(POPOVER_MAX_PX, natural ?? POPOVER_MAX_PX)
+  const roomBelow = bounds.bottom - MARGIN - (anchorBottom + GAP)
+  const roomAbove = anchorTop - GAP - MARGIN - bounds.top
+  // Flip only when it helps: below cannot hold what we want AND above genuinely has more.
+  const flipAbove = roomBelow < wanted && roomAbove > roomBelow
+  const room = Math.max(0, flipAbove ? roomAbove : roomBelow)
+  const capped = Math.min(POPOVER_MAX_PX, room)
+  const budget = Math.max(0, capped - POPOVER_CHROME_PX)
+  /**
+   * Snap the visible content to the LAST BLOCK that fits, so the bottom edge falls between
+   * blocks instead of through a line. Falls back to whole line boxes when not even the
+   * first block fits, and never exceeds the room, so the popover can never leave the
+   * viewport to avoid a cut.
+   */
+  const limit = POPOVER_INSET_TOP_PX + budget
+  const fitting = (metrics?.childBottoms ?? []).filter((bottom) => bottom <= limit + 0.5)
+  const snapped = fitting.length > 0 ? Math.max(...fitting) : null
+  const content =
+    snapped === null
+      ? Math.max(1, Math.floor(budget / POPOVER_LINE_PX)) * POPOVER_LINE_PX
+      : Math.max(1, snapped - POPOVER_INSET_TOP_PX)
+  const onGrid = content + POPOVER_CHROME_PX
+  const maxHeight = Math.max(0, Math.min(natural ?? onGrid, onGrid, room))
+
   const maxLeft = Math.max(bounds.left + MARGIN, bounds.right - width - MARGIN)
-  const left = Math.min(Math.max(bounds.left + MARGIN, rect.left), maxLeft)
-  const style: CSSProperties = flipAbove
-    ? { left, bottom: Math.max(0, bounds.bottom - rect.top + GAP), width }
-    : { left, top: rect.bottom + GAP, width }
+  const left = Math.min(Math.max(bounds.left + MARGIN, anchorLeft), maxLeft)
+  // `top` only: a `bottom` offset is measured from the containing block's bottom edge, which
+  // misplaces the popover whenever that block is not the viewport (the menu hit this).
+  const top = flipAbove
+    ? Math.max(bounds.top + MARGIN, anchorTop - GAP - maxHeight)
+    : Math.min(bounds.bottom - MARGIN - maxHeight, anchorBottom + GAP)
+
+  const style: CSSProperties = { left, top, width, maxHeight }
   return (
-    <div className="dtg-popover" style={style} role="tooltip">
+    <div className="dtg-popover" style={style} ref={ref} role="tooltip">
       {children}
     </div>
   )
@@ -2021,6 +2229,138 @@ function MessagePopoverBody({
 }
 
 /**
+ * The detail view for a `?` marker: WHO asked, WHEN, and every question with its outcome.
+ *
+ * The user: "点击问号可以看到问题的详情、状态、以及选择的结果".
+ *
+ * Three things this must NOT do, all of them from the contract:
+ *
+ *   1. **Never invent a timeout or a cancel branch.** Only `waiting` / `answered` /
+ *      `failed` exist upstream — there is no timeout state and no cancel event.
+ *   2. **Never imply the human chose nothing.** An empty `selected` is a REAL outcome: the
+ *      contract records people typing instead of clicking, and `custom` is where that text
+ *      lives. So the empty case is reported as "the result recorded no option", which
+ *      describes the DATA rather than asserting what the person did.
+ *   3. **Never re-read the journal for the result.** Context compaction appends a second
+ *      `tool/result` for the same callId containing a "[已裁剪]" placeholder; the host
+ *      already resolves one result per callId (preferring the parseable, earliest one) and
+ *      makes `unparsed` and `selected` mutually exclusive. This view renders `status` and
+ *      `unparsed` as given — picking "the last result" here is the bug that was fixed.
+ *
+ * 1-4 questions per call, so the body is a list; answers arrive keyed by question id and
+ * may be out of order or absent, which is why selection is matched by LABEL per question
+ * and never by position.
+ */
+export function QuestionPopoverBody({
+  laneName,
+  when,
+  question,
+}: {
+  laneName: string
+  when: string
+  question: QuestionDetail | undefined
+}): ReactNode {
+  const status = question?.status ?? 'answered'
+  const statusKey =
+    status === 'waiting'
+      ? 'questionStatusWaiting'
+      : status === 'failed'
+        ? 'questionStatusFailed'
+        : 'questionStatusAnswered'
+  const items = question?.questions ?? []
+  /**
+   * QUESTION + ANSWER, and nothing else.
+   *
+   * The user, on the previous version: "里面显示内容不合适，应该是显示 问题 + 答案…如果还在等待
+   * 就是只有问题". What it showed instead was every option with its full description — the
+   * long "read the source, read the docs, take notes, produce findings.md" text they
+   * called out. So an answered question now prints the option LABELS that were chosen and
+   * the typed text, and never the unchosen options or their descriptions.
+   *
+   * `waiting` prints the questions ALONE: there is no answer to show, and listing the
+   * choices would imply one is coming from a list the human has not seen.
+   */
+  return (
+    <>
+      <div className="dtg-popover-title">{laneName}</div>
+      <div className="dtg-popover-meta">
+        {uiLabel('questionRoute')} · {when}
+      </div>
+      <div className={`dtg-q-status dtg-q-status-${status}`}>{uiLabel(statusKey)}</div>
+      {status === 'waiting' ? (
+        <>
+          {/* "只有问题" — the status chip above already says 等待回复, so no second line
+              of prose and, deliberately, NO options: none of them has been answered. */}
+          {items.map((item, index) => (
+            <div className="dtg-q-item" key={item.id === '' ? `q${index}` : item.id}>
+              {item.header === undefined || item.header === '' ? null : (
+                <div className="dtg-q-header">{item.header}</div>
+              )}
+              <div className="dtg-q-prompt">{item.prompt}</div>
+            </div>
+          ))}
+        </>
+      ) : null}
+      {status === 'failed' ? (
+        <>
+          {/* The measured failure is `UserQuestionError/DELEGATED_CALLER`: the call was
+              rejected ~11ms in, so the question never reached the human. Say that rather
+              than showing empty choices, which would read as "nobody answered". */}
+          <div className="dtg-popover-meta">{uiLabel('questionFailedHint')}</div>
+          {question?.errorCode === undefined ? null : (
+            <div className="dtg-popover-body">{question.errorCode}</div>
+          )}
+          {question?.errorText === undefined ? null : (
+            <div className="dtg-popover-body">{question.errorText}</div>
+          )}
+        </>
+      ) : null}
+      {status !== 'waiting' && status !== 'failed' && question?.unparsed === true ? (
+        <>
+          <div className="dtg-popover-desc">{uiLabel('questionUnparsed')}</div>
+          <div className="dtg-popover-body">{question.raw ?? ''}</div>
+        </>
+      ) : null}
+      {status !== 'waiting' && status !== 'failed' && question?.unparsed !== true
+        ? items.map((item, index) => (
+            <div className="dtg-q-item" key={item.id === '' ? `q${index}` : item.id}>
+              {item.header === undefined || item.header === '' ? null : (
+                <div className="dtg-q-header">{item.header}</div>
+              )}
+              <div className="dtg-q-prompt">{item.prompt}</div>
+              <div className="dtg-q-answer">
+                <span className="dtg-q-answer-label">{uiLabel('questionAnswerLabel')}</span>
+                {item.selected.length === 0 ? null : (
+                  <div className="dtg-q-choices">
+                    {/* `selected` holds option LABELS — matched by value, never by index,
+                        because answers arrive out of order and may omit questions. */}
+                    {item.selected.map((label) => (
+                      <span className="dtg-q-choice" key={label}>
+                        {label}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {item.custom === undefined || item.custom === '' ? null : (
+                  <div className="dtg-q-custom">
+                    <span className="dtg-q-custom-label">{uiLabel('questionCustomLabel')}</span>
+                    {item.custom}
+                  </div>
+                )}
+                {item.selected.length === 0 && (item.custom === undefined || item.custom === '') ? (
+                  // An empty `selected` is a REAL outcome, so the wording describes the
+                  // RESULT and never asserts what the person did.
+                  <div className="dtg-q-none">{uiLabel('questionNoSelectionRecorded')}</div>
+                ) : null}
+              </div>
+            </div>
+          ))
+        : null}
+    </>
+  )
+}
+
+/**
  * The lane arrow. ONE style for both directions.
  *
  * The user: "发送和接收的箭头 icon 样式应该一致，现在发送略粗，接收比较细，统一一下",
@@ -2115,6 +2455,22 @@ const ARROW_PATH = 'M3.3 9.7 L6.6 6.4 M3.7 3 H9.8 V9.1'
  * the diagonal and by the marker's own shape, never by weight. See {@link ArrowIcon}.
  */
 const ARROW_STROKE = 2
+
+/**
+ * The popover's height budget.
+ *
+ * `POPOVER_LINE_PX` is the question body's dominant line box — 12px type on an 18px line,
+ * i.e. `--dsw-font-xxs-12` — and it is the unit the scroll height is rounded to so the
+ * bottom edge never slices a line. `POPOVER_CHROME_PX` is `.dtg-popover`'s own padding
+ * (6 + 6) plus its border (1 + 1), which the box adds around the scrolling content.
+ * `POPOVER_MAX_PX` is generous on purpose: four answered questions measure ~400-550px, and
+ * the point of this change is that they read WITHOUT scrolling whenever the panel allows.
+ */
+const POPOVER_LINE_PX = 18
+const POPOVER_CHROME_PX = 14
+/** Border (1) + padding (6) above the scrolling content of `.dtg-popover`. */
+const POPOVER_INSET_TOP_PX = 7
+const POPOVER_MAX_PX = 560
 
 /**
  * How the received arrow is derived from the sent one.

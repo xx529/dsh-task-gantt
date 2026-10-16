@@ -519,6 +519,41 @@ function userPromptSpansFrom(fold: FoldedSession): MessageSpan[] {
 }
 
 /**
+ * One log's questions to a HUMAN, as message spans.
+ *
+ * The marker belongs on the exchange row at the instant the model asked, so it is
+ * shaped as a `MessageSpan`: `from` is the asking agent, `to` is the human
+ * (`{ kind: 'user', id: 'user', name: 'you' }`, the same speaker the prompt spans use),
+ * and `end` is `null` while the ask is still open — the span is a live duration, not an
+ * instant, because a question CAN sit unanswered.
+ *
+ * Only the asking lane carries it: there is no `'user'` lane to dual-place onto, and
+ * inventing one would put a row on the chart that no session owns.
+ *
+ * @param fold - the folded log that carried the calls.
+ * @param asker - the speaker of the lane that owns that log.
+ * @returns ascending spans; `[]` when the log asked nothing.
+ */
+function questionSpansFrom(fold: FoldedSession, asker: SpanSpeaker): MessageSpan[] {
+  return fold.questions.map((record) => {
+    const first = record.detail.questions[0]
+    const span: MessageSpan = {
+      kind: 'question',
+      time: record.time,
+      end: record.end,
+      from: asker,
+      to: { kind: 'user', id: 'user', name: 'you' },
+      messageId: record.callId,
+      sessionId: fold.sessionId,
+      question: record.detail,
+    }
+    const preview = first?.prompt !== undefined && first.prompt !== '' ? first.prompt : first?.header
+    if (preview !== undefined && preview !== '') span.preview = preview
+    return span
+  })
+}
+
+/**
  * One log's turns as message spans, so a lane records "this teammate was
  * working from t₀ to t₁" alongside what it sent.
  *
@@ -558,11 +593,64 @@ function speakerOfLane(lane: TimelineLane): SpanSpeaker {
 }
 
 /** Ascending by `(time, end)`, with `turn` under `message`/`user-prompt`. */
-function sortMessageSpans(spans: MessageSpan[]): MessageSpan[] {
-  // A dispatch sits with the exchanges (it IS one, in the parent's direction) and
-  // before the bare prompts.
-  const rank = (span: MessageSpan): number =>
-    span.kind === 'turn' ? 0 : span.kind === 'message' ? 1 : span.kind === 'dispatch' ? 2 : 3
+/**
+ * Ascending by `(time, rank)`.
+ *
+ * ## The rank order is load-bearing, not cosmetic
+ *
+ * The client thins each lane's markers to one per `MESSAGE_MARKER_MIN_GAP_PX`
+ * (9 px) bucket and, inside a bucket, **keeps whichever span it meets first** — which
+ * under this ordering is simply the earlier element of this array. At a typical zoom
+ * 9 px is about **3.8 minutes**, so this tie-break decides a MINUTE-SCALE conflict
+ * window, not a millisecond one.
+ *
+ * That is why the two RARE, structural kinds (`question`, `dispatch`) outrank the
+ * routine `message`: with the old order (`message` 1, `question` 2) a question asked
+ * two minutes after a normal message landed in the same bucket, lost, and the "?"
+ * marker the user asked for was never drawn at all — a silent, invisible loss.
+ * Rarer-and-more-informative wins the bucket; the routine message is the one that
+ * gets summarised into the `+N` badge, which is exactly what that badge is for.
+ *
+ * | rank | kind | why |
+ * |---|---|---|
+ * | 0 | `turn` | the band a lane's work is drawn on; never a marker |
+ * | 1 | `question` | rare, structural, and the entire point of the marker |
+ * | 2 | `dispatch` | rare, structural (a hand-off) |
+ * | 3 | `message` | routine; the safest thing to summarise away |
+ * | 4 | `user-prompt` | the human's own turn boundary, newest in the row |
+ *
+ * NOTHING IS DROPPED HERE. This function only orders the array; every span stays in
+ * `lane.messages`, so the client can still count what it thinned and keep its `+N`
+ * badge honest.
+ *
+ * Exported so the ordering can be LOCKED BY A TEST against the production function
+ * rather than against a copy of its table: a test that re-derives the ranks passes
+ * even after someone reverts them, which is a lock with no teeth.
+ *
+ * @param spans - one lane's spans, mutated and returned.
+ * @returns the same array, sorted.
+ */
+export function sortMessageSpans(spans: MessageSpan[]): MessageSpan[] {
+  // Identical to the client's own `messageKindRank()`
+  // (`src/client/ui/timeline-layout.ts`): the two tables MUST stay in step, and the
+  // client cannot import this module. The last two cases are spelled out rather than
+  // left to `default` so the pair is literally the same list.
+  const rank = (span: MessageSpan): number => {
+    switch (span.kind) {
+      case 'turn':
+        return 0
+      case 'question':
+        return 1
+      case 'dispatch':
+        return 2
+      case 'message':
+        return 3
+      case 'user-prompt':
+        return 4
+      default:
+        return 5
+    }
+  }
   return spans.sort((a, b) => a.time - b.time || rank(a) - rank(b))
 }
 
@@ -1026,6 +1114,19 @@ async function deriveTimeline(ctx: Context, sessionId: string, generatedAt: numb
       const target = span.to
       if (target !== undefined && laneById.has(target.id)) {
         place(target.id, `prompt:${span.time}:${span.preview ?? ''}`, span)
+      }
+    }
+
+    // Questions to a human. The asking lane only — `to` is the human, who has no lane,
+    // so there is nothing to dual-place onto. `spanByKey` still dedupes, because the
+    // same call could in principle be visible from more than one log.
+    if (ownLane !== undefined) {
+      for (const span of questionSpansFrom(fold, speakerOfLane(ownLane))) {
+        const key = `question\u0000${span.messageId ?? `${span.time}\u0000${fold.sessionId}`}`
+        if (spanByKey.has(key)) continue
+        spanByKey.set(key, span)
+        uniqueMessages += 1
+        place(ownLaneId, `question:${span.messageId ?? span.time}`, span)
       }
     }
   }

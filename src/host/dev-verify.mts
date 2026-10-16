@@ -29,6 +29,7 @@ import {
   dateTaskFromToolCalls,
   foldMessageRecords,
   foldSessionEvents,
+  foldQuestionRecords,
   foldSubagentDispatches,
   foldTeamEvents,
   toolActivityKind,
@@ -215,10 +216,16 @@ assert(
   messages.userPrompts.every((prompt) => prompt.sourceKind === 'user'),
   'every user prompt was discriminated by source.kind === "user"',
 )
-assert(
-  messages.diagnostics.injectedUserMessages > 0,
-  `runtime-injected user/message events were excluded (${messages.diagnostics.injectedUserMessages})`,
-)
+if (isTeamWorkspace) {
+  assert(
+    messages.diagnostics.injectedUserMessages > 0,
+    `runtime-injected user/message events were excluded (${messages.diagnostics.injectedUserMessages})`,
+  )
+} else {
+  console.log(
+    `  (no team log in this workspace; injected-user-message lock skipped — saw ${messages.diagnostics.injectedUserMessages})`,
+  )
+}
 
 // A delivery whose queue is unreadable must still be emitted, with no sender.
 const orphanDelivery = foldMessageRecords([
@@ -596,6 +603,134 @@ assert(
   dispatchesSeen === 0 || loaded.some((s) => foldSubagentDispatches(s.events).every((d) => d.childId !== '')),
   'every dispatch that survived carries a resolved child session id',
 )
+
+// ---- questions to a human over the REAL logs -------------------------------
+// Two things are locked here, and the second is the one that bit us: DSH's context
+// compaction APPENDS a replacement `tool/result` for the same callId (text starts
+// `[dsh-jev-compaction]`), ~28 minutes after the real answer. A naive last-write-wins
+// fold then reported a record that was both `unparsed` and holding a selection, with
+// `end` pushed 28 minutes late.
+console.log('\n=== questions to a human (real logs) ===')
+let questionTotal = 0
+let duplicated = 0
+let placeholderStoleEnd = 0
+const questionStatus = new Map<string, number>()
+for (const session of loaded) {
+  const records = foldQuestionRecords(session.events)
+  if (records.length === 0) continue
+  // Every result time per callId, in log order, from the raw events.
+  const timesByCallId = new Map<string, number[]>()
+  const textByCallId = new Map<string, string[]>()
+  for (const event of session.events) {
+    const e = event as { type?: unknown; time?: unknown; data?: unknown }
+    if (e.type !== 'tool/result' || typeof e.time !== 'number') continue
+    const data = (e.data ?? {}) as { message?: { source?: { callId?: unknown }; content?: unknown } }
+    const callId = data.message?.source?.callId
+    if (typeof callId !== 'string') continue
+    const text = Array.isArray(data.message?.content)
+      ? data.message.content.map((b) => String((b as { text?: unknown }).text ?? '')).join('')
+      : ''
+    timesByCallId.set(callId, [...(timesByCallId.get(callId) ?? []), e.time])
+    textByCallId.set(callId, [...(textByCallId.get(callId) ?? []), text])
+  }
+  for (const record of records) {
+    questionTotal += 1
+    questionStatus.set(record.detail.status, (questionStatus.get(record.detail.status) ?? 0) + 1)
+    // Invariant: never both.
+    const selected = record.detail.questions.some((q) => q.selected.length > 0)
+    if (record.detail.unparsed === true && selected) {
+      assert(false, `question ${record.callId} is BOTH unparsed and holding a selection`)
+    }
+    if (record.detail.status === 'waiting') continue
+    const times = timesByCallId.get(record.callId) ?? []
+    if (times.length > 1) {
+      duplicated += 1
+      // The chosen end must be an EARLIER result than the last one whenever an earlier
+      // result parsed — i.e. the rewrite must not have stolen it.
+      const texts = textByCallId.get(record.callId) ?? []
+      const earliestParsable = texts.findIndex((t) => {
+        try {
+          return Array.isArray(JSON.parse(t)?.answers)
+        } catch {
+          return false
+        }
+      })
+      if (earliestParsable !== -1 && record.end === times[times.length - 1]) placeholderStoleEnd += 1
+    }
+  }
+}
+console.log(`  questions folded: ${questionTotal}; status tally: ${JSON.stringify([...questionStatus])}`)
+console.log(`  calls whose callId had several tool/results (compaction rewrites): ${duplicated}`)
+assert(
+  questionTotal > 0,
+  `the real logs contain questions to a human (${questionTotal})`,
+)
+assert(
+  placeholderStoleEnd === 0,
+  `no question's \`end\` was taken from a later compaction rewrite (offenders: ${placeholderStoleEnd})`,
+)
+assert(
+  ![...questionStatus.keys()].some((k) => !['waiting', 'answered', 'failed'].includes(k)),
+  'every folded question is in one of the three documented states',
+)
+
+// ---- question markers vs the client's thinning (real logs) ------------------
+// Two facts decide whether the user's "?" can be thinned away, and only ONE of them
+// is ours:
+//
+//   * the host drops NOTHING — it only orders `lane.messages`, so the client's `+N`
+//     badge can still count what it thins (this is the part asserted below);
+//   * the client keeps the FIRST candidate per (direction, 9px bucket), ordered by
+//     TIME with the array index breaking ties — so the host rank can only ever decide
+//     an EXACT tie. Measured here: 0 exact ties across all real pairs, while many sit
+//     inside the bucket window. That gap needs the client comparator, and is reported
+//     rather than asserted because it is ui-2's file.
+console.log('\n=== question markers vs the 9px thinning (real logs) ===')
+{
+  const WINDOW_MS = 3.8 * 60 * 1000
+  let pairs = 0
+  let inWindow = 0
+  let exactTies = 0
+  let questionsFolded = 0
+  let questionsOnALane = 0
+  for (const session of loaded) {
+    const questions = foldQuestionRecords(session.events)
+    if (questions.length === 0) continue
+    questionsFolded += questions.length
+    const messages = foldMessageRecords(session.events).records
+      .map((record) => record.queuedAt ?? record.deliveredAt)
+      .filter((time): time is number => typeof time === 'number')
+    for (const question of questions) {
+      for (const message of messages) {
+        pairs += 1
+        const gap = Math.abs(question.time - message)
+        if (gap === 0) exactTies += 1
+        if (gap < WINDOW_MS) inWindow += 1
+      }
+    }
+    // The host must place every question on some lane — no host-side thinning.
+    const response = await buildTimeline(stubCtx, session.id)
+    const placed = response.lanes.reduce(
+      (total, lane) => total + lane.messages.filter((span) => span.kind === 'question').length,
+      0,
+    )
+    questionsOnALane += placed
+  }
+  console.log(`  (message, question) pairs: ${pairs}; inside the 3.8-min window: ${inWindow}; EXACT ties: ${exactTies}`)
+  console.log(`  questions folded: ${questionsFolded}; placed on a lane: ${questionsOnALane}`)
+  assert(
+    questionsFolded === 0 || questionsOnALane >= questionsFolded,
+    'the host places every question on a lane (thinning is the client\'s job, so the +N count stays honest)',
+  )
+  if (inWindow > 0 && exactTies === 0) {
+    console.log(
+      '  NOTE: the rank can only decide exact ties, and there are none here — a question',
+    )
+    console.log(
+      '        asked AFTER a message in the same bucket still needs the CLIENT comparator.',
+    )
+  }
+}
 
 console.log(failures === 0 ? '\nALL CHECKS PASSED' : `\n${failures} CHECK(S) FAILED`)
 process.exitCode = failures === 0 ? 0 : 1

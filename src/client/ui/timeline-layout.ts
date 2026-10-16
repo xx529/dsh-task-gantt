@@ -185,6 +185,7 @@ import {
   type ActivitySpan,
   type LaneColorTokens,
   type MessageSpan,
+  type QuestionDetail,
   type SpanSpeaker,
   type TimelineLane,
   type TimelineResponse,
@@ -794,6 +795,38 @@ export interface TimelineLayout {
  * markers (reported in {@link MessageMarkerRect.droppedBefore}) but never moves
  * one, so a marker's position is always the true moment of that message.
  */
+/**
+ * Which message kind wins when two candidates compete for the SAME rendered slot.
+ *
+ * This mirrors the host's `sortMessageSpans` rank on purpose, and the mirroring is a
+ * deliberate cost: the client cannot import a host module, and the ordering has to be
+ * applied to SPANS the host already sorted, so the two must agree. The host's table is
+ * `turn 0 / message 1 / dispatch|question 2 / user-prompt 3`; here `question` is promoted
+ * ABOVE `dispatch` and `message` because the slot is scarce and an ask is the rarest and
+ * most informative thing that can occupy it. When the host's rank changes, change this
+ * one — and note that the host's own ordering cannot substitute for it: that ordering only
+ * breaks ties within the same millisecond, while these collisions are minutes wide.
+ *
+ * A test must NOT restate this table; it would then pass for any values in it. The
+ * behaviour it buys is asserted instead (a question survives a nearby message).
+ */
+function messageKindRank(kind: MessageSpan['kind']): number {
+  switch (kind) {
+    case 'turn':
+      return 0
+    case 'question':
+      return 1
+    case 'dispatch':
+      return 2
+    case 'message':
+      return 3
+    case 'user-prompt':
+      return 4
+    default:
+      return 5
+  }
+}
+
 export interface MessageMarkerRect {
   laneId: string
   laneIndex: number
@@ -805,6 +838,17 @@ export interface MessageMarkerRect {
   from: SpanSpeaker
   to?: SpanSpeaker
   preview?: string
+  /**
+   * The ask's detail, for `kind: 'question'` only — copied from the span so the renderer
+   * has ONE source of truth.
+   *
+   * It is deliberately carried here rather than re-looked-up by the renderer from the
+   * payload: a second lookup keyed on something like `laneId + time` is a second source of
+   * truth, and it silently disagrees the moment the layout filters, re-times or decimates a
+   * marker. Decimation is exactly such a case — a dropped marker must not leave its detail
+   * reachable at that instant.
+   */
+  question?: QuestionDetail
   /**
    * Which way this message points ON THIS LANE (sent from here vs received
    * here). Resolved while laying out, so the renderer and the detail view agree
@@ -1232,25 +1276,97 @@ export function decimateMarkers(
   // slightly tighter spacing between two markers of DIFFERENT directions is a
   // cosmetic cost, and that is the trade this makes on purpose.
   const usedBuckets = new Set<string>()
-  const lastXByKind = new Map<string, number>()
+  /**
+   * The x of every marker already kept, per direction.
+   *
+   * It replaces a single "last kept x". That worked only while candidates were walked in
+   * ascending x order, where "within the gap of the last kept" and "within the gap of any
+   * kept" are the same statement. The winners are now walked in RANK order, so a later
+   * rank can sit LEFT of an already-kept one — and the old `x - lastX < gapPx` then read
+   * that negative delta as "too close" and dropped the EARLIER marker. Measured as a real
+   * regression: a turn at x=50 (rank 0) kept first, then a message at x=40 was discarded
+   * although they are 10px apart, i.e. outside the 9px gap. Absolute distance against every
+   * kept x is order-independent and keeps the original meaning.
+   */
+  const keptXByKind = new Map<string, number[]>()
   const kindOf = (span: MessageSpan): string => {
     if (input.laneId === undefined || input.laneIdOf === undefined) return 'any'
     return resolveMessageDirection(span, input.laneId, input.laneIdOf).direction
   }
+  const xOf = (span: MessageSpan): number =>
+    (num(span.time, input.windowStart) - input.windowStart) / msPerPx
+  const bucketOf = (x: number): number =>
+    spanPx > 0 ? clamp(Math.floor(x / bucketSizePx), 0, bucketCount - 1) : 0
+  // The rank is read off the SPAN, while `kindOf` above returns the DIRECTION.
+  const rankOf = (span: MessageSpan): number => messageKindRank(span.kind)
+
+  /**
+   * ONE REPRESENTATIVE PER (direction, bucket), and the winner is decided by KIND FIRST.
+   *
+   * The previous version took the EARLIEST span of each bucket. That is wrong for a
+   * question, and the failure is not exotic: the host ranks `message` above `question`, so
+   * whenever a message sits within one bucket of an ask, the message took the slot and the
+   * `?` was never drawn — the user asked for a question mark at that instant and got
+   * nothing (measured with `message@T` + `question@T+120s`: the message kept, the question
+   * dropped, and the message carried the `+N`). Changing only the host's rank cannot fix
+   * it: that rank is the TIE-BREAK inside the same millisecond, and the real collisions are
+   * seconds to minutes apart.
+   *
+   * So the slot goes to the most informative kind. Ties inside one kind still go to the
+   * earliest span, exactly as before.
+   */
+  const bestByBucket = new Map<string, number>()
+  const beats = (candidate: number, incumbent: number): boolean => {
+    const a = list[candidate]
+    const b = list[incumbent]
+    if (a === undefined) return false
+    if (b === undefined) return true
+    const ra = rankOf(a)
+    const rb = rankOf(b)
+    if (ra !== rb) return ra < rb
+    const ta = num(a.time, 0)
+    const tb = num(b.time, 0)
+    if (ta !== tb) return ta < tb
+    return candidate < incumbent
+  }
   for (const index of ordered) {
+    const span = list[index]
+    if (span === undefined) continue
+    const bucketKey = `${kindOf(span)}#${bucketOf(xOf(span))}`
+    const incumbent = bestByBucket.get(bucketKey)
+    if (incumbent === undefined || beats(index, incumbent)) bestByBucket.set(bucketKey, index)
+  }
+
+  /**
+   * The winners are then walked in RANK order, not time order, because the 9px cursor
+   * below is what actually kills a marker that lost its bucket — and a question must not
+   * lose that race either. A message 4px before a question is in a DIFFERENT bucket, so
+   * bucket occupancy alone would not save the `?`; giving higher ranks the cursor first
+   * does. Everything dropped in either phase is still counted, so the `+N` badge stays
+   * honest and no marker disappears silently.
+   */
+  const winners = [...bestByBucket.values()].sort((a, b) => {
+    const ra = list[a] === undefined ? 99 : rankOf(list[a] as MessageSpan)
+    const rb = list[b] === undefined ? 99 : rankOf(list[b] as MessageSpan)
+    if (ra !== rb) return ra - rb
+    const xa = list[a] === undefined ? 0 : xOf(list[a] as MessageSpan)
+    const xb = list[b] === undefined ? 0 : xOf(list[b] as MessageSpan)
+    return xa === xb ? a - b : xa - xb
+  })
+  for (const index of winners) {
     if (kept.length >= maxPerLane) break
     const span = list[index]
     if (span === undefined) continue
-    const x = (num(span.time, input.windowStart) - input.windowStart) / msPerPx
-    const bucket = spanPx > 0 ? clamp(Math.floor(x / bucketSizePx), 0, bucketCount - 1) : 0
+    const x = xOf(span)
     const kind = kindOf(span)
-    const bucketKey = `${kind}#${bucket}`
+    const bucketKey = `${kind}#${bucketOf(x)}`
     if (usedBuckets.has(bucketKey)) continue
-    const lastX = lastXByKind.get(kind)
-    if (lastX !== undefined && x - lastX < gapPx) continue
+    const keptXs = keptXByKind.get(kind)
+    if (keptXs !== undefined && keptXs.some((keptX) => Math.abs(keptX - x) < gapPx)) continue
     usedBuckets.add(bucketKey)
     kept.push(index)
-    lastXByKind.set(kind, x)
+    if (keptXs === undefined) keptXByKind.set(kind, [x])
+    else keptXs.push(x)
   }
 
   // ---- backfill: never let a whole direction vanish ----------------------
@@ -2066,6 +2182,7 @@ export function layoutTimeline(
         from: message.from,
         to: message.to,
         preview: message.preview,
+        question: message.question,
         // LANE-QUALIFIED, always. One message is folded onto BOTH the sender's
         // and the recipient's lane and keeps its `messageId`, so a bare
         // `messageId` key occurred twice in this one array. React then logged

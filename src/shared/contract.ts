@@ -28,7 +28,7 @@ export const API_VERSION = 1 as const
  * or behaviour changes, and a tester can read the version off the screen
  * instead of guessing from a screenshot.
  */
-export const BUILD_LABEL = 'v0.2.34' as const
+export const BUILD_LABEL = 'v0.2.37' as const
 
 /** The sidebar tab type id registered through `ctx.betterSidebar.registerTab`. */
 export const TAB_TYPE_ID = 'dsh-task-gantt:board' as const
@@ -121,8 +121,12 @@ export interface MessageSpan {
    * - `'turn'`, `'message'` and `'user-prompt'` are journalled by DSH itself.
    * - `'dispatch'` is OURS: a **directed hand-off inferred from the parent/child
    *   relationship**, NOT a journal message. See {@link SubagentDispatch}.
+   * - `'question'` is a real journal event PAIR — an `ask_user_question` `tool/call`
+   *   and its `tool/result` — narrowed into a message-shaped span so it lands on the
+   *   exchange row. It is the one kind that carries a structured payload:
+   *   {@link MessageSpan.question}.
    */
-  kind: 'turn' | 'message' | 'user-prompt' | 'dispatch'
+  kind: 'turn' | 'message' | 'user-prompt' | 'dispatch' | 'question'
   /** Epoch ms of the record that opened the span. */
   time: number
   /** Epoch ms the span closed; `null` while the turn is still open. */
@@ -146,8 +150,100 @@ export interface MessageSpan {
   preview?: string
   /** The journal's message id, for correlating a queue with its delivery. For a dispatch it is the parent's `callId`. */
   messageId?: string
+  /**
+   * Present only for `kind: 'question'`: what was asked, the choices offered, where
+   * it stands, and what the human picked. See {@link QuestionDetail}.
+   */
+  question?: QuestionDetail
   /** The owning session whose log carries the event. */
   sessionId: string
+}
+
+/** One choice a question offered the human. */
+export interface QuestionOption {
+  /** The option's own label, as shown and as returned in `selected`. */
+  label: string
+  /** Optional explanatory line under the label. */
+  description?: string
+}
+
+/** One question inside one `ask_user_question` call, with its own outcome. */
+export interface QuestionItem {
+  /**
+   * The question's id from the tool arguments (e.g. `which_sidebar`). Answers come
+   * back keyed by this id, so it is what pairs a question with its selection.
+   */
+  id: string
+  /** The short header above the question, when the model supplied one. */
+  header?: string
+  /** The question's full body, whitespace-collapsed. */
+  prompt: string
+  /** The choices offered. Observed non-empty in all 98 real questions. */
+  options: QuestionOption[]
+  /** Whether more than one choice could be selected (`multi_select: true`). */
+  multiSelect: boolean
+  /** The labels the human chose. EMPTY is a real outcome: they typed instead. */
+  selected: string[]
+  /** Free text the human typed instead of, or in addition to, choosing. */
+  custom?: string
+}
+
+/**
+ * A `ask_user_question` round-trip: what the model asked a HUMAN, and what came back.
+ *
+ * ## Where every field comes from
+ *
+ * Both halves are durable, host-readable session events, so nothing here is inferred:
+ *
+ * 1. **the ask** — `tool/call` with `name: 'ask_user_question'` (the only name that
+ *    occurs in the real logs; `request_user_input` is accepted too, because the
+ *    built-in activity mapper knows both). `arguments` is JSON:
+ *    `{"questions":[{"id","header","question","options":[{"label","description"}],"multi_select"}]}`.
+ *    Measured over 63 real calls: `questions` held **1 to 4** entries (35 / 15 / 10 / 3),
+ *    `header` was always present, `options` was always present AND non-empty, and
+ *    `multi_select: true` appeared on 6 of 98 questions.
+ * 2. **the answer** — `tool/result` for that `callId`, whose single text block is a
+ *    JSON string: `{"answers":[{"id","selected":["…"],"custom":"…"}]}`. Parsed in
+ *    62 of 63 real results. `selected` was EMPTY in 18 answers and `custom` was
+ *    present in 12 — a human who types instead of clicking is normal, not an error.
+ * 3. **the failure** — the 63rd result carried `message.isError: true` with
+ *    `data.error: { name: 'UserQuestionError', code: 'DELEGATED_CALLER' }` and the
+ *    text `"human interaction is unavailable while the calling agent is owned by
+ *    another live agent…"`, arriving 11 ms after the call. So a question really can
+ *    terminate WITHOUT ever reaching a human, and that is `'failed'`, not
+ *    `'answered'`.
+ *
+ * ## The three states, and what is NOT observable
+ *
+ * | status | evidence |
+ * |---|---|
+ * | `'waiting'` | the `tool/call` exists and no `tool/result` does — a live question |
+ * | `'answered'` | a result exists, `isError` is not true, its text parsed |
+ * | `'failed'` | a result exists with `isError: true` (or a `data.error`) |
+ *
+ * There is **no timeout state and no cancel event** in the logs — those 63 calls
+ * produced exactly three shapes and nothing else. A question that a human never
+ * answers simply stays `'waiting'`, which is why {@link MessageSpan.end} is `null`
+ * for it: the span is still open, exactly like an unfinished turn.
+ */
+export interface QuestionDetail {
+  /** Where the ask stands right now. */
+  status: 'waiting' | 'answered' | 'failed'
+  /** Every question in the call, each with its own answer. */
+  questions: QuestionItem[]
+  /** The host's own error code when `status === 'failed'`, e.g. `DELEGATED_CALLER`. */
+  errorCode?: string
+  /** The host's human-readable failure line, when it gave one. */
+  errorText?: string
+  /**
+   * True when a result existed but its text was NOT the documented JSON. The ask
+   * still happened and was still answered as far as the journal shows, but we could
+   * not structure the reply — so the client must show {@link QuestionDetail.raw}
+   * rather than an empty selection, and must not imply the human chose nothing.
+   */
+  unparsed?: boolean
+  /** The raw result text, present only when {@link QuestionDetail.unparsed}. */
+  raw?: string
 }
 
 /**

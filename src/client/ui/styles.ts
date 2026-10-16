@@ -404,11 +404,11 @@ export const BOARD_CSS = `
   font: var(--dsw-font-xxxs-11);
 }
 .dtg-popover {
-  /* A hard ceiling so long text can never push the popover out of the panel. Now that
-     the title WRAPS, this is the one place that bounds the height; the body scrolls.
-     Measured against the longest subject on the demo fixture (see the task report):
-     title + four meta facts stay well inside 200px, so the clamp does not bite. */
-  max-height: 200px;
+  /* NO ceiling here: the height is computed in HoverPopover from the space between the
+     anchor and the VIEWPORT edge, rounded down to a whole number of line boxes. A CSS
+     constant could not do that — the old fixed 200px is what cut a question's second
+     prompt in half, because four answered questions need 400-550px. The body still scrolls
+     when the viewport genuinely cannot hold it. */
   overflow: auto;
 }
 /* The title WRAPS. The single-line ellipsis added in 0.2.15 was withdrawn by the user
@@ -916,6 +916,131 @@ export const BOARD_CSS = `
 /* A turn marker is a context tick, not a message: it keeps the small flat glyph
    so it is never mistaken for a person's arrow. */
 .dtg-msg-turn { background: none; }
+
+/* A QUESTION marker: the question-mark glyph, at the instant the model asked the human.
+   It carries no direction and no counterpart lane, so the marker's inline colour is its
+   STATUS tone rather than a lane colour (set in the component). */
+/* Three classes deep ON PURPOSE. The generic glyph rules are the two-class msg+glyph rule
+   and the one-class glyph rule (defined LATER in this file), and between
+   them they painted this glyph in the INVERTED ink — measured as pure white, i.e. an
+   invisible question mark on the light panel. Matching their specificity would leave the
+   outcome to source order, so this rule outranks both instead.
+   The ink is the marker's OWN colour, which for a question is its status tone, and the
+   marker's 1.5px surface halo is what keeps it readable on any lane tint. */
+.dtg-msg.dtg-msg-question .dtg-msg-question-glyph {
+  color: inherit;
+  font-size: 11px;
+  line-height: 1;
+}
+
+/* waiting: not yet answered. A slow pulse is the still-pending cue. */
+.dtg-msg-q-waiting .dtg-msg-question-glyph {
+  animation: dtg-q-pulse 1.6s ease-in-out infinite;
+}
+@keyframes dtg-q-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+/* The OS says no motion: the pulse goes away entirely and the brand ink is left to carry
+   the "pending" state on its own. */
+@media (prefers-reduced-motion: reduce) {
+  .dtg-msg-q-waiting .dtg-msg-question-glyph {
+    animation: none;
+  }
+}
+
+/* The three states are told apart WITHOUT colour: all three are the same vivid red.
+     waiting  -> the pulse above
+     failed   -> this dashed outline
+     answered -> neither, i.e. a plain red mark
+   An outline rather than a box-shadow, because the halo is an inline style. currentColor
+   keeps it in the marker's own ink, so it stays a shape cue rather than a second colour. */
+.dtg-msg-q-failed {
+  outline: 1px dashed currentColor;
+}
+
+/* --- question detail (popover) ------------------------------------------ */
+
+.dtg-q-status {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 1px 6px;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  font: var(--dsw-font-xxxs-strong-11);
+}
+.dtg-q-status-waiting {
+  color: var(--dsw-alias-brand-primary);
+}
+.dtg-q-status-answered {
+  color: var(--dsw-alias-label-secondary);
+}
+.dtg-q-status-failed {
+  color: var(--dsw-alias-state-error-primary);
+}
+/* One block per question: a single call can ask up to four, so they need separating. */
+.dtg-q-item {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+}
+.dtg-q-header {
+  font: var(--dsw-font-xxxs-strong-11);
+  color: var(--dsw-alias-label-primary);
+  overflow-wrap: anywhere;
+}
+/* Long prompts WRAP rather than truncate: the body is the one place with room. */
+.dtg-q-prompt {
+  font: var(--dsw-font-xxs-12);
+  color: var(--dsw-alias-label-primary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+/* THE ANSWER: only what was chosen. A previous version listed every option with its full
+   description, which the user rejected as "不合适" — the long explanatory text is not the
+   answer. Chosen labels get the emphasis instead. */
+.dtg-q-answer {
+  margin-top: 3px;
+}
+.dtg-q-answer-label {
+  margin-right: 4px;
+  color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxxs-11);
+}
+.dtg-q-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.dtg-q-choice {
+  padding: 1px 6px;
+  border: 1px solid var(--dsw-alias-state-success-primary);
+  border-radius: 4px;
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxxs-strong-11);
+  overflow-wrap: anywhere;
+}
+.dtg-q-custom {
+  margin-top: 2px;
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxs-12);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.dtg-q-custom-label {
+  margin-right: 4px;
+  color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxxs-11);
+}
+.dtg-q-none {
+  color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxxs-11);
+}
 /* A DISPATCH keeps the ordinary arrow SHAPE — the parent -> child direction must read
    exactly like every other transfer — but takes a DASHED stroke. A dispatch is not a
    journalled message: the contract calls it "a directed hand-off inferred from the

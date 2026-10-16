@@ -469,10 +469,17 @@ describe('the direction cue does not depend on colour', () => {
     expect(inset, 'the measured tip inset must be a real number').toBeGreaterThan(0)
     expect(inset).toBeCloseTo(9.8 - (12 - 11) / 2, 1)
     // The constant must actually be USED to place the box, not merely documented.
-    expect(source, 'the tip inset must be the positioning value').toContain('marker.x - ARROW_TIP_INSET_PX')
-    // ...and only for arrows: the tick and the bubble keep the old anchor.
-    expect(source).toMatch(/arrowMarker \? marker\.x - ARROW_TIP_INSET_PX : marker\.x/)
-    expect(source).toContain("const arrowMarker = marker.kind !== 'turn' && !isUser")
+    // RE-BASED when a question marker joined the same layout: the anchor is now chosen per
+    // SHAPE through one `anchorInset`, because a `?` has no tip and centres on its instant
+    // instead. Old -> new:
+    //     old: left: arrowMarker ? marker.x - ARROW_TIP_INSET_PX : marker.x
+    //     new: const anchorInset = <question ? marker.w/2 : arrowMarker ? ARROW_TIP_INSET_PX : 0>
+    //          left: marker.x - anchorInset
+    // The arrow's own rule is unchanged and is asserted directly.
+    expect(source, 'the inset must be the positioning value').toContain('left: marker.x - anchorInset,')
+    expect(source).toContain('const anchorInset =')
+    expect(source).toMatch(/marker\.kind === 'question' \? marker\.w \/ 2 : arrowMarker \? ARROW_TIP_INSET_PX : 0/)
+    expect(source).toContain("const arrowMarker = marker.kind !== 'turn' && marker.kind !== 'question' && !isUser")
     expect(source, 'sliding the icon inside its box detaches the halo').not.toContain('marginInlineStart')
 
     // The centreline must stay inside the 12x12 box even after the 2px stroke adds

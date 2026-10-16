@@ -6,15 +6,20 @@
 
 ## 0. Status at a glance
 
+Last checked `2026-10-15T10:48Z` — GitHub API (`gh`) plus
+`https://awesome-dsh-plugin.com/plugins.json`.
+
 | Item | Status |
 |---|---|
 | Package manifest market-compatible | ✅ (checked against the local rules below) |
 | Install / uninstall commands | ✅ written down once, in `docs/INSTALL.md`; all three marked **[not run]** end-to-end (see §4) |
-| Published to GitHub | ⛔ **not yet** — `gh repo view xx529/dsh-task-gantt` fails: *"Could not resolve to a Repository with the name 'xx529/dsh-task-gantt'"*, and `git remote -v` in `/Users/lzx/Documents/GitHub/dsh-task-gantt` prints nothing |
-| Repo age ≥ 1 day | ⛔ **cannot be satisfied yet** — the repository does not exist; the bar starts at creation time |
-| `dsh-plugin` topic | ⛔ not set (no repository) |
-| Catalog entry (`data/plugins/xx529__dsh-task-gantt.yml`) | ⛔ not prepared — see §8 for the exact file to submit |
-| Screenshots | ⛔ pending real-machine capture — see `docs/SCREENSHOTS.md` |
+| Published to GitHub | ✅ since `2026-10-10T17:37:09Z` — `gh repo view xx529/dsh-task-gantt` resolves, `origin` = `https://github.com/xx529/dsh-task-gantt.git`, topics `['dsh','dsh-plugin','deepseek-harness','dsh-better-sidebar','agent-team','gantt']` |
+| Repo age ≥ 1 day | ✅ cleared `2026-10-11T17:37:09Z` as predicted; the catalog's own `Submission gate` confirmed it — SUCCESS `2026-10-12T07:22:46Z` |
+| `dsh-plugin` topic | ✅ set — see the topic list above |
+| Catalog entry (`data/plugins/xx529__dsh-task-gantt.yml`) | ✅ submitted — [PR #7086](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/7086), +6 lines and nothing else, opened `2026-10-10T18:16:41Z`, both checks SUCCESS, `MERGEABLE` / `CLEAN` |
+| **Catalog PR merged → visible in the market** | ⛔ **not yet** — submitted but unmerged, so the live `plugins.json` (4671 entries, `updated: 2026-10-14`) contains no `xx529` entry and no name containing `gantt`.<br>**预计合并窗口 / ETA to merge: `2026-10-17` – `2026-10-24`, centred on `2026-10-20`** — a queue position, not a promise; method and sources in `docs/SUBMISSION.md` §Merge queue tracking |
+| CI on `main` | ✅ latest run `CI` = success, `2026-10-15T06:46:50Z` |
+| Screenshots | ⚠️ 5 PNGs captured and published under `docs/screenshots/`, but no `screenshots.json` next to `package.json` yet — so the listing declares none (see §6.3 O1) |
 | Published to npm | ➖ optional; not planned, and not required for listing |
 
 ## 1. One-line description
@@ -124,10 +129,10 @@ cd ~/.dsh && dsh plugin --profile web add "link:/Users/lzx/Documents/GitHub/dsh-
 cd ~/.dsh && dsh plugin --profile web remove dsh-task-gantt
 ```
 
-Status: all three are **[not run]** end-to-end — the repository does not exist on
-GitHub yet, and a real install writes the live `~/.dsh/profiles/web` profile,
-which only the Lead does during the mount smoke test
-(`docs/INSTALL.md` §1.1, §1.2, §5).
+Status: all three are **[not run]** end-to-end — the repository now exists on
+GitHub, so the `github:` spec has something to resolve, but a real install writes
+the live `~/.dsh/profiles/web` profile, which only the Lead does during the mount
+smoke test (`docs/INSTALL.md` §1.1, §1.2, §5).
 
 Why these are the right verbs — sources as recorded in `docs/INSTALL.md`:
 
@@ -166,7 +171,7 @@ Why these are the right verbs — sources as recorded in `docs/INSTALL.md`:
 | Homepage | `https://github.com/xx529/dsh-task-gantt#readme` | `package.json` → `homepage` |
 | Author | `xx529` (GitHub account; the repo has no `author` field yet) | `gh auth status` reported the logged-in account as `xx529` per `docs/TEAM-BRIEF.md` §1 |
 | License | MIT | `LICENSE` (MIT License, "Copyright (c) 2026 dsh-task-gantt contributors") + `package.json` `"license": "MIT"` |
-| Package name / version | `dsh-task-gantt` @ `0.1.0` | `package.json` |
+| Package name / version | `dsh-task-gantt` @ `0.2.34` (checked 2026-10-15) | `package.json` |
 
 ### Compatibility matrix
 
@@ -205,9 +210,9 @@ The catalog's own bar, distilled:
 | R1 | The repo declares a **`dsh.bundle`** manifest in `package.json`; **only `dsh.client` is not installable** | `…/contributing.md`, "Requirements" + the ⚠️ note | ✅ `package.json` → `dsh.bundle.patch: "./cordis.patch.yml"` + `dsh.client.platform: "web"` |
 | R2 | A `cordis.patch.yml` sits next to it, with an `insert` row | `…/contributing.md`, code example | ✅ `cordis.patch.yml` → `- insert: [{ id: dsh-task-gantt, name: 'dsh-task-gantt' }]` |
 | R3 | Real, working code — no placeholder / name-squat / README-only repo | `…/contributing.md` | ✅ real host + client halves under `src/`, tests under `tests/` |
-| R4 | Repo at least **1 day old** (CI-checked) | `…/contributing.md` | ⛔ not applicable yet — repo does not exist on GitHub |
-| R5 | Actively maintained | `…/contributing.md` | ➖ future obligation, nothing to do now |
-| R6 | Add the **`dsh-plugin`** GitHub topic | `…/contributing.md` | ⛔ to do after push |
+| R4 | Repo at least **1 day old** (CI-checked) | `…/contributing.md` | ✅ cleared `2026-10-11T17:37:09Z`; `Submission gate` SUCCESS `2026-10-12T07:22:46Z` |
+| R5 | Actively maintained | `…/contributing.md` | ➖ ongoing obligation — commits on `main` through `2026-10-15` |
+| R6 | Add the **`dsh-plugin`** GitHub topic | `…/contributing.md` | ✅ topics `['dsh','dsh-plugin','deepseek-harness','dsh-better-sidebar','agent-team','gantt']` |
 | R7 | Description states what it does, no superlatives/marketing; must be **accurate to the code** | `…/contributing.md` | ✅ see §1.1 audit |
 | R8 | Category matches what the plugin does | `…/contributing.md` | ✅ `ui`, see §3 |
 | R9 | At most **3 entries per PR** | `…/contributing.md`, "One PR, at most 3 entries" | ✅ one entry |
@@ -220,19 +225,19 @@ The catalog's own bar, distilled:
 | M2 | No `preinstall` / `install` / `postinstall` / `prepare` scripts in the **packed** manifest | `…/tests/market-manifest.spec.ts:14-16` (`LIFECYCLE_SCRIPTS`), `:79-85` | ✅ `package.json.scripts` = build / dev / typecheck / test / test:watch / verify:build / check / pack:check — none is a lifecycle hook |
 | M3 | `dsh.bundle.patch` must be a safe relative path that exists inside the package | `…/tests/market-manifest.spec.ts:87-99` | ✅ `./cordis.patch.yml` exists at the repo root and is inside `files` |
 | M4 | `repository.url` must normalise to a credential-free HTTPS GitHub `owner/repo` URL (the catalog ↔ npm backlink check) | `…/tests/market-manifest.spec.ts:101-112` | ✅ `https://github.com/xx529/dsh-task-gantt` — no credentials, no query, no hash, 2 path segments |
-| M5 | Exact SemVer version (no ranges, no tags; prerelease allowed) | `…/tests/market-manifest.spec.ts:114-116` | ✅ `0.1.0` |
+| M5 | Exact SemVer version (no ranges, no tags; prerelease allowed) | `…/tests/market-manifest.spec.ts:114-116` | ✅ `0.2.34` |
 | M6 | npm `latest` must be an exact **stable** version for the automatic install preview (for the Community Market path) | <https://github.com/anywhere-labs/deepseek-harness-desktop/blob/master/dsh-community-market/docs/install-and-uninstall.zh.md>, "自动安装条件" | ➖ we are not on npm, so that market can only offer the manual GitHub command; this does **not** block listing in the `dshmarket` catalog |
 | M7 | `dshmarket` installs only from the curated catalog — anything else is rejected | `/Users/lzx/.dsh/profiles/web/node_modules/dshmarket/README.md:47` | ➖ our entry has to exist in the catalog first |
-| M8 | To get into `dshmarket`, PR the **catalog**, not the market app | `…/dshmarket/README.md:57-59` | ⛔ the actual submission step, see §8 |
+| M8 | To get into `dshmarket`, PR the **catalog**, not the market app | `…/dshmarket/README.md:57-59` | ✅ done — [PR #7086](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/7086) opened `2026-10-10T18:16:41Z`, unmerged as of `2026-10-15T10:48Z`; see §8 |
 
 ### 6.3 Optional / recommended
 
 | # | Item | Source | Our status |
 |---|---|---|---|
-| O1 | `screenshots.json` next to `package.json`, 1–8 repo-relative images | `…/contributing.md`, "Screenshots" | ⛔ pending capture; plan in `docs/SCREENSHOTS.md` |
+| O1 | `screenshots.json` next to `package.json`, 1–8 repo-relative images | `…/contributing.md`, "Screenshots" | ⚠️ 5 PNGs are captured and published at `docs/screenshots/`, but **no `screenshots.json` is declared** next to `package.json` (checked 2026-10-15) — so the listing declares none and the market falls back to images extracted from the README. Plan in `docs/SCREENSHOTS.md` |
 | O2 | Publish to npm (skips the `allowBuilds` build-approval step; adds a download count) | `…/contributing.md`, "Recommended…" + "npm package" | ➖ not planned; listing is unaffected |
 | O3 | Prebuilt tarball on a GitHub Release + `tarball:` field — **required** only if the repo cannot be installed from source at all | `…/contributing.md`, same section | ➖ not needed: `lib/` is committed, so `github:` installs need no build step |
-| O4 | `package.json#icon` + `locale/<lang>.json` for the host plugin manager's display metadata. `locale/en.json` is the **discovery baseline** — without it the whole locale directory is ignored, and every failure is silent (the entry just degrades to a plain text row) | `/tmp/dsh-better-sidebar-src/AGENTS.md:103` | ⚠️ `icon.svg` + `"icon": "./icon.svg"` exist, and `package.json` already exports `./locale/*.json` and lists `locale/*.json` in `files` — but **no `locale/` directory exists in the repository yet**, so there is currently no localized display metadata. Owner is unresolved (`packaging` raised it with the Lead) |
+| O4 | `package.json#icon` + `locale/<lang>.json` for the host plugin manager's display metadata. `locale/en.json` is the **discovery baseline** — without it the whole locale directory is ignored, and every failure is silent (the entry just degrades to a plain text row) | `/tmp/dsh-better-sidebar-src/AGENTS.md:103` | ✅ resolved — `locale/en.json` and `locale/zh.json` exist and are published (`gh api repos/xx529/dsh-task-gantt/contents/locale`, 2026-10-15), `package.json` exports `./locale/*.json` and lists `locale/*.json` in `files`, and `icon.svg` + `"icon": "./icon.svg"` are present |
 
 ## 7. What the market actually reads
 
@@ -270,23 +275,31 @@ description:
 must be quoted in YAML — neither of ours contains `: `.)
 — <https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/blob/main/contributing.md>
 
-**Blocker before this PR can be opened:** push the repository. The catalog CI
-fetches `dsh.bundle` **from the repository URL in the entry**, checks repo age,
-and requires the `dsh-plugin` topic; none of that can pass while
-`https://github.com/xx529/dsh-task-gantt` returns 404.
+**Status of this PR:** opened `2026-10-10T18:16:41Z` as
+[PR #7086](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/7086).
+As of `2026-10-15T10:48Z` it is `OPEN`, `MERGEABLE` / `CLEAN`, with both `check`
+(SUCCESS `2026-10-12T07:22:18Z`) and `Submission gate` (SUCCESS
+`2026-10-12T07:22:46Z`) green. Nothing on our side blocks it; merging is manual
+and batched by the maintainer, so the remaining question is queue depth only.
+
+**预计合并窗口 / ETA to merge: `2026-10-17` – `2026-10-24`, centred on
+`2026-10-20`.** This is a queue position derived from the maintainer's observed
+merge history, **not a promise** — the method, the 156-PR wait-time distribution
+it is built on, and how to re-check it are all in
+`docs/SUBMISSION.md` §Merge queue tracking.
 
 ## 9. Open items
 
-1. ⛔ Push `xx529/dsh-task-gantt` to GitHub and add the `dsh-plugin` topic
-   (`gh repo edit --add-topic dsh-plugin`).
-2. ⛔ Wait out the 1-day repo-age bar before opening the catalog PR.
+1. ✅ Push `xx529/dsh-task-gantt` to GitHub and add the `dsh-plugin` topic —
+   done `2026-10-10T17:37:09Z`; topics verified `2026-10-15`.
+2. ✅ Wait out the 1-day repo-age bar before opening the catalog PR — cleared
+   `2026-10-11T17:37:09Z`, PR opened `2026-10-10T18:16:41Z` (before the bar
+   cleared) and the gate went green on its own at `2026-10-12T07:22:46Z`.
 3. ⛔ Capture the three screenshots and add `screenshots.json`
    (`docs/SCREENSHOTS.md`).
-4. ⚠️ Decide whether to ship `locale/en.json` + `locale/zh.json`. The manifest
-   side is already done (`exports["./locale/*.json"]` and `files` both list it),
-   but the directory does not exist, and a declared-but-missing locale directory
-   fails **silently**. Owner unresolved — `packaging` raised it with the Lead;
-   source for the contract: `/tmp/dsh-better-sidebar-src/AGENTS.md:103`.
+4. ✅ `locale/en.json` + `locale/zh.json` are shipped and published (checked
+   `2026-10-15`), so the silent-degradation risk is closed; contract source as
+   recorded: `/tmp/dsh-better-sidebar-src/AGENTS.md:103`.
 5. ❓ Confirm on the mounted profile that the GitHub install spec resolves and
    the tab renders (owner: Lead, per `docs/TEAM-BRIEF.md` §7). All three install
    commands in §4 are currently **[not run]** end-to-end.

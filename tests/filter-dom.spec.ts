@@ -191,7 +191,18 @@ describe('renderer-side facts that only a DOM could otherwise show (PROXIES)', (
     expect(styles).not.toMatch(/\.dtg-popover-meta\s*\{[^}]*text-overflow/)
     expect(styles).toMatch(/\.dtg-popover-title\s*\{[^}]*overflow-wrap:\s*anywhere/)
     expect(styles).toMatch(/\.dtg-popover-meta\s*\{[^}]*flex-wrap:\s*wrap/)
-    expect(styles).toMatch(/\.dtg-popover\s*\{[^}]*max-height:\s*200px/)
+    // THE HEIGHT CAP MOVED OUT OF CSS — RE-BASED 2026-10-16, and the intent is unchanged
+    // (the popover must never grow without bound). It used to be a flat `max-height:
+    // 200px`, and that constant is exactly what sliced a question's second prompt in half:
+    // four answered questions measure ~400-550px. The cap is now computed in `HoverPopover`
+    // from the room between the anchor and the VIEWPORT (not the panel, which a fixed
+    // overlay may legitimately overflow), and the body still scrolls when the viewport
+    // cannot hold it.
+    //     old: .dtg-popover { max-height: 200px }            — a CSS constant
+    //     new: maxHeight = min(body height, room to the viewport edge, cap)
+    expect(styles).not.toMatch(/\.dtg-popover\s*\{[^}]*max-height/)
+    expect(chart).toMatch(/const maxHeight = Math\.max\(0, Math\.min\(/)
+    expect(chart).toContain('window.innerHeight')
   })
 
   it('PROXY: the lane filter has exactly ONE application point', () => {

@@ -28,7 +28,7 @@ import { clipBounds, overlaySpace } from './overlay-position.ts'
 import { BUILD_LABEL, MESSAGE_PREVIEW_MAX, type MessageSpan } from '../../shared/contract.ts'
 import { fetchTimeline, type RouteBase } from '../api.ts'
 import { t } from '../i18n.ts'
-import { GanttChart } from './GanttChart.tsx'
+import { GanttChart, QuestionPopoverBody } from './GanttChart.tsx'
 import { uiLabel } from './labels.ts'
 import { historyActionText, taskStatusText } from './status.ts'
 import { BOARD_CSS, STYLE_ELEMENT_ID } from './styles.ts'
@@ -751,17 +751,33 @@ function MessageDetails({
         <span className="dtg-kv-key">{uiLabel('messageLaneLabel')}</span>
         <span className="dtg-kv-val">{laneId}</span>
       </div>
-      {detail.maybeTruncated ? (
-        <div className="dtg-notice">{uiLabel('messageTruncated', { max: MESSAGE_PREVIEW_MAX })}</div>
-      ) : null}
-      <div
-        className="dtg-message-body"
-        data-message-body=""
-        data-message-body-length={detail.body.length}
-        data-message-has-body={detail.hasBody ? 'true' : 'false'}
-      >
-        {detail.hasBody ? detail.body : <span className="dtg-muted">{uiLabel('messageNoBody')}</span>}
-      </div>
+      {message.kind === 'question' && message.question !== undefined ? (
+        /*
+         * The SAME body the hover popover renders, so the two can never disagree. The user
+         * asked for the question's detail here as well, and a second implementation is
+         * exactly how the two would drift apart.
+         *
+         * It is a PURE BODY: every bit of the popover's positioning — the viewport clamp,
+         * the flip, the block-boundary height snapping — lives in `HoverPopover`, not in
+         * this component, so nothing floating is dragged into a region that sits in the
+         * document flow.
+         */
+        <QuestionPopoverBody laneName={laneName} when={detail.when} question={message.question} />
+      ) : (
+        <>
+          {detail.maybeTruncated ? (
+            <div className="dtg-notice">{uiLabel('messageTruncated', { max: MESSAGE_PREVIEW_MAX })}</div>
+          ) : null}
+          <div
+            className="dtg-message-body"
+            data-message-body=""
+            data-message-body-length={detail.body.length}
+            data-message-has-body={detail.hasBody ? 'true' : 'false'}
+          >
+            {detail.hasBody ? detail.body : <span className="dtg-muted">{uiLabel('messageNoBody')}</span>}
+          </div>
+        </>
+      )}
     </div>
   )
 }
