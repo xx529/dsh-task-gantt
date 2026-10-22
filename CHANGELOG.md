@@ -1,5 +1,74 @@
 # Changelog
 
+## 0.2.38 — 2026-10-23
+
+**适配 DSH 0.2.1：团队消息换成了 `user/message` 运行时注入，收发箭头恢复**
+
+用户把 DSH 从 0.2.0 升到 0.2.1 后反馈「收发消息的 icon 没有了，可能还有其他问题」。
+
+**根因**：0.2.1 把团队消息改为以 `user/message` 投递，并在 `data.source` 里带标记：
+```jsonc
+{"kind":"team-message","teamId":…,"messageId":"team-message-<uuid>","senderId":…,"senderName":"packaging"}
+{"kind":"agent-message","form":"relay","senderSessionId":…}
+```
+内容为两块 text：**第 1 块是投递抬头**（`Team message <id> from X:` / `Team message from X:` /
+`Agent <sid> sent a message:`），第 2 块才是正文。而 `src/host/fold.ts` 的 `user/message` 分支把
+**所有非 `user` 源**都当成运行时注入：`injectedUserMessages += 1; continue` —— 于是团队消息被
+"数一下然后丢掉"，`lane.messages` 里只剩 `turn` 与 `user-prompt`，**箭头没有数据源**。
+
+普查 **272 个真实日志**：`team-message` **581**、`agent-message` **56**；而旧形态
+`team/message/queued` / `delivered` **仍在（各 601）** ⇒ **两种形态必须都收**，且**那 637 条
+只以注入形态存在**，忽略新形态会真的丢消息。
+
+**修复**
+- 把 `team-message` / `agent-message` 注入折叠成 `kind:'message'` 的 exchange；
+- **抬头与正文的切分由两条抬头正则守卫**（而不是"有两块就切"），所以正文首块即使长得像抬头也不会被吃掉；
+- **发送者四级降级**：`source.senderName` → 抬头里的 `from X:` → 本日志 `team/member` 建的 roster
+  （按 `senderSessionId`）→ 原始 session id 兜底（日志只说了这个，不编）；
+- `to` = **该日志所属会话**（注入只写进接收方的日志）；
+- **去重键 = `messageId`**（注入的 `source.messageId` 逐字等于 queued 的 `message.id`），合并时
+  **优先保留信箱记录**（它有真实 `queuedAt` 与 `targetId`），注入只补缺。
+
+全库实测：`601 queued ＋ 637 仅注入 ＋ 合并重复 262 → 0 个重复 id 幸存`。
+
+**顺带修掉两个真实缺陷（同源，用户没报但会造成错误显示）**
+1. `to.name` 渲染成 **Lead 的原始 session id**：Lead 是泳道却不是 `team/member` 行，从未进入反向索引；
+2. **从 Lead 发出的消息被降级成 `from.kind:'system'`**：信箱里的 `senderId` 是团队 id 形态
+   `session-<leadId>`，与泳道键拼法不一致。现在 `lookupIn()` 对同一 id 试**三种拼法**
+   （原样 / 加 `session-` / 去 `session-`）。真实会话实测：修前 `from=lead(system)`、`to.name=session-…`；
+   修后 `from=lead(lead)`、`to.name=lead`。
+
+**0.2.1 契约漂移审计（逐项结论 + 依据）**
+
+| 事件 | 计数 | 结论 |
+|---|---|---|
+| `agent/inbox/spliced` | 3748 | **绝不能当第二信源**：其 `inserted[].id` **1943 个里 1942 个同时以 `user/message` 出现**（99.95%），`source.kind` 分布与 `user/message` 一致 ⇒ 它是"投递如何插入"的内部记录，读它会把每个箭头画两遍（已加锁） |
+| `subagent/descriptor` | 145 | 无影响：`{version,mode,provider,label,agentProvider?,agentModel?}`，**没有 `childId`** ⇒ 无法与泳道对应；命名继续用 `subagent/catalog.label` |
+| `subagent/model-selection-policy` | 6 | 无影响（只有 `allowedModels`） |
+| `session/end-seed` | 411 | 无影响：`data` 为 `{}` 或 `{inherited}`，且 **378/411 紧邻其前就是 `turn/end`** ⇒ 是 seed 阶段标记、不是 turn 边界 |
+| `subagent/catalog` | 129 | **字段未变**（仍 `{version,childId,childCreatedAt,mode,label}`） |
+| `team/member` / `team/task` | 142 / 398 | **字段未变** |
+| `team/message/queued｜delivered` | 601/601 | **仍在** ⇒ 两种形态并存（见上） |
+| `turn/*` `step/*` `tool/call` `tool/result` | 1046/1043/32274/48877 | 计数正常，未破坏 |
+
+**子代理泳道在 0.2.1 日志上实测正常**：`Evoke`（7 个 dispatch、中文任务名）、`HtDot`（12 个
+dispatch、`Map codebase concerns` 等），命名 / `status=idle` / dispatch 全对。
+
+**v4 日志格式不需要适配**：持久化通道走 `sessionPersistence.open(id,'read')`，格式由后端抽象
+（在线响应实测 `source:'log'`，即 v4 `.zstd` 落盘读取成功）；活会话通道读内存日志，与落盘格式无关。
+唯一直接读文件的是 `dev-verify.mts`（用 zstd CLI），与生产代码无关。
+
+**锁**：新增 `tests/host-message-021.spec.ts`（13 条，真实 0.2.1 payload 做夹具）——两种注入形态、
+抬头/正文切分、四级发送者降级、`queued+delivered+注入` 三形态重复、仅注入、顺序无关、
+`agent/inbox/spliced` 不得重复计数、恶性 payload 不抛、端到端双向且 `from.kind` 不是 `system`、
+`to.name` 是 `lead`、经 JSON 序列化仍在。`dev-verify` 真实日志锁：`no log folds the same message id
+twice (offenders: 0)`、`a real 0.2.1 session draws ≥1 exchange span`、
+`a message whose sender IS on the roster never falls back to system (offenders: 0)`。
+
+**未验证**：真机 UI 渲染；`agent-message.form` 只观测到 `relay` 一种取值。
+
+Tests: 893 passed / 1 skipped, 42 files; typecheck 0 errors.
+
 ## 0.2.37 — 2026-10-16
 
 **提问浮窗按视口展开（不再截断）+ 下方详情面板显示问题与答案**

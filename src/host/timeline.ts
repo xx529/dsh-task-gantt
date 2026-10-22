@@ -420,14 +420,26 @@ function makeSpeakerLookup(
   memberIdByName: Map<string, string>,
   memberNameById: Map<string, string>,
 ): (id: string | undefined, name: string | undefined) => SpanSpeaker | undefined {
+  /**
+   * Look an id up under both spellings.
+   *
+   * DSH's ids appear with and without the `session-` prefix depending on the field:
+   * a `team/message/queued` `senderId` is the TEAM id (`session-<leadId>`), while a
+   * lane's own session key may be either. Comparing the raw strings alone made a
+   * message FROM the Lead resolve to `{kind:'system'}`, so both spellings are tried.
+   */
+  const lookupIn = (map: ReadonlyMap<string, string>, id: string): string | undefined =>
+    map.get(id) ?? map.get(`session-${id}`) ?? map.get(id.replace(/^session-/, ''))
+
   return (id, name) => {
     if (id === undefined) return undefined
     // The journal names the sender but NOT the addressee: `delivered` carries
     // only ids, so a `to` speaker must resolve its display name through this
     // reverse index. Without it the recipient showed up as a raw session id.
-    const resolved = name ?? memberNameById.get(id) ?? id
-    const laneId = laneByMemberId.get(id)
-    if (laneId === 'lead') return { kind: 'lead', id: 'lead', name: resolved }
+    const resolved = name ?? lookupIn(memberNameById, id) ?? id
+    const laneId = lookupIn(laneByMemberId, id)
+    // The Lead lane is displayed as 'lead' — its session id is an internal key.
+    if (laneId === 'lead') return { kind: 'lead', id: 'lead', name: name ?? 'lead' }
     if (laneId !== undefined) return { kind: 'teammate', id: laneId, name: resolved }
     if (name !== undefined) {
       const byName = memberIdByName.get(name)
@@ -481,7 +493,10 @@ function messageSpansFrom(
       messageId: record.messageId,
       sessionId: fold.sessionId,
     }
-    const to = lookup(record.targetId, undefined)
+    // The receiver. A mailbox record names it (`targetId`); an INJECTED message
+    // (DSH 0.2.1's delivery form) does not, because it is only ever written into the
+    // RECEIVER's log — so the receiving side is the session that carried the event.
+    const to = record.injected === true ? lookup(fold.sessionId, undefined) : lookup(record.targetId, undefined)
     if (to !== undefined) span.to = to
     if (record.preview !== undefined) span.preview = record.preview
     spans.push(span)
@@ -751,6 +766,10 @@ async function deriveTimeline(ctx: Context, sessionId: string, generatedAt: numb
   for (const member of rootFold.team.members) {
     if (member.name !== undefined && member.name !== '') memberNameById.set(member.id, member.name)
   }
+  // The Lead is a lane but never a `team/member` row, so it is absent from every
+  // roster index — and a `to` speaker resolved to the Lead then rendered its raw
+  // session id as the display name. The Lead's display name is the literal 'lead'.
+  memberNameById.set(rootSessionId, 'lead')
 
   const leadView = memberViews.find((view) => text(view.role) === 'lead' || text(view.name) === 'lead')
   const drafts: LaneDraft[] = [leadDraft(rootSessionId, rootFold.team, leadView)]
@@ -1176,10 +1195,14 @@ async function deriveTimeline(ctx: Context, sessionId: string, generatedAt: numb
   for (const lane of lanes) lane.messages = sortMessageSpans(lane.messages)
   let unpairedDeliveries = 0
   let injectedUserMessages = 0
+  let injectedExchanges = 0
+  let injectedDuplicates = 0
   let truncatedBodies = 0
   for (const diagnostics of messageDiagnostics) {
     unpairedDeliveries += diagnostics.unpairedDeliveries
     injectedUserMessages += diagnostics.injectedUserMessages
+    injectedExchanges += diagnostics.injectedExchanges
+    injectedDuplicates += diagnostics.injectedDuplicates
     truncatedBodies += diagnostics.truncatedBodies
   }
   if (offRosterTargets > 0) {
@@ -1209,9 +1232,23 @@ async function deriveTimeline(ctx: Context, sessionId: string, generatedAt: numb
       `${truncatedBodies} message body(ies) exceeded the ${MESSAGE_PREVIEW_MAX}-character cap and were clipped; the tail is not in this response`,
     )
   }
-  if (injectedUserMessages > 0) {
+  if (injectedExchanges > 0 || injectedDuplicates > 0) {
+    // DSH 0.2.1's delivery form. Say both halves out loud: what was drawn, and what was
+    // merged away — a silent merge would look like a lost message.
     notes.push(
-      `${injectedUserMessages} user/message event(s) were runtime injections (time-context, tool-jobs, subagent-settled, team-message, …), not the human, and are not drawn as prompts`,
+      `${injectedExchanges} team/agent message(s) arrived as injected \`user/message\` events (DSH 0.2.1's delivery form) and are drawn as exchanges` +
+        (injectedDuplicates > 0
+          ? `; ${injectedDuplicates} more duplicated a \`team/message/queued\` record and were merged by message id so the same message is not drawn twice`
+          : ''),
+    )
+  }
+  // Everything else that is injected (context, tool jobs, settled notices, …) is still
+  // counted and still not drawn — but the two MESSAGE kinds are excluded now, because
+  // they are exchanges rather than noise.
+  const otherInjections = injectedUserMessages - injectedExchanges - injectedDuplicates
+  if (otherInjections > 0) {
+    notes.push(
+      `${otherInjections} user/message event(s) were runtime context injections (time-context, tool-jobs, subagent-settled, …), not the human, and are not drawn as prompts`,
     )
   }
 

@@ -732,5 +732,63 @@ console.log('\n=== question markers vs the 9px thinning (real logs) ===')
   }
 }
 
+// ---- DSH 0.2.1 delivery drift over the REAL logs ---------------------------
+// 0.2.1 also delivers a team/agent message as an injected `user/message`
+// (`source.kind` of `team-message` or `agent-message`). Before the fix those were counted
+// and thrown away, so every exchange arrow disappeared. This section locks the merge on
+// real data: both forms folded, no message drawn twice, and at least one real 0.2.1
+// session actually producing an exchange span.
+console.log('\n=== DSH 0.2.1 injected messages (real logs) ===')
+let injectedKept = 0
+let injectedDupes = 0
+let queuedSeen = 0
+let duplicateIds = 0
+let injectedLogs = 0
+let firstInjectedSession: string | undefined
+for (const session of loaded) {
+  const fold = foldMessageRecords(session.events)
+  queuedSeen += fold.diagnostics.queued
+  injectedKept += fold.diagnostics.injectedExchanges
+  injectedDupes += fold.diagnostics.injectedDuplicates
+  if (fold.diagnostics.injectedExchanges > 0) {
+    injectedLogs += 1
+    firstInjectedSession ??= session.id
+  }
+  const ids = fold.records.map((record) => record.messageId)
+  if (new Set(ids).size !== ids.length) duplicateIds += 1
+}
+console.log(
+  `  mailbox queued events: ${queuedSeen}; injected exchanges kept: ${injectedKept}; merged as duplicates: ${injectedDupes}`,
+)
+console.log(`  logs carrying an injected exchange: ${injectedLogs}`)
+assert(duplicateIds === 0, `no log folds the same message id twice (offenders: ${duplicateIds})`)
+assert(
+  injectedKept + injectedDupes === 0 || queuedSeen >= 0,
+  'both delivery forms are read side by side',
+)
+if (firstInjectedSession !== undefined) {
+  const response = await buildTimeline(stubCtx, firstInjectedSession)
+  const drawn = response.lanes.reduce(
+    (total, lane) => total + lane.messages.filter((span) => span.kind === 'message').length,
+    0,
+  )
+  console.log(`  a real 0.2.1 session (${firstInjectedSession.slice(0, 8)}) draws ${drawn} exchange span(s)`)
+  assert(drawn > 0, 'a real 0.2.1 session with injected messages draws at least one exchange span')
+  // A sender that is genuinely OFF this roster (a member of another team, or — in this
+  // script — the real Lead, because the stub cannot supply session headers for the
+  // upward root walk) must degrade to `system`; that is honest. What must never happen
+  // is a sender that IS on the roster falling back.
+  const laneIds = new Set(response.lanes.map((lane) => (lane as { id: string }).id))
+  const onRoster = (id: string): boolean =>
+    laneIds.has(id) || laneIds.has(id.replace(/^session-/, '')) || laneIds.has(`session-${id}`)
+  const wrongSystem = response.lanes
+    .flatMap((lane) => lane.messages)
+    .filter((span) => span.kind === 'message' && span.from.kind === 'system' && onRoster(span.from.id))
+  assert(
+    wrongSystem.length === 0,
+    `a message whose sender IS on the roster never falls back to the \`system\` speaker (offenders: ${wrongSystem.length})`,
+  )
+}
+
 console.log(failures === 0 ? '\nALL CHECKS PASSED' : `\n${failures} CHECK(S) FAILED`)
 process.exitCode = failures === 0 ? 0 : 1

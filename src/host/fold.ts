@@ -530,6 +530,146 @@ export function foldActivitySpans(events: readonly unknown[]): FoldedActivity {
 const USER_SOURCE_KIND = 'user'
 
 /**
+ * `user/message` source kinds that carry a **teammate/agent message** in DSH 0.2.1.
+ *
+ * The delivery form changed in 0.2.1: instead of (only) appending
+ * `team/message/queued` + `team/message/delivered`, the mailbox now injects the
+ * message into the RECEIVER's log as a `user/message` with one of these source kinds.
+ * Measured over 272 real logs: `team-message` 581, `agent-message` 56, while the older
+ * `team/message/queued` pair still exists (601 each), so both forms must be read and
+ * merged — see {@link foldMessageRecords}.
+ */
+const INJECTED_MESSAGE_KINDS: ReadonlySet<string> = new Set(['team-message', 'agent-message'])
+
+/**
+ * Header line of an injected **team** message, e.g.
+ * `Team message team-message-2fef… from lead:`. The name is the sender.
+ *
+ * Measured over 581 real events, this is the only team header shape (the sender name
+ * appears in 581/581 of them, and is *also* in `source.senderName`).
+ */
+const INJECTED_TEAM_HEADER = /^Team message(?:\s+team-message-[0-9a-f-]+)?\s+from\s+(.+?):$/
+
+/**
+ * Header line of an injected **agent relay**, in either observed spelling:
+ * `Agent <sessionId> sent a message: ` (47) or `Agent session-<sessionId> sent a
+ * message: ` (1). The captured id IS `source.senderSessionId`, so a name must be
+ * resolved from the roster.
+ */
+const INJECTED_AGENT_HEADER = /^Agent\s+(?:session-)?([0-9a-fA-F-]{8,})\s+sent a message:\s*$/
+
+/** A `team/member` row, reduced to the only mapping this fold needs. */
+function rosterNamesBySession(indexed: readonly IndexedEvent[]): Map<string, string> {
+  const names = new Map<string, string>()
+  for (const item of indexed) {
+    if (eventType(item) !== 'team/member') continue
+    const member = asRecord(eventData(item)?.member)
+    const id = asText(member?.id)
+    const name = asText(member?.name)
+    if (id !== undefined && name !== undefined) names.set(id, name)
+  }
+  return names
+}
+
+/**
+ * Fold one injected `user/message` into an exchange record.
+ *
+ * ## Sender resolution, in order, with the fallback stated
+ *
+ * 1. `source.senderName` — the team form always carries it (581/581 measured);
+ * 2. the header text `Team message … from X:` — the only name that survives in the
+ *    relay form (`Team message from greeter-alpha:`);
+ * 3. the roster built from this log's own `team/member` events, keyed by
+ *    `source.senderSessionId` (or the id captured from `Agent <id> sent a message:`);
+ * 4. otherwise the raw session id is used as the display name, because a lane named
+ *    after the sender is still better than an unattributed arrow — and it is what the
+ *    log actually says, so nothing is invented.
+ *
+ * @param item - the indexed `user/message` event.
+ * @param source - its `data.source`.
+ * @param data - its `data`.
+ * @param roster - session id to member name, from this log's `team/member` rows.
+ * @param diagnostics - receives the truncation counter.
+ * @returns the record, or `undefined` when the event cannot be placed in time.
+ */
+function readInjectedExchange(
+  item: IndexedEvent,
+  source: Record<string, unknown>,
+  data: Record<string, unknown>,
+  roster: ReadonlyMap<string, string>,
+  diagnostics: MessageFoldDiagnostics,
+): FoldedMessageRecord | undefined {
+  const time = item.time
+  if (time === undefined) return undefined
+  const parts = splitInjectedContent(data.content)
+  // The id must be stable across the two delivery forms so the dedupe can match:
+  // `source.messageId` is the mailbox's own id; `data.id` (the user/message id) is the
+  // relay form's only id and is unique per event.
+  const messageId = asText(source.messageId) ?? asText(data.id) ?? `injected:${item.seq}`
+  const record: FoldedMessageRecord = {
+    messageId,
+    // One observed instant only: the injected message is both handed over and
+    // delivered now, so the span is a point rather than a queue→deliver duration.
+    queuedAt: time,
+    deliveredAt: time,
+    seq: item.seq,
+    injected: true,
+  }
+  const senderId = asText(source.senderId) ?? asText(source.senderSessionId) ?? parts.senderSessionId
+  if (senderId !== undefined) record.senderId = senderId
+  const senderName = asText(source.senderName) ?? parts.senderName ?? (senderId === undefined ? undefined : roster.get(senderId))
+  if (senderName !== undefined) record.senderName = senderName
+  const preview = previewOf(parts.body)
+  if (preview !== undefined) {
+    record.preview = preview
+    if (collapseWhitespace(parts.body).length > PREVIEW_MAX) {
+      record.truncated = true
+      diagnostics.truncatedBodies += 1
+    }
+  }
+  return record
+}
+
+/**
+ * Split an injected message's content blocks into its header and its body.
+ *
+ * The FIRST block is the delivery header (`Team message … from X:` / `Agent <id> sent a
+ * message:`), never the message. Stripping is guarded by the two header patterns rather
+ * than by "there are two blocks", so a body whose first block merely looks like text is
+ * never eaten. Every real injected message measured exactly 2 blocks.
+ *
+ * @param content - the `data.content` array, untrusted.
+ * @returns the body text plus whatever the header revealed about the sender.
+ */
+function splitInjectedContent(content: unknown): {
+  body: string
+  senderName?: string
+  senderSessionId?: string
+} {
+  const texts: string[] = []
+  if (Array.isArray(content)) {
+    for (const block of content) {
+      const record = asRecord(block)
+      if (record !== undefined && typeof record.text === 'string') texts.push(record.text)
+    }
+  }
+  const head = (texts[0] ?? '').trim()
+  const team = head === '' ? null : INJECTED_TEAM_HEADER.exec(head)
+  const agent = head === '' ? null : INJECTED_AGENT_HEADER.exec(head)
+  const isHeader = team !== null || agent !== null
+  const result: { body: string; senderName?: string; senderSessionId?: string } = {
+    body: (isHeader ? texts.slice(1) : texts).join('\n'),
+  }
+  const name = team?.[1]?.trim()
+  if (name !== undefined && name !== '') result.senderName = name
+  const sessionId = agent?.[1]
+  if (sessionId !== undefined) result.senderSessionId = sessionId
+  return result
+}
+
+
+
+/**
  * The longest body this module emits, mirroring `MESSAGE_PREVIEW_MAX`.
  *
  * Duplicated as a literal on purpose: `fold.ts` is the pure-data layer and must
@@ -580,6 +720,18 @@ export interface FoldedMessageRecord {
   truncated?: boolean
   /** Log `seq` of the record that opened this exchange (stable ordering). */
   seq: number
+  /**
+   * True when this exchange came from DSH 0.2.1's **injection** form rather than from
+   * the `team/message/queued` + `delivered` journal pair.
+   *
+   * 0.2.1 delivers a team/agent message as a `user/message` whose
+   * `data.source.kind` is `team-message` or `agent-message`; the mailbox events still
+   * exist for older sessions, so both forms are read and merged (see
+   * {@link foldMessageRecords}). An injected record knows only ONE instant, so it sets
+   * both `queuedAt` and `deliveredAt` to it, and its receiver is the session whose log
+   * carried the event — which is why the caller fills `to` from `fold.sessionId`.
+   */
+  injected?: boolean
 }
 
 /** One human prompt read from `user/message`. */
@@ -612,6 +764,14 @@ export interface MessageFoldDiagnostics {
   userPrompts: number
   /** `user/message` events that were runtime injections, not the human. */
   injectedUserMessages: number
+  /** Injected `team-message` / `agent-message` events folded into exchanges. */
+  injectedExchanges: number
+  /**
+   * Injected exchanges dropped because the same message id was already covered by a
+   * `team/message/queued` record — the 0.2.1 duplicate. Counted so the merge is visible
+   * rather than silent.
+   */
+  injectedDuplicates: number
   /**
    * Message bodies that exceeded {@link PREVIEW_MAX} and were clipped.
    *
@@ -703,6 +863,8 @@ export function foldMessageRecords(events: readonly unknown[]): FoldedMessages {
     unpairedDeliveries: 0,
     userPrompts: 0,
     injectedUserMessages: 0,
+    injectedExchanges: 0,
+    injectedDuplicates: 0,
     truncatedBodies: 0,
   }
 
@@ -712,6 +874,9 @@ export function foldMessageRecords(events: readonly unknown[]): FoldedMessages {
   const deliveries = new Map<string, { time: number; targetId?: string; seq: number }>()
   const deliveryOrder: string[] = []
   const userPrompts: FoldedUserPrompt[] = []
+  /** 0.2.1's injected exchanges, kept in log order until the dedupe pass below. */
+  const injections: FoldedMessageRecord[] = []
+  const rosterNames = rosterNamesBySession(indexed)
 
   for (const item of indexed) {
     const type = eventType(item)
@@ -766,6 +931,16 @@ export function foldMessageRecords(events: readonly unknown[]): FoldedMessages {
       const sourceKind = asText(source?.kind)
       if (sourceKind !== USER_SOURCE_KIND) {
         if (sourceKind !== undefined) diagnostics.injectedUserMessages += 1
+        // DSH 0.2.1 delivers a teammate/agent message as an injected user/message.
+        // Before this branch existed these were counted and thrown away, which is why
+        // every exchange arrow vanished after the upgrade.
+        if (sourceKind !== undefined && INJECTED_MESSAGE_KINDS.has(sourceKind) && source !== undefined) {
+          const injected = readInjectedExchange(item, source, data, rosterNames, diagnostics)
+          if (injected !== undefined) {
+            diagnostics.injectedExchanges += 1
+            injections.push(injected)
+          }
+        }
         continue
       }
       if (time === undefined) continue
@@ -804,6 +979,23 @@ export function foldMessageRecords(events: readonly unknown[]): FoldedMessages {
     }
     if (delivered.targetId !== undefined) record.targetId = delivered.targetId
     records.push(record)
+  }
+
+  // Merge 0.2.1's injected form with the 0.2.0 mailbox form, preferring the mailbox:
+  // its `queued` record carries the real hand-over time and an explicit `targetId`.
+  // The keys line up exactly — `source.messageId` of an injected team message equals
+  // `message.id` of its `queued` event (verified on 13 sessions that carry both).
+  // Measured over 581 real injections: 261 are duplicates of a queued record and are
+  // dropped here, while **320 have no queued counterpart** and would be LOST by a
+  // blanket "ignore the new form" — so the dedupe is by id, not by source kind.
+  const covered = new Set(records.map((record) => record.messageId))
+  for (const injected of injections) {
+    if (covered.has(injected.messageId)) {
+      diagnostics.injectedDuplicates += 1
+      continue
+    }
+    covered.add(injected.messageId)
+    records.push(injected)
   }
 
   const orderOf = (record: FoldedMessageRecord): number => record.queuedAt ?? record.deliveredAt ?? 0
