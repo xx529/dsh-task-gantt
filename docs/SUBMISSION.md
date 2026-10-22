@@ -3,10 +3,15 @@
 What was submitted to the plugin catalog, how it was validated, and what is
 still gating it. Kept in the repository so the claim is checkable later.
 
-**Status `2026-10-15T10:48Z`:** submitted as [PR #7086](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/7086)
-on `2026-10-10T18:16:41Z`; both catalog gates green since `2026-10-12T07:22Z`;
-**not merged**, so not yet visible in any market. Expected merge window
-`2026-10-17` – `2026-10-24` — see [Merge queue tracking](#merge-queue-tracking).
+**Status `2026-10-22T04:20Z`: MERGED and LIVE.** [PR #7086](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/7086)
+was merged `2026-10-21T17:18:52Z` by `fkysly` (merge commit `416eba8`) and the
+entry is in the published catalog (`plugins.json`, `updated: 2026-10-22`, 6378
+entries, `added: 2026-10-21`), with a live detail page at
+<https://awesome-dsh-plugin.com/p/xx529/dsh-task-gantt/>. The one thing still
+pending is cosmetic: the detail page grows its `README` section and screenshot
+gallery on the next nightly site build — see
+[What actually happened](#what-actually-happened) and
+`docs/MARKET.md` §0.
 
 ## Entry
 
@@ -70,12 +75,54 @@ above is the historical record of the 2026-10-11 run, not a current blocker.
 | GitHub topic `dsh-plugin` | ✅ | `gh repo view --json repositoryTopics` → `['dsh','dsh-plugin','deepseek-harness','dsh-better-sidebar','agent-team','gantt']` (checked 2026-10-15) |
 | Repository public, not archived, not DSH itself | ✅ | `gh repo view --json isPrivate` → `false` |
 | Repository ≥ 1 day old | ✅ | cleared `2026-10-11T17:37:09Z` as predicted; the catalog's own gate then confirmed it — `Submission gate` SUCCESS at `2026-10-12T07:22:46Z` |
-| CI green on `main` | ✅ | latest run `CI` = success, `2026-10-15T06:46:50Z` (`gh run list --repo xx529/dsh-task-gantt --limit 1`) |
+| CI green on `main` | ✅ | latest run `CI` = success, `2026-10-16T03:28:25Z` (`gh run list --repo xx529/dsh-task-gantt --limit 1`) |
 
 Deliberately **not** submitted: `dsh.plugin.json`. It is not a DSH contract —
 see `docs/INSTALL.md` §7 for the evidence table.
 
+## What actually happened
+
+Recorded after the fact, so the next submission does not repeat the same
+mistake — and so this file's earlier ETA is not left standing as if it had been
+right.
+
+| When (UTC) | What |
+|---|---|
+| `2026-10-10T18:16:41Z` | PR #7086 opened, one entry file, +6 lines |
+| `2026-10-12T07:22Z` | `check` + `Submission gate` both SUCCESS — the submission itself was fine |
+| `2026-10-17T07:22Z` | **`fkysly` reviewed it and put it on `held: author`**: the description omitted the required `dsh-better-sidebar >= 0.4.0` dependency. He wrote the exact sentence to add and said "改完推上来就合" (add it and I will merge it) |
+| `2026-10-17T08:15Z` | He restated the point with the README line numbers, in Chinese, adding "改完我直接合" |
+| `2026-10-18T18:43Z` | `Repository config guard` FAILED on the old commit — *"No checks ran on this pull request… Push any commit to re-trigger the checks"* |
+| `2026-10-21T06:35Z` | Pushed `05826bba`: `description.en`/`zh` appended the dependency sentence. Both checks went green again (`check` `06:35:30Z`, `Submission gate` `06:36:08Z`), the guard complaint cleared, `MERGEABLE` / `CLEAN` |
+| `2026-10-21T06:36:27Z` | Replied on the PR with the change, the README sources, and a note that the `held: author` label needs his re-review |
+| `2026-10-21T17:18:52Z` | **Merged** by `fkysly`, merge commit `416eba8` — 10 h 42 min after the reply |
+| `2026-10-22` | Catalog rebuilt: entry present in `plugins.json` (6378 entries), detail page live, site home lists it |
+
+### Why the ETA below was wrong
+
+The model in [Merge queue tracking](#merge-queue-tracking) assumed the only
+variable was queue depth and computed `2026-10-17` – `2026-10-24`. The premise
+was wrong twice over:
+
+1. **A held PR is not in the queue at all.** The batch merge filters by label
+   (`held-rescan.yml` header), and the number sweep had already passed `#7086`
+   (the merge front reached `#8370` while the PR sat held). No amount of queue
+   movement would have merged it; only the author's fix could.
+2. **The reviewer had already answered on day 7, not day 12.** The real
+   bottleneck was a one-sentence description gap that we could have closed on
+   `2026-10-17` — four days earlier than the ETA's lower bound. Checking PR
+   comments is cheaper and more informative than modelling merge throughput.
+
+Lesson for the next submission: after opening the PR, poll the PR's **comments
+and labels**, not just the merged date. A `held: author` label is an instruction,
+not a delay.
+
 ## Merge queue tracking
+
+> **Superseded `2026-10-21`.** Kept as the reasoning that was available at the
+> time; the outcome and its correction are in
+> [What actually happened](#what-actually-happened). The queue positions and
+> counts below were accurate for `2026-10-15` only.
 
 State captured `2026-10-15T10:48Z`, every value read back from the GitHub or
 catalog API — nothing here is recalled or inferred.
@@ -183,6 +230,39 @@ curl -sS https://awesome-dsh-plugin.com/plugins.json \
 # where is the front now? (adjust the date to the previous day)
 gh api "search/issues?q=repo:awesome-dsh-plugin/awesome-dsh-plugin+is:pr+is:merged+merged:%3E=2026-10-14&per_page=100" --jq '[.items[].number]|max'
 ```
+
+## How the detail page is rendered
+
+The detail page is **not** composed from the entry YAML alone, which is why a
+freshly merged entry looks thin for a day. Three sources, each with its own
+probe (all read out of the catalog repository's own `scripts/`):
+
+| Section on the page | Source | Built by |
+|---|---|---|
+| name, one-line description (en/zh), category, Install command, Links | `data/plugins/<entry>.yml` | `build-site.mjs` |
+| **README** — the long introduction with all its `h2`/`h3` sections | the plugin repo's `README.md` / `README.zh.md`, fetched into `data/readmes.json` | `scripts/probe-readmes.mjs`, `MAX_BYTES = 48 * 1024` |
+| **Screenshot gallery** (top of the README block) | `screenshots.json` beside the plugin's `package.json`; the catalog's own `data/screenshots.json` is only the fallback for pre-convention entries | `scripts/probe-screenshots.mjs` — ≤ 8 images; JSON may be an array, `{"screenshots": [...]}`, or a single-key map; relative paths must stay inside the plugin directory; absolute URLs only on GitHub hosts |
+| stars, npm, downloads, capability scan | repo + registry probes | `probe-stars.mjs`, `probe-npm.mjs`, `probe-downloads.mjs`, `probe-capabilities.mjs` |
+
+The important consequence: **push builds deploy but do not probe.**
+`build-site.yml` says so in its own comment ("Fresh data is a once-a-day need"),
+and the probes run in the scheduled build, `cron: '23 2 * * *'` — 10:23 Beijing,
+taking one to two hours for 6000+ entries. So a merged entry gets its description
+and Install command immediately, but its **README section and gallery only after
+the next scheduled probe**. Observed on `2026-10-22`: entries added 10-19/10-20
+had their README rendered; all 125 entries added 10-21, ours included, did not,
+because that morning's scheduled run (`39712698150`, started `02:40:42Z`) was
+still inside its `Build` step.
+
+What that meant for us:
+
+- **README** — nothing to do; it renders on its own (`README.md` 13 KB,
+  `README.zh.md` 12 KB, both well under the 48 KB cap, and the page also exists
+  in Chinese at `/zh/p/xx529/dsh-task-gantt/`).
+- **Gallery** — ours to fix, and we did on `2026-10-22`: repository-root
+  `screenshots.json` = `["docs/screenshots/panel-v4.png",
+  "docs/screenshots/panel-compact.png"]`. No catalog PR, no maintainer, no wait:
+  `probe-screenshots.mjs` reads the plugin repository directly at HEAD.
 
 ## Not required
 

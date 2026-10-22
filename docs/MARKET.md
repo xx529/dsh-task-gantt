@@ -6,8 +6,8 @@
 
 ## 0. Status at a glance
 
-Last checked `2026-10-15T10:48Z` — GitHub API (`gh`) plus
-`https://awesome-dsh-plugin.com/plugins.json`.
+Last checked `2026-10-22T04:20Z` — GitHub API (`gh`), the live
+`https://awesome-dsh-plugin.com/plugins.json`, and the published detail pages.
 
 | Item | Status |
 |---|---|
@@ -16,10 +16,12 @@ Last checked `2026-10-15T10:48Z` — GitHub API (`gh`) plus
 | Published to GitHub | ✅ since `2026-10-10T17:37:09Z` — `gh repo view xx529/dsh-task-gantt` resolves, `origin` = `https://github.com/xx529/dsh-task-gantt.git`, topics `['dsh','dsh-plugin','deepseek-harness','dsh-better-sidebar','agent-team','gantt']` |
 | Repo age ≥ 1 day | ✅ cleared `2026-10-11T17:37:09Z` as predicted; the catalog's own `Submission gate` confirmed it — SUCCESS `2026-10-12T07:22:46Z` |
 | `dsh-plugin` topic | ✅ set — see the topic list above |
-| Catalog entry (`data/plugins/xx529__dsh-task-gantt.yml`) | ✅ submitted — [PR #7086](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/7086), +6 lines and nothing else, opened `2026-10-10T18:16:41Z`, both checks SUCCESS, `MERGEABLE` / `CLEAN` |
-| **Catalog PR merged → visible in the market** | ⛔ **not yet** — submitted but unmerged, so the live `plugins.json` (4671 entries, `updated: 2026-10-14`) contains no `xx529` entry and no name containing `gantt`.<br>**预计合并窗口 / ETA to merge: `2026-10-17` – `2026-10-24`, centred on `2026-10-20`** — a queue position, not a promise; method and sources in `docs/SUBMISSION.md` §Merge queue tracking |
-| CI on `main` | ✅ latest run `CI` = success, `2026-10-15T06:46:50Z` |
-| Screenshots | ⚠️ 5 PNGs captured and published under `docs/screenshots/`, but no `screenshots.json` next to `package.json` yet — so the listing declares none (see §6.3 O1) |
+| Catalog entry (`data/plugins/xx529__dsh-task-gantt.yml`) | ✅ submitted — [PR #7086](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/7086), +6 lines and nothing else, opened `2026-10-10T18:16:41Z` |
+| **Catalog PR merged** | ✅ merged `2026-10-21T17:18:52Z` by `fkysly` (merge commit `416eba8`) — 10 h 42 min after our `05826bba` reply. It had been on `held: author` since 10-17 because the description omitted the required `dsh-better-sidebar >= 0.4.0` dependency; adding that one sentence unblocked it. Full timeline in `docs/SUBMISSION.md` |
+| **Visible in the market** | ✅ present in the live `plugins.json` (`updated: 2026-10-22`, 6378 entries, `added: 2026-10-21`): `category: ui`, `capabilities: ["network"]`, `install: dsh plugin --profile web add github:xx529/dsh-task-gantt`. Detail page `https://awesome-dsh-plugin.com/p/xx529/dsh-task-gantt/` returns HTTP 200 and the site home lists it. `dshmarket` reads the same URL with a 1 h in-memory cache (`…/dshmarket/src/registry.ts:36-37`), so the GUI shows it after a refresh |
+| **Detail page: README section** | ⏳ not rendered as of `2026-10-22T04:20Z`. READMEs come from the nightly full-probe build (`build-site.yml` `cron: 23 2 * * *`; push builds explicitly do **not** probe), and run `39712698150` started `02:40:42Z` is still in its `Build` step. Entries added 10-19/10-20 already have it; all 125 entries added 10-21, ours included, do not yet. No action needed — it appears when that run finishes |
+| CI on `main` | ✅ latest run `CI` = success, `2026-10-16T03:28:25Z` |
+| Screenshots | ✅ declared — `screenshots.json` at the repository root lists `docs/screenshots/panel-v4.png` + `docs/screenshots/panel-compact.png` (added `2026-10-22`, validated against `probe-screenshots.mjs`: array shape, ≤ 8 images, relative paths inside the plugin directory, both files live at HEAD). The gallery appears on the next nightly build |
 | Published to npm | ➖ optional; not planned, and not required for listing |
 
 ## 1. One-line description
@@ -234,7 +236,7 @@ The catalog's own bar, distilled:
 
 | # | Item | Source | Our status |
 |---|---|---|---|
-| O1 | `screenshots.json` next to `package.json`, 1–8 repo-relative images | `…/contributing.md`, "Screenshots" | ⚠️ 5 PNGs are captured and published at `docs/screenshots/`, but **no `screenshots.json` is declared** next to `package.json` (checked 2026-10-15) — so the listing declares none and the market falls back to images extracted from the README. Plan in `docs/SCREENSHOTS.md` |
+| O1 | `screenshots.json` next to `package.json`, 1–8 repo-relative images | `…/contributing.md`, "Screenshots" | ✅ declared `2026-10-22` — repository-root `screenshots.json` = `["docs/screenshots/panel-v4.png", "docs/screenshots/panel-compact.png"]`. Validated against `scripts/probe-screenshots.mjs` (array of non-empty strings, ≤ 8, relative paths that stay inside the plugin directory, both files present at HEAD). The gallery renders on the next nightly build |
 | O2 | Publish to npm (skips the `allowBuilds` build-approval step; adds a download count) | `…/contributing.md`, "Recommended…" + "npm package" | ➖ not planned; listing is unaffected |
 | O3 | Prebuilt tarball on a GitHub Release + `tarball:` field — **required** only if the repo cannot be installed from source at all | `…/contributing.md`, same section | ➖ not needed: `lib/` is committed, so `github:` installs need no build step |
 | O4 | `package.json#icon` + `locale/<lang>.json` for the host plugin manager's display metadata. `locale/en.json` is the **discovery baseline** — without it the whole locale directory is ignored, and every failure is silent (the entry just degrades to a plain text row) | `/tmp/dsh-better-sidebar-src/AGENTS.md:103` | ✅ resolved — `locale/en.json` and `locale/zh.json` exist and are published (`gh api repos/xx529/dsh-task-gantt/contents/locale`, 2026-10-15), `package.json` exports `./locale/*.json` and lists `locale/*.json` in `files`, and `icon.svg` + `"icon": "./icon.svg"` are present |
@@ -275,18 +277,19 @@ description:
 must be quoted in YAML — neither of ours contains `: `.)
 — <https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/blob/main/contributing.md>
 
-**Status of this PR:** opened `2026-10-10T18:16:41Z` as
-[PR #7086](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/7086).
-As of `2026-10-15T10:48Z` it is `OPEN`, `MERGEABLE` / `CLEAN`, with both `check`
-(SUCCESS `2026-10-12T07:22:18Z`) and `Submission gate` (SUCCESS
-`2026-10-12T07:22:46Z`) green. Nothing on our side blocks it; merging is manual
-and batched by the maintainer, so the remaining question is queue depth only.
+**Outcome:** opened `2026-10-10T18:16:41Z` as
+[PR #7086](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/7086);
+**merged `2026-10-21T17:18:52Z`** by `fkysly` (merge commit `416eba8`), and live
+in the market since the `2026-10-22` catalog rebuild.
 
-**预计合并窗口 / ETA to merge: `2026-10-17` – `2026-10-24`, centred on
-`2026-10-20`.** This is a queue position derived from the maintainer's observed
-merge history, **not a promise** — the method, the 156-PR wait-time distribution
-it is built on, and how to re-check it are all in
-`docs/SUBMISSION.md` §Merge queue tracking.
+The delay was **not** queue depth — `fkysly` reviewed it on `2026-10-17` and put
+it on `held: author` because the description omitted the required
+`dsh-better-sidebar >= 0.4.0` dependency, writing that adding that sentence would
+get it merged outright. We pushed `05826bba` on `2026-10-21T06:35Z` (both checks
+green again, which also cleared a `Repository config guard` complaint that no
+checks had run on the previous commit) and replied in the same minute; he merged
+it 10 h 42 min later. Full timeline, and the correction to the ETA model this
+file used to carry, are in `docs/SUBMISSION.md` §What actually happened.
 
 ## 9. Open items
 
@@ -295,8 +298,11 @@ it is built on, and how to re-check it are all in
 2. ✅ Wait out the 1-day repo-age bar before opening the catalog PR — cleared
    `2026-10-11T17:37:09Z`, PR opened `2026-10-10T18:16:41Z` (before the bar
    cleared) and the gate went green on its own at `2026-10-12T07:22:46Z`.
-3. ⛔ Capture the three screenshots and add `screenshots.json`
-   (`docs/SCREENSHOTS.md`).
+3. ✅ Declare the screenshots — `screenshots.json` added `2026-10-22` with
+   `docs/screenshots/panel-v4.png` and `docs/screenshots/panel-compact.png`
+   (validated against `probe-screenshots.mjs`). The gallery renders on the next
+   nightly build; the three-shot inventory in `docs/SCREENSHOTS.md` was the
+   pre-capture plan, the two declared files are the real captures.
 4. ✅ `locale/en.json` + `locale/zh.json` are shipped and published (checked
    `2026-10-15`), so the silent-degradation risk is closed; contract source as
    recorded: `/tmp/dsh-better-sidebar-src/AGENTS.md:103`.
@@ -312,3 +318,10 @@ it is built on, and how to re-check it are all in
    `packaging`; flagging rather than editing.
 7. ➖ Decide later whether to publish to npm (would enable the Community
    Market's automatic install preview).
+8. ⏳ **After the next nightly build** (`build-site.yml`, `cron: 23 2 * * *`):
+   confirm the detail page grew a `README` section and the two declared shots
+   render. Expected mechanism, sourced from the catalog's own scripts:
+   `probe-readmes.mjs` fetches each entry's README into `data/readmes.json`
+   (`MAX_BYTES = 48 KB`; ours is 13 KB) and `probe-screenshots.mjs` resolves
+   `screenshots.json` relative to the plugin repo at HEAD. Pull builds do not
+   probe, so nothing here is actionable before that run lands.

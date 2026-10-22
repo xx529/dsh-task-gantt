@@ -1,10 +1,15 @@
 # Screenshots — inventory, capture plan, and market declaration
 
-> **Status: placeholders.** No real screenshots exist yet. The images listed
-> below are captured by the **Lead** during the real-machine mount smoke test
-> (`cd ~/.dsh && dsh plugin --profile web add …`, restart `dsh web`, hard-refresh
-> the GUI, open the right sidebar). Until then the README references this file
-> instead of pretending an image exists.
+> **Status `2026-10-22`: one real capture exists, and the market declaration now
+> points at it.** Five PNGs were captured from a real profile under
+> `docs/screenshots/` (`panel-v4.png` is the published one and the image
+> `README.md` embeds). The repository-root `screenshots.json` declares
+> `docs/screenshots/panel-v4.png` and `docs/screenshots/panel-compact.png` for
+> the catalog's detail-page gallery — the catalog reads that file straight from
+> this repository on its nightly probe, so no catalog PR is involved. The
+> shot list in §1 below is the **original capture plan**; the three planned
+> "board / task-card / degraded" shots are still not all captured, and nothing
+> here is staged or mocked up.
 
 ## 1. What we need
 
