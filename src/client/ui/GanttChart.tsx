@@ -39,7 +39,7 @@ import type {
   LaneNavigation,
   MemberStatus,
   MessageSpan,
-  TaskEvent,
+  TaskStatus,
   TimelineResponse,
   QuestionDetail,
   TimelineLane,
@@ -53,7 +53,6 @@ import { taskRunTimes } from './task-times.ts'
 import { messageRouteKey, uiLabel } from './labels.ts'
 import {
   STATUS_GLYPH,
-  historyActionText,
   memberStatusText,
   roleText,
   taskStatusText,
@@ -76,6 +75,7 @@ import {
   isLiveBoard,
   clamp,
   FOLLOW_GUTTER_RATIO,
+  claimOffsetPx,
   inWindow,
   messageMarkerPaint,
   speakerLaneMapper,
@@ -203,6 +203,14 @@ export interface GanttChartProps {
   selectedMessageKey?: string | null
   /** Clicking a marker toggles it; Esc closes it (handled by the parent). */
   onSelectMessage?: (key: string | null) => void
+  /**
+   * Monotonic counter: every change asks the chart to scroll the NOW line back into
+   * view. Used by the axis's "现在" capsule, which sets `follow` AND bumps this, so a
+   * user who follows, drags away, then clicks "现在" is returned to the live edge.
+   */
+  recenterKey?: number
+  /** Clicking the axis's "现在" capsule (the shell owns `follow`, so it decides). */
+  onJumpToNow?: () => void
 }
 
 /**
@@ -302,6 +310,8 @@ export function GanttChart(props: GanttChartProps): ReactNode {
     onSelectMessage,
     windowSpanMs,
     follow,
+    recenterKey,
+    onJumpToNow,
   } = props
 
   const scrollRef = useRef<HTMLDivElement | null>(null)
@@ -311,6 +321,8 @@ export function GanttChart(props: GanttChartProps): ReactNode {
   const [scroll, setScroll] = useState({ left: 0, top: 0 })
   /** `null` = auto zoom (fit the whole window); a number = a user zoom. */
   const [msPerPx, setMsPerPx] = useState<number | null>(null)
+  /** The footer's "图例" popover. Closed by default: the chart must explain itself. */
+  const [legendOpen, setLegendOpen] = useState(false)
   /**
    * The auto-fit scale, FROZEN while following.
    *
@@ -587,7 +599,7 @@ export function GanttChart(props: GanttChartProps): ReactNode {
       el.scrollLeft = scrollTo
       syncScroll()
     }
-  }, [follow, data, layout.nowX, layout.contentWidth, viewport.width, scroll.left, syncScroll])
+  }, [follow, data, layout.nowX, layout.contentWidth, viewport.width, scroll.left, syncScroll, recenterKey])
 
   const onScroll = useCallback(() => {
     if (frameRef.current !== 0) return
@@ -755,7 +767,7 @@ export function GanttChart(props: GanttChartProps): ReactNode {
             className="dtg-canvas"
             style={{ width: layout.contentWidth, height: layout.contentHeight }}
           >
-            <Axis layout={layout} tzOffsetMinutes={tzOffsetMinutes} live={live} />
+            <Axis layout={layout} tzOffsetMinutes={tzOffsetMinutes} live={live} onJumpToNow={onJumpToNow} />
             <div className="dtg-layer" aria-hidden="true">
               {layout.lanes.map((lane) => (
                 <span
@@ -915,14 +927,32 @@ export function GanttChart(props: GanttChartProps): ReactNode {
         </HoverPopover>
       )}
 
-      <div className="dtg-legend">
-        <button type="button" className="dtg-btn" onClick={() => zoomByButton(1 / ZOOM_STEP)} title={uiLabel('zoomOut')}>
+      <div className="dtg-foot">
+        <button
+          type="button"
+          className="dtg-foot-btn"
+          onClick={() => zoomByButton(1 / ZOOM_STEP)}
+          title={uiLabel('zoomOut')}
+          aria-label={uiLabel('zoomOut')}
+        >
           −
         </button>
-        <button type="button" className="dtg-btn" onClick={() => setMsPerPx(null)} title={uiLabel('zoomReset')}>
+        <button
+          type="button"
+          className="dtg-foot-btn"
+          onClick={() => setMsPerPx(null)}
+          title={uiLabel('zoomReset')}
+          aria-label={uiLabel('zoomReset')}
+        >
           ⤢
         </button>
-        <button type="button" className="dtg-btn" onClick={() => zoomByButton(ZOOM_STEP)} title={uiLabel('zoomIn')}>
+        <button
+          type="button"
+          className="dtg-foot-btn"
+          onClick={() => zoomByButton(ZOOM_STEP)}
+          title={uiLabel('zoomIn')}
+          aria-label={uiLabel('zoomIn')}
+        >
           +
         </button>
         <span className="dtg-zoom-readout" title={uiLabel('zoomHint')}>
@@ -931,76 +961,26 @@ export function GanttChart(props: GanttChartProps): ReactNode {
           })}
         </span>
         <span className="dtg-spacer" />
-        <span className="dtg-legend-item">
-          <span className="dtg-legend-turn" />
-          {uiLabel('turnLegend')}
-        </span>
-        <span className="dtg-legend-item">
-          <span className="dtg-legend-step" />
-          {uiLabel('stepLegend')}
-        </span>
-        <span className="dtg-legend-item">
-          <span className="dtg-legend-card" />
-          {uiLabel('taskLegend')}
-        </span>
-        {markerCount === 0 ? null : (
-          <>
-            {/* The legend uses the SAME two shapes as the markers (filled ↗ vs
-                outlined ↙), so it explains the cue the reader actually sees rather
-                than approximating it. */}
-            <span className="dtg-legend-item" title={uiLabel('messageLegendHint')}>
-              <span className="dtg-legend-arrow" aria-hidden="true">
-                <ArrowIcon className="dtg-msg-arrow" direction="out" ink="currentColor" />
-              </span>
-              {uiLabel('messageLegendSent')}
-            </span>
-            <span className="dtg-legend-item" title={uiLabel('messageLegendHint')}>
-              <span className="dtg-legend-arrow" aria-hidden="true">
-                <ArrowIcon className="dtg-msg-arrow" direction="in" ink="currentColor" />
-              </span>
-              {uiLabel('messageLegendReceived')}
-            </span>
-            {waitBandCount === 0 ? null : (
-              <span className="dtg-legend-item" title={uiLabel('waitLegendHint')}>
-                <span className="dtg-legend-wait" aria-hidden="true" />
-                {uiLabel('waitLegend')}
-              </span>
-            )}
-            {layout.droppedMessageCount === 0 ? null : (
-              <span className="dtg-legend-item" title={uiLabel('messageDroppedHint')}>
-                {uiLabel('messageDropped', {
-                  shown: layout.messages.length,
-                  total: layout.messageCount,
-                })}
-              </span>
-            )}
-          </>
-        )}
-        {/* The task-transition rail's key. Without it the glyphs under a bar are
-            unexplained decoration; with it they say "this task was created, claimed and
-            completed, and here is where". The words come from `historyActionText`, i.e.
-            the SAME vocabulary the details panel prints, so the key cannot drift from
-            the marks it explains. */}
-        <span className="dtg-legend-item dtg-legend-events" title={uiLabel('historyLabel')}>
-          {uiLabel('historyLabel')}
-          {(['created', 'claimed', 'completed'] as const).map((action) => (
-            <span className="dtg-legend-event" key={action} title={historyActionText(action)}>
-              <span aria-hidden="true">{TASK_EVENT_GLYPH[action]}</span>
-              {historyActionText(action)}
-            </span>
-          ))}
-        </span>
-        {live ? null : (
-          <span className="dtg-legend-item" title={uiLabel('frozenHint')}>
-            {uiLabel('endedLabel')}
-          </span>
-        )}
-        {layout.unplacedTaskIds.length === 0 ? null : (
-          <span className="dtg-legend-item dtg-ink-failed" title={layout.unplacedTaskIds.join(', ')}>
-            {uiLabel('notPlaced', { count: layout.unplacedTaskIds.length })}
-          </span>
-        )}
+        <button
+          type="button"
+          className="dtg-foot-btn dtg-foot-legend"
+          onClick={() => setLegendOpen((open) => !open)}
+          aria-expanded={legendOpen}
+          aria-haspopup="dialog"
+          title={uiLabel('legendHint')}
+        >
+          {uiLabel('legendButton')}
+        </button>
       </div>
+      {legendOpen ? (
+        <LegendPopover
+          markerCount={markerCount}
+          waitBandCount={waitBandCount}
+          unplaced={layout.unplacedTaskIds.length}
+          live={live}
+          onClose={() => setLegendOpen(false)}
+        />
+      ) : null}
     </div>
   )
 }
@@ -1099,9 +1079,8 @@ function LaneHead({
   const body = (
     <>
       <div className="dtg-head-top">
-        <span className={ink} aria-hidden="true">
-          <span className="dtg-dot" style={color === undefined ? undefined : { background: color.bar }} />
-        </span>
+        {/* The identity DOT was removed: the name pill already carries the lane colour,
+            and the single status indicator on the right is the one status mark. */}
         {/* The identity colour is the NAME's background, with white text — the user's
             ask: "改成是 agent 名称的背景色，例如 lead 文字是白色，有个背景色是蓝色".
             It used to be a 2px border on the row's left edge, which read as a hairline
@@ -1250,10 +1229,12 @@ function Axis({
   layout,
   tzOffsetMinutes,
   live,
+  onJumpToNow,
 }: {
   layout: TimelineLayout
   tzOffsetMinutes: number
   live: boolean
+  onJumpToNow?: (() => void) | undefined
 }): ReactNode {
   const marker = layout.endMarker
   // The axis clips at the canvas edge; near the right edge the label flips to
@@ -1283,19 +1264,26 @@ function Axis({
         </span>
       ))}
       {marker === null || !marker.visible ? null : (
-        <span
+        <button
+          type="button"
           className={live ? 'dtg-now-head' : 'dtg-now-head dtg-now-head-ended'}
           style={{ left: marker.x, ...(flipLabel ? { transform: 'translateX(-100%)' } : {}) }}
+          onClick={() => onJumpToNow?.()}
           title={
             live
-              ? formatDateTime(marker.time, tzOffsetMinutes)
+              ? `${uiLabel('jumpToNow')} · ${formatDateTime(marker.time, tzOffsetMinutes)}`
+              : `${uiLabel('endedLabel')} ${formatDateTime(marker.time, tzOffsetMinutes)}`
+          }
+          aria-label={
+            live
+              ? `${uiLabel('jumpToNow')} · ${formatDateTime(marker.time, tzOffsetMinutes)}`
               : `${uiLabel('endedLabel')} ${formatDateTime(marker.time, tzOffsetMinutes)}`
           }
         >
           {live
-            ? `${uiLabel('nowLabel')} ${formatClock(marker.time, tzOffsetMinutes, { seconds: false })}`
-            : `${uiLabel('endedLabel')} ${formatClock(marker.time, tzOffsetMinutes, { seconds: false })}`}
-        </span>
+            ? `${uiLabel('nowLabel')} · ${formatClock(marker.time, tzOffsetMinutes, { seconds: false })}`
+            : `${uiLabel('endedLabel')} · ${formatClock(marker.time, tzOffsetMinutes, { seconds: false })}`}
+        </button>
       )}
     </div>
   )
@@ -2537,144 +2525,164 @@ export const ARROW_TIP_INSET_PX = 9.3
 
 
 /**
- * One glyph per dated task transition.
+ * The task's own STATE glyph, drawn INSIDE the bar at its right edge.
  *
- * The user's ask: "每个任务的创建，认领，完成，也有有标记显示在任务卡的地方". The task's
- * `history` already carries every dated transition — the chart simply was not drawing
- * them — so this needs no new host data.
+ * The old chart drew three transition glyphs (＋ / ▶ / ✓) on a rail UNDER every bar
+ * and then needed a legend entry to explain them. The approve redesign keeps ONE
+ * status mark inside the bar — a shape that survives label truncation — and moves
+ * the only time-of-interest fact, "when was it claimed", onto the claim rail below.
  *
- * The glyphs deliberately REUSE the status vocabulary the rest of the panel already
- * teaches (`▶` is "in progress", `✓` is "completed"), so a reader who has learnt the
- * status column does not have to learn a second symbol set:
- *
- * | action | glyph | reads as |
- * |---|---|---|
- * | `created` | `＋` | added |
- * | `claimed` | `▶` | work started (the in-progress glyph) |
- * | `completed` | `✓` | done (the completed glyph) |
- * | `reopened` | `↺` | back to open |
- * | `updated` | `·` | an edit / dependency change, deliberately quiet |
- * | `observed` | `◌` | only ever seen, never dated by an event |
- *
- * They are painted in the LANE's colour, because they belong to the task and the task
- * belongs to the lane; the word for each one lives in `title`/`aria-label`
- * (`historyActionText`) so colour is never the only signal.
+ * `pending` is a hollow circle, `in_progress` a filled dot, `completed` a tick and
+ * `failed` a cross: shape, not just colour, so it reads without the hue.
  */
-const TASK_EVENT_GLYPH: Record<TaskEvent['action'], string> = {
-  created: '＋',
-  claimed: '▶',
+const TASK_STATE_GLYPH: Record<TaskStatus, string> = {
+  pending: '○',
+  in_progress: '●',
   completed: '✓',
-  reopened: '↺',
-  updated: '·',
-  observed: '◌',
+  deleted: '✕',
 }
 
-/**
- * The transitions of one task, drawn as a rail UNDER its bar.
- *
- * Order and placement come from the data, never from guesswork: each event sits at its
- * own `time` scaled by the same `msPerPx` as the bar, so an event can be read against
- * the bar's length — "it was claimed a third of the way in" is a fact, not an
- * impression. Events are drawn in `history` order and any that share a time get a
- * one-pixel vertical stagger so a burst is not hidden behind its own first mark.
- *
- * The rail sits below the bar rather than on it: the bar's height is the one thing on
- * this chart that must stay exactly proportional (see `TASK_BAR_HEIGHT`), and overlaying
- * glyphs on a 10px bar would either cover it or force it taller.
- */
-/**
- * One task's transitions, resolved outside JSX so a test can assert them.
- *
- * Mirrors the `markerPaint` pattern: the tested function and the painted result cannot
- * drift, because the component renders exactly this array.
- */
-export interface TaskEventMark {
-  action: TaskEvent['action']
-  glyph: string
-  /** The word for the action, from the panel's ONE transition vocabulary. */
-  label: string
-  /** Absolute x of the mark: the bar's left edge plus the event's own elapsed time. */
-  x: number
-  /** Top of the glyph. A second event at the same instant is nudged down 1px. */
-  top: number
-  time: number
-}
+/** The narrowest bar that shows the state glyph without eating the label. */
+const TASK_BAR_STATE_MIN_WIDTH = 58
 
 /**
- * Where every dated transition of one task belongs, in card-local coordinates.
+ * The CLAIM rail under a task bar: two segments and one tick.
  *
- * Placement is arithmetic on the data, never a guess: `(event.time - rect.at) / msPerPx`
- * is the same conversion the BAR's width uses, so a mark reads against the bar's own
- * length — "claimed a third of the way in" is a fact here, not an impression.
+ * The bar answers two of the three instants with its own ends — left edge = created,
+ * right edge = completed (or NOW while running). The third, `claimed` / "work
+ * started", used to have no place on the chart. It is drawn here, 2px under the bar,
+ * instead of inside it: the bar is only 22px tall and its text occupies 5-17px, so
+ * any vertical line inside would cut through the label.
  *
- * @param rect - the card the marks belong to.
- * @param msPerPx - the chart's scale. A non-finite or non-positive value yields no
- *   marks rather than NaN positions: a mark at an infinite x paints nothing and is
- *   invisible in a way no screenshot review would catch.
+ *   idle segment  created → claimed   (a queued task is entirely this colour)
+ *   run segment   claimed → end       (the executing part)
+ *   tick          the claim instant itself
+ *
+ * A task that was never claimed gets a full idle rail and NO tick — which is the
+ * honest picture of "queued, never started". A live card (no dated history) gets no
+ * rail at all (the caller gates on `anchor === 'history'`).
  */
-export function taskEventMarks(rect: TaskCardRect, msPerPx: number): TaskEventMark[] {
-  if (!Number.isFinite(msPerPx) || msPerPx <= 0) return []
-  const seenAt = new Map<number, number>()
-  const marks: TaskEventMark[] = []
-  for (const event of rect.task.history) {
-    const offset = (event.time - rect.at) / msPerPx
-    if (!Number.isFinite(offset)) continue
-    // Events that share an instant get a 1px stagger, so a created+claimed pair shows
-    // as two marks instead of one hiding the other.
-    const repeat = seenAt.get(event.time) ?? 0
-    seenAt.set(event.time, repeat + 1)
-    marks.push({
-      action: event.action,
-      glyph: TASK_EVENT_GLYPH[event.action] ?? '·',
-      label: historyActionText(event.action),
-      x: rect.x + offset,
-      top: rect.barY + rect.barH + 1 + repeat,
-      time: event.time,
-    })
-  }
-  return marks
-}
-
-/**
- * The transitions of one task, drawn as a rail UNDER its bar.
- *
- * The rail sits below the bar rather than on it: the bar's height is the one thing on
- * this chart that must stay exactly proportional (see `TASK_BAR_HEIGHT`), and overlaying
- * glyphs on a 10px bar would either cover it or force it taller.
- */
-function TaskEventMarks({
-  rect,
-  msPerPx,
-  ink,
-  tzOffsetMinutes,
-}: {
-  rect: TaskCardRect
-  msPerPx: number
-  ink: string
-  tzOffsetMinutes: number
-}): ReactNode {
+function ClaimRail({ rect, msPerPx }: { rect: TaskCardRect; msPerPx: number }): ReactNode {
+  const width = Math.max(0, rect.w)
+  const claimAt = rect.claimAt
+  const offset = claimOffsetPx(rect, msPerPx)
   return (
-    <>
-      {taskEventMarks(rect, msPerPx).map((mark, index) => (
-        <span
-          key={`${mark.time}-${mark.action}-${index}`}
-          className="dtg-task-event"
-          // NOT `aria-hidden`: this is information, not decoration. A glyph alone is
-          // also unreadable, so the accessible name spells out the time and the action
-          // through the shared `taskEventAria` template.
-          role="img"
-          aria-label={format('taskEventAria', {
-            time: formatDateTime(mark.time, tzOffsetMinutes),
-            event: mark.label,
-          })}
-          data-task-event={mark.action}
-          style={{ left: mark.x, top: mark.top, color: ink }}
-          title={`${mark.label} · ${formatDateTime(mark.time, tzOffsetMinutes)}`}
-        >
-          {mark.glyph}
+    <span
+      className="dtg-claim"
+      style={{ left: rect.x, top: rect.barY + rect.barH + 2, width }}
+      aria-hidden="true"
+      data-claim={claimAt === null ? 'none' : 'claimed'}
+    >
+      <span className="dtg-claim-idle" style={{ width: offset }} />
+      <span className="dtg-claim-run" style={{ left: offset, width: Math.max(0, width - offset) }} />
+      {claimAt === null ? null : <span className="dtg-claim-tick" style={{ left: offset }} />}
+    </span>
+  )
+}
+
+/**
+ * The footer's legend popover.
+ *
+ * Closed by default: the chart is supposed to explain itself, and the old footer
+ * printed eleven legend items on two rows (about 15% of the panel) whether or not the
+ * reader needed them. The popover keeps the full key one gesture away.
+ */
+function LegendPopover({
+  markerCount,
+  waitBandCount,
+  unplaced,
+  live,
+  onClose,
+}: {
+  markerCount: number
+  waitBandCount: number
+  unplaced: number
+  live: boolean
+  onClose: () => void
+}): ReactNode {
+  const ref = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') onClose()
+    }
+    const onPointer = (event: MouseEvent): void => {
+      const target = event.target as Node | null
+      if (target !== null && ref.current?.contains(target) === true) return
+      onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    window.addEventListener('mousedown', onPointer)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('mousedown', onPointer)
+    }
+  }, [onClose])
+  return (
+    <div className="dtg-legend-pop" role="dialog" aria-label={uiLabel('legendButton')} ref={ref}>
+      <div className="dtg-legend-pop-title">{uiLabel('legendButton')}</div>
+      <div className="dtg-legend-pop-grid">
+        <span className="dtg-legend-item">
+          <span className="dtg-legend-turn" />
+          {uiLabel('turnLegend')}
         </span>
-      ))}
-    </>
+        <span className="dtg-legend-item">
+          <span className="dtg-legend-step" />
+          {uiLabel('stepLegend')}
+        </span>
+        <span className="dtg-legend-item">
+          <span className="dtg-legend-card" />
+          {uiLabel('taskLegend')}
+        </span>
+        <span className="dtg-legend-item" title={uiLabel('claimLegend')}>
+          <span className="dtg-legend-claim" />
+          {uiLabel('claimLegend')}
+        </span>
+        {markerCount === 0 ? null : (
+          <>
+            <span className="dtg-legend-item" title={uiLabel('messageLegendHint')}>
+              <span className="dtg-legend-arrow" aria-hidden="true">
+                <ArrowIcon className="dtg-msg-arrow" direction="out" ink="currentColor" />
+              </span>
+              {uiLabel('messageLegendSent')}
+            </span>
+            <span className="dtg-legend-item" title={uiLabel('messageLegendHint')}>
+              <span className="dtg-legend-arrow" aria-hidden="true">
+                <ArrowIcon className="dtg-msg-arrow" direction="in" ink="currentColor" />
+              </span>
+              {uiLabel('messageLegendReceived')}
+            </span>
+            {waitBandCount === 0 ? null : (
+              <span className="dtg-legend-item" title={uiLabel('waitLegendHint')}>
+                <span className="dtg-legend-wait" aria-hidden="true" />
+                {uiLabel('waitLegend')}
+              </span>
+            )}
+          </>
+        )}
+        <span className="dtg-legend-item" title={taskStatusText('completed')}>
+          <span className="dtg-legend-state" aria-hidden="true">✓</span>
+          {taskStatusText('completed')}
+        </span>
+        <span className="dtg-legend-item" title={taskStatusText('in_progress')}>
+          <span className="dtg-legend-state" aria-hidden="true">●</span>
+          {taskStatusText('in_progress')}
+        </span>
+        <span className="dtg-legend-item" title={taskStatusText('pending')}>
+          <span className="dtg-legend-state" aria-hidden="true">○</span>
+          {taskStatusText('pending')}
+        </span>
+        {live ? null : (
+          <span className="dtg-legend-item" title={uiLabel('frozenHint')}>
+            {uiLabel('endedLabel')}
+          </span>
+        )}
+        {unplaced === 0 ? null : (
+          <span className="dtg-legend-item dtg-ink-failed">
+            {uiLabel('notPlaced', { count: unplaced })}
+          </span>
+        )}
+      </div>
+    </div>
   )
 }
 
@@ -2805,14 +2813,16 @@ function TaskCard({
         */}
         {inside ? <span className="dtg-task-subject">{subject}</span> : null}
         {showEllipsis ? <span className="dtg-task-ellipsis" aria-hidden="true">…</span> : null}
+        {/* The task's own STATE, inside the bar at its right edge: a shape signal that
+            survives when the label truncates. Only when the bar is wide enough that
+            the glyph does not eat the text. */}
+        {rect.w >= TASK_BAR_STATE_MIN_WIDTH ? (
+          <span className={`dtg-task-state dtg-task-state-${task.status}`} aria-hidden="true">
+            {TASK_STATE_GLYPH[task.status] ?? '·'}
+          </span>
+        ) : null}
       </button>
-      {/* Every dated transition, at its own real time, on a rail under the box. */}
-      <TaskEventMarks
-        rect={rect}
-        msPerPx={msPerPx}
-        ink={color === undefined ? 'var(--dsw-alias-label-secondary)' : lanePaint(color.bar)}
-        tzOffsetMinutes={tzOffsetMinutes}
-      />
+      {rect.anchor === 'history' ? <ClaimRail rect={rect} msPerPx={msPerPx} /> : null}
     </span>
   )
 }

@@ -27,7 +27,7 @@
  * Kept in its own module (not inside the chart component) so a unit test can lock the
  * three states without pulling React and the whole renderer into the test graph.
  */
-import type { TimelineTask } from '../../shared/contract.ts'
+import type { TaskEvent, TimelineTask } from '../../shared/contract.ts'
 
 /** The three instants plus the derived run. */
 export interface TaskRunTimes {
@@ -39,6 +39,27 @@ export interface TaskRunTimes {
   durationMs: number
   /** `true` when there was no claim and `started` was taken from `created`. */
   startedIsFallback: boolean
+}
+
+/**
+ * The FIRST instant work began on this task, or `null` when it was never claimed.
+ *
+ * ONE definition, shared with the chart's claim rail (`claimInstant` in
+ * `timeline-layout.ts`): the drawer's 认领 column and the tick under the bar must never
+ * disagree about when the task started. A `reopened` event also counts as "work began"
+ * (the same rule this module has always used for `started`), so a reopened task keeps
+ * one continuous run instead of inventing a second start.
+ *
+ * @param history - ascending task history.
+ * @returns epoch ms of the first claim/reopen, or `null`.
+ */
+export function claimStart(history: readonly TaskEvent[]): number | null {
+  for (const event of history) {
+    if (event === null || typeof event !== 'object') continue
+    if (event.action !== 'claimed' && event.action !== 'reopened') continue
+    if (Number.isFinite(event.time)) return event.time
+  }
+  return null
 }
 
 /**
@@ -80,7 +101,7 @@ export function taskRunTimes(task: TimelineTask, now: number): TaskRunTimes {
       }
     }
   }
-  const claimed = first('claimed') ?? first('reopened')
+  const claimed = claimStart(history)
   const startedIsFallback = claimed === null
   const started = claimed ?? created
   // `now` may lag a recorded instant (a replayed log, or a test clock); never report a

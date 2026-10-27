@@ -13,6 +13,11 @@
  *
  * React is resolved from the host's frozen platform table at runtime, so the
  * test run aliases it to `tests/stubs/react.ts` (see `vitest.config.ts`).
+ *
+ * ADDED 2026-10-27 (v1 shell): the tab body's FIRST frame is now a real element
+ * (toolbar + loading skeleton) rather than the old `return null`; the last
+ * describe block locks that, because a blank first frame and an unreachable retry
+ * were the P0 defects of the redesign.
  */
 import { describe, expect, it } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
@@ -200,6 +205,35 @@ describe('tab registration (service already mounted)', () => {
       visible: false,
     })
     expect(element, 'a hidden tab must still return an element').toBeTruthy()
+  })
+})
+
+describe('the tab body reaches its loading state (P0)', () => {
+  it('renders the shell toolbar plus a loading skeleton on the very first frame, never null', () => {
+    // The reported defect: `if (shownData === null) return null` sat ABOVE the
+    // loading/error branches, so the first frame was blank and a failed fetch had
+    // no retry. The fix is only real if the component's first render is an
+    // element carrying the shell state — so this invokes it exactly the way the
+    // tab host does and inspects the tree.
+    const descriptor = applied({ withSidebar: true }).sidebar.registerCalls[0] as {
+      component: (props: unknown) => unknown
+    }
+    const element = descriptor.component({
+      ctx: applied({ withSidebar: true }).scopedWithService(),
+      store: {},
+      scope: { sessionId: 'session-abc', cwd: '/tmp' },
+      tab: { id: 'tab-1', type: TAB_TYPE_ID, title: 'Task Gantt' },
+      visible: true,
+    })
+    expect(element, 'the tab component must return an element').toBeTruthy()
+    const rendered = renderTree(element)
+    expect(rendered, 'the first frame must be a real tree, not null').not.toBeNull()
+    const serialized = JSON.stringify(rendered)
+    // The shell, not a bare frame: toolbar + centered state + the skeleton.
+    expect(serialized).toContain('dtg-topbar')
+    expect(serialized).toContain('dtg-state')
+    expect(serialized).toContain('dtg-state-skeleton')
+    expect(serialized, 'the old bare root had no state block').toContain('dtg-state-title')
   })
 })
 

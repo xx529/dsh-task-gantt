@@ -180,6 +180,7 @@
  * or malformed payloads (no lanes, no spans, no tasks) return empty arrays and
  * still produce ticks — `layoutTimeline` never throws.
  */
+import { claimStart } from './task-times.ts'
 import {
   MESSAGE_PREVIEW_MAX,
   type ActivitySpan,
@@ -187,6 +188,7 @@ import {
   type MessageSpan,
   type QuestionDetail,
   type SpanSpeaker,
+  type TaskEvent,
   type TimelineLane,
   type TimelineResponse,
   type TimelineTask,
@@ -202,7 +204,7 @@ export const DAY_MS = 24 * HOUR_MS
 /* -------------------------------------------------------------- viewport */
 
 /** Fixed lane-head column width (px): name + status dot, per the narrow-panel design. */
-export const LANE_HEAD_WIDTH = 132
+export const LANE_HEAD_WIDTH = 136
 /**
  * Fixed height of one lane row (px).
  *
@@ -212,9 +214,9 @@ export const LANE_HEAD_WIDTH = 132
  * tracks (see {@link laneTracks}). Do not make this content-adaptive, and do not
  * shrink the 36px task label to win lanes back: 36px is two measured text lines.
  */
-export const DEFAULT_LANE_HEIGHT = 72
+export const DEFAULT_LANE_HEIGHT = 80
 /** Default height of the sticky time-axis header (px). */
-export const DEFAULT_HEADER_HEIGHT = 28
+export const DEFAULT_HEADER_HEIGHT = 26
 /**
  * Blank headroom kept to the RIGHT of `now` in follow mode, as a fraction of the
  * viewport width.
@@ -236,9 +238,9 @@ export const DEFAULT_TICK_COUNT = 6
 
 /* --------------------------------------------------------------- geometry */
 
-export const LANE_PAD_Y = 3
+export const LANE_PAD_Y = 6
 export const TURN_BAND_HEIGHT = 10
-export const STEP_BAR_HEIGHT = 8
+export const STEP_BAR_HEIGHT = 6
 
 /* ------------------------------------------------------- the three tracks */
 
@@ -255,12 +257,12 @@ export const STEP_BAR_HEIGHT = 8
  *   track 3  task      the duration bar + its label chip
  */
 export const ACTIVITY_TRACK_HEIGHT = TURN_BAND_HEIGHT
-export const MESSAGE_TRACK_HEIGHT = 11
-export const TASK_TRACK_HEIGHT = 32
+export const MESSAGE_TRACK_HEIGHT = 12
+export const TASK_TRACK_HEIGHT = 34
 /** Vertical gap between two tracks. */
-export const TRACK_GAP = 3
+export const TRACK_GAP = 4
 /** Space under the last track, so a lane never ends flush against its bar. */
-export const LANE_BOTTOM_PAD = 3
+export const LANE_BOTTOM_PAD = 10
 
 /** One track's vertical slice inside a lane. */
 export interface LaneTrack {
@@ -306,7 +308,7 @@ export const TASK_CARD_TOP = ACTIVITY_TRACK_TOP + ACTIVITY_TRACK_HEIGHT + TRACK_
  * `TASK_BAR_HEIGHT + 2 + 10 === TASK_CARD_HEIGHT`, so the two cannot drift apart
  * silently — which a literal would otherwise allow.
  */
-export const TASK_CARD_HEIGHT = 32
+export const TASK_CARD_HEIGHT = 34
 /** A span shorter than this still gets a visible mark. */
 export const MIN_SPAN_PX = 2
 /**
@@ -359,7 +361,7 @@ export const TASK_MARKER_WIDTH = 9
  * 20px is one line of 12px text plus padding, and stays clear of
  * {@link STEP_BAR_HEIGHT} so the two never read as the same kind of object.
  */
-export const TASK_BAR_HEIGHT = 20
+export const TASK_BAR_HEIGHT = 22
 
 /**
  * Vertical offset of the task box inside its card slot.
@@ -400,6 +402,44 @@ export const TASK_LABEL_MIN_WIDTH = 36
  * which is the unreadable fragment this whole ladder exists to avoid.
  */
 export const TASK_LABEL_ELLIPSIS_MIN_WIDTH = 22
+
+/**
+ * The instant a task was CLAIMED / started executing, or `null`.
+ *
+ * The bar answers two questions with its ends: it starts when the task was
+ * CREATED and ends at its last transition (or NOW while it is still running).
+ * The claim is an instant INSIDE the bar, and the design gives it its own mark
+ * (the dual-segment rail under the bar, see `GanttChart`'s task card) — so the
+ * layout has to hand the renderer an absolute time, not a ratio.
+ *
+ * Delegates to {@link claimStart} so this tick and the drawer's 认领 column can
+ * never disagree; see that function for why `reopened` counts as a start.
+ *
+ * @param history - ascending task history from the payload.
+ * @returns epoch ms of the claim, or `null` when the task has not been claimed.
+ */
+export function claimInstant(history: readonly TaskEvent[]): number | null {
+  return claimStart(history)
+}
+
+/**
+ * The claim instant's x offset INSIDE a task card, in content px.
+ *
+ * Pure geometry for the rail under the bar: `(claimAt - at) / msPerPx`, clamped to
+ * `[0, w]` so a claim outside the drawn span (a task that started before the window)
+ * still lands on the card instead of escaping the canvas. A task with no claim (or a
+ * non-finite scale) has its whole rail in the "idle" state, so the offset is the full
+ * width — that is what makes "queued, never started" drawable.
+ *
+ * @param rect - the card whose claim is being placed.
+ * @param msPerPx - the chart's scale.
+ * @returns offset in content px from the bar's left edge.
+ */
+export function claimOffsetPx(rect: TaskCardRect, msPerPx: number): number {
+  const width = Math.max(0, rect.w)
+  if (rect.claimAt === null || !Number.isFinite(msPerPx) || msPerPx <= 0) return width
+  return Math.max(0, Math.min(width, (rect.claimAt - rect.at) / msPerPx))
+}
 
 /**
  * Which of the three label states a box of this width gets.
@@ -668,6 +708,12 @@ export interface TaskCardRect {
   at: number
   /** Last dated history time minus `at` (0 for a live or single-event card). */
   durationMs: number
+  /**
+   * Epoch ms the task was CLAIMED (started executing), or `null` when it has not
+   * been claimed yet. Rendered as the boundary of the dual-segment rail under the
+   * bar; `(claimAt - at) / msPerPx` is its x offset inside the card.
+   */
+  claimAt: number | null
   /** Index of the anchoring history event, -1 for a live card. */
   historyIndex: number
   /**
@@ -2324,6 +2370,7 @@ function taskCardRect(
   viewportWidth: number,
 ): TaskCardRect {
   const history = task.history ?? []
+  const claimAt = claimInstant(history)
   let anchor: 'history' | 'live' = 'live'
   let historyIndex = -1
   let from = win.end
@@ -2430,6 +2477,7 @@ function taskCardRect(
     anchor,
     at: from,
     durationMs: to - from,
+    claimAt,
     historyIndex,
     x,
     y: laneY + TASK_CARD_TOP,

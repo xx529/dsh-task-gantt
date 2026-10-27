@@ -13,6 +13,10 @@
  * derived by the chart from `data.lanes`, so this single function is the only place a
  * bug can hide. The two cases below that a naive implementation gets wrong are the
  * PINNED LEAD and the DEFAULT of "everything visible".
+ *
+ * ADDED 2026-10-27 (v1 shell): the toolbar now reports the hidden count as a `-N`
+ * badge and nothing else, so the last block ties that number to the lanes this
+ * module actually removes (a hidden LEAD must never inflate it).
  */
 import { describe, expect, it } from 'vitest'
 
@@ -372,5 +376,32 @@ describe('the working-only view', () => {
     // alpha is filtered out by the working view, so that message goes; the off-roster
     // peer was never on the board and therefore stays.
     expect((surviving?.messages ?? []).map((m) => m.to?.id)).toEqual(['outsider'])
+  })
+})
+
+/**
+ * The toolbar's filter badge (`−N`) is the only number the shell shows for this
+ * feature. Its pure-layer half: N must equal the lanes the filter ACTUALLY
+ * removes. The trap is the pinned Lead — a hidden set may carry its id (a stale
+ * saved selection, or "hide everything"), and the filter deliberately keeps it,
+ * so the badge must not claim a lane was hidden when it is still on the board.
+ */
+describe('the toolbar badge count matches what the filter removes', () => {
+  it('N equals the lanes actually removed, and a hidden Lead never inflates it', () => {
+    const data = fixture()
+    const cases: string[][] = [['alpha'], ['bravo', 'unassigned'], ['lead'], ['ghost']]
+    for (const ids of cases) {
+      const hidden = new Set(ids)
+      const removed = data.lanes.length - filterTimelineLanes(data, hidden, data.lanes, false).lanes.length
+      const effective = ids.filter((id) => {
+        const lane = data.lanes.find((entry) => entry.id === id)
+        return lane !== undefined && !isPinnedLane(lane)
+      }).length
+      expect(removed, `hidden=${ids.join(',')}`).toBe(effective)
+    }
+    // The measured extremes: hiding every filterable lane leaves the pinned row
+    // and reports 3, while hiding only the Lead reports 0.
+    expect(filterTimelineLanes(fixture(), new Set(['alpha', 'bravo', 'unassigned'])).lanes).toHaveLength(1)
+    expect(filterTimelineLanes(fixture(), new Set(['lead'])).lanes).toHaveLength(4)
   })
 })

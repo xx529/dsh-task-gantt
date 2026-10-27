@@ -42,6 +42,12 @@
  *           description (including its tail). After the `clipBounds` MOVE, the
  *           marker popover still clamps (not in the scroller, inside the panel,
  *           scroll unchanged).
+ *
+ * REVISED 2026-10-27 (v1 shell): the old bottom detail panels became ONE overlay
+ * drawer (`.dtg-drawer`). The measurements above stay as the evidence these locks
+ * were built from; the shell block at the END of this file adds the structural
+ * locks (toolbar/drawer classes, the reachable loading branch, mutual exclusion
+ * and the token-only SHELL_CSS) that the redesign needs.
  */
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
@@ -50,6 +56,8 @@ import { describe, expect, it } from 'vitest'
 import type { LaneColorTokens, MessageSpan, TimelineLane, TimelineResponse } from '../src/shared/contract.ts'
 import { layoutTimeline } from '../src/client/ui/timeline-layout.ts'
 import { waitBandRects } from '../src/client/ui/GanttChart.tsx'
+import { nextMessageSelection, nextTaskSelection } from '../src/client/ui/BoardView.tsx'
+import { SHELL_CSS } from '../src/client/ui/styles-shell.ts'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const COLOR: LaneColorTokens = { bar: '--dsw-static-blue-600', on: '--dsw-static-neutral-bluish-00' }
@@ -210,5 +218,108 @@ describe('renderer-side facts that only a DOM could otherwise show (PROXIES)', (
     const applications = [...board.matchAll(/data=\{shownData\}/g)].length
     expect(applications, 'BoardView must filter at exactly one place').toBe(1)
     expect(board).toContain('isPinnedLane')
+  })
+})
+
+/**
+ * The v1 shell (toolbar + ONE drawer) — locked as structure, not as a screenshot.
+ *
+ * These are SOURCE PROXIES for two reasons this repo already accepts: vitest runs
+ * in node (no DOM, so the real drawer cannot be opened here), and the properties
+ * being guarded are about WHICH element exists, which is exactly what a source
+ * read proves. Everything visual (the drawer actually overlaying the chart, the
+ * toolbar fitting in 448px) is checked on a real browser in the smoke pass.
+ */
+describe('the v1 shell replaced the chip toolbar', () => {
+  const board = readFileSync(resolve(ROOT, 'src/client/ui/BoardView.tsx'), 'utf8')
+  const shell = readFileSync(resolve(ROOT, 'src/client/ui/styles-shell.ts'), 'utf8')
+
+  it('BoardView renders the new toolbar and drawer, and none of the old bar', () => {
+    expect(board).toContain('dtg-topbar')
+    expect(board).toContain('dtg-drawer')
+    // The old row: chips + a text button + the "N 任务" chip. All gone, and the
+    // classes must not creep back (the chip row is what overflowed 480px).
+    expect(board).not.toContain('dtg-chip')
+    expect(board).not.toContain('dtg-bar')
+    expect(board).not.toContain('dtg-details')
+    expect(board).not.toContain('dtg-select')
+    expect(board, 'the "N tasks" chip must stay deleted').not.toContain('tasksLabel')
+  })
+
+  it('the toolbar is icon-first and uses the SHORT words, not sentence-length labels', () => {
+    expect(board).toContain('dtg-topbar-now')
+    expect(board).toContain('dtg-badge')
+    expect(board).toContain('dtg-iconbtn')
+    expect(board).toContain('role="switch"')
+    expect(board).toContain("uiLabel('followShort')")
+    expect(board, 'the old long follow label must not come back in the toolbar').not.toContain("uiLabel('followLabel')")
+    expect(board).toContain("uiLabel('sessionLog')")
+    // The badge is the hidden count, printed as -N.
+    expect(board).toContain('−${hiddenCount}')
+  })
+
+  it('the loading / error branches are REACHABLE (the P0 blank-frame bug)', () => {
+    // The condition must test `data`, not the filtered board: `shownData` is null
+    // exactly when `data` is, and the old `if (shownData === null) return null`
+    // sat ABOVE the loading/error branches, making both dead code.
+    const loadingAt = board.indexOf('if (data === null)')
+    const filteredAt = board.indexOf('if (shownData === null)')
+    expect(loadingAt, 'the loading/error branch must exist').toBeGreaterThan(-1)
+    // ...and it must come BEFORE the filtered-board narrowing. When the old
+    // `shownData === null` guard came first, everything after it was dead code.
+    expect(loadingAt).toBeLessThan(filteredAt === -1 ? board.length : filteredAt)
+    // A retry exists in the centered error state AND in the inline error bar.
+    expect((board.match(/dtg-state-retry/g) ?? []).length).toBeGreaterThanOrEqual(3)
+    expect(board).toContain('dtg-state-skeleton')
+    expect(board).toContain('ErrorBar')
+  })
+
+  it('ONE drawer, overlaid on the chart, never squeezing it', () => {
+    expect(shell).toMatch(/\.dtg-drawer\s*\{[^}]*position:\s*absolute/)
+    expect(shell).toMatch(/\.dtg-drawer\s*\{[^}]*max-height:\s*62%/)
+    expect(shell).toMatch(/\.dtg-drawer\s*\{[^}]*z-index:\s*35/)
+    expect(shell).toMatch(/\.dtg-drawer-host\s*\{[^}]*position:\s*relative/)
+    // The old in-flow panels could be open together and take 45% + 60%.
+    expect(board).not.toContain('dtg-message-details')
+  })
+
+  it('task / message / question are mutually exclusive by CONSTRUCTION', () => {
+    // A union + pure transitions: the illegal "two drawers open" state cannot be
+    // produced, so no future edit can forget to clear the other selection.
+    const task = nextTaskSelection(null, 'task-1')
+    expect(task).toEqual({ kind: 'task', id: 'task-1' })
+    const message = nextMessageSelection(task, 'lane:msg')
+    expect(message).toEqual({ kind: 'message', key: 'lane:msg' })
+    expect(nextTaskSelection(message, 'task-2')).toEqual({ kind: 'task', id: 'task-2' })
+    // Closing one kind must never dismiss the other kind that is showing.
+    expect(nextTaskSelection(message, null)).toBe(message)
+    expect(nextMessageSelection(task, null)).toBe(task)
+    // ...while closing its own kind really clears it.
+    expect(nextMessageSelection(message, null)).toBeNull()
+    expect(nextTaskSelection(task, null)).toBeNull()
+  })
+
+  it('status is a 6px dot + a WORD, and the drawer claim comes from taskRunTimes()', () => {
+    // The contract forbids a bordered status chip: the dot is 6px and the word carries
+    // the meaning, so a monochrome skin loses nothing.
+    expect(shell).toMatch(/\.dtg-state-dot\s*\{[^}]*width:\s*6px/)
+    expect(shell).toMatch(/\.dtg-state-dot\s*\{[^}]*border-radius:\s*50%/)
+    expect(shell, 'a status dot must not grow a border').not.toMatch(/\.dtg-state-dot\s*\{[^}]*border:/)
+    // The claim instant is SHARED with the chart's claim rail: both use
+    // `taskRunTimes(...).started`, so the drawer and the bar can never disagree.
+    expect(board).toContain('const run = taskRunTimes(task, now)')
+    expect(board).toContain('const claimed = run.startedIsFallback ? null : run.started')
+    expect(board).toContain("uiLabel('histClaimed')")
+  })
+
+  it('SHELL_CSS is token-only, so a skin swap repaints the shell too', () => {
+    expect(SHELL_CSS).not.toMatch(/#[0-9a-fA-F]{3,8}\b/)
+    expect(SHELL_CSS).not.toMatch(/\brgba?\s*\(/)
+    expect(SHELL_CSS).not.toMatch(/\bhsla?\s*\(/)
+    expect(SHELL_CSS).toContain('var(--dsw-alias-bg-layer-1)')
+    expect(SHELL_CSS).toContain('var(--dsw-font-xxs-12)')
+    // The shell styles ride the SAME injected style element as the board.
+    expect(board).toContain('SHELL_CSS')
+    expect(board).toContain('element.textContent')
   })
 })

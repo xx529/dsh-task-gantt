@@ -23,6 +23,7 @@ import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 import { decimateMarkers, MESSAGE_MARKER_MIN_GAP_PX } from '../src/client/ui/timeline-layout.ts'
+import { messageDrawerKind } from '../src/client/ui/BoardView.tsx'
 import type { MessageSpan } from '../src/shared/contract.ts'
 
 const GANTT = readFileSync(resolve(process.cwd(), 'src/client/ui/GanttChart.tsx'), 'utf8')
@@ -494,63 +495,127 @@ describe('the popover sizes itself to the viewport', () => {
 })
 
 /**
- * ONE BODY, TWO PLACES — and the DETAIL PANEL is a second place.
+ * ONE PAYLOAD, TWO RENDERERS — the bottom drawer and the hover popover.
  *
- * The user found the bottom detail panel showing only the generic fields (`lead → you`,
- * time, type, lane) with a body box holding the question text and NO answer or status. It
- * now renders the hover popover's own body, so the two cannot drift: the acceptance
- * condition for that change was that the SAME marker renders character-for-character
- * identical text in both places (verified in the browser — see the report), and these
- * locks keep the single implementation in place.
+ * The v1 redesign replaced the old "detail panel reuses QuestionPopoverBody"
+ * arrangement with ONE bottom drawer whose question layout deliberately differs:
+ * a 6px dot + word instead of a bordered chip, a check mark per chosen label, a
+ * failure that shows only the code. The property the old lock existed to protect
+ * is NOT the markup — it is that both views are renderings of the SAME
+ * {@link QuestionDetail} carried on the SAME `MessageSpan.question` field, with
+ * the same three statuses and the same "chosen labels only" answer semantics,
+ * and that a non-question marker still reaches the generic full-body path.
  */
-describe('the question detail is shared between the popover and the detail panel', () => {
-  it('the detail panel imports the SAME component the popover uses', () => {
-    // Not a copy, not a second component: the same export from the same module.
-    expect(BOARD).toContain("import { GanttChart, QuestionPopoverBody } from './GanttChart.tsx'")
-    expect(GANTT).toContain('export function QuestionPopoverBody')
-    expect(GANTT.match(/function QuestionPopoverBody/g) ?? [], 'exactly one implementation').toHaveLength(1)
+describe('the question drawer and the popover render the SAME detail', () => {
+  /** The popover body implementation, sliced at its function boundary. */
+  const popoverBody = (): string => {
+    const at = GANTT.indexOf('export function QuestionPopoverBody')
+    return GANTT.slice(at, GANTT.indexOf('\n}\n', at))
+  }
+  /** The drawer's per-question block (the part that renders header/prompt/answer). */
+  const questionBlock = (): string => {
+    const at = BOARD.indexOf('function QuestionBlock')
+    return BOARD.slice(at, BOARD.indexOf('function QuestionDrawerBody'))
+  }
+  /** The drawer's status-word mapping. */
+  const questionStatusHelper = (): string => {
+    const at = BOARD.indexOf('function questionStatusWord')
+    return BOARD.slice(at, BOARD.indexOf('\n}\n', at))
+  }
+
+  it('both read the question from the SAME contract field, never a second parse', () => {
+    // The popover reads the marker's payload; the drawer reads the span's payload.
+    // The marker IS the span in the layout, so this is one detail object, not two.
+    expect(GANTT).toContain('const questionDetail = marker.question')
+    expect(GANTT).toContain('question={questionDetail}')
+    expect(BOARD).toContain('question={message.question}')
+    // The drawer receives the whole detail object, not a re-assembled copy of its fields.
+    expect(BOARD).toMatch(/<QuestionDrawerBody[\s\S]*?question=\{message\.question\}/)
+    // ...and both components are typed by the contract's own QuestionDetail.
+    expect(GANTT).toContain('question: QuestionDetail | undefined')
+    expect(BOARD).toContain('question: QuestionDetail | undefined')
   })
 
-  it('both call sites pass the SAME three facts', () => {
-    // lane name, the moment, and the detail. If one site gains a prop the other lacks, the
-    // two renderings stop being comparable.
-    // The call is self-closing and carries the three facts; the window is generous because
-    // the popover's call site has a comment inside it.
-    const ganttCall = GANTT.slice(GANTT.indexOf('<QuestionPopoverBody'), GANTT.indexOf('<QuestionPopoverBody') + 400)
-    for (const prop of ['laneName=', 'when=', 'question=']) expect(ganttCall, prop).toContain(prop)
-    expect(ganttCall).toContain('/>')
-    const boardCall = BOARD.slice(BOARD.indexOf('<QuestionPopoverBody'), BOARD.indexOf('<QuestionPopoverBody') + 400)
-    expect(boardCall).toContain('laneName={laneName}')
-    expect(boardCall).toContain('when={detail.when}')
-    expect(boardCall).toContain('question={message.question}')
-    expect(boardCall).toContain('/>')
+  it('the drawer receives the SAME three facts the popover call passes', () => {
+    // lane name, the moment, and the detail. If one side gains a prop the other lacks,
+    // the two renderings no longer describe the same thing.
+    const popoverCall = GANTT.slice(GANTT.indexOf('<QuestionPopoverBody'), GANTT.indexOf('<QuestionPopoverBody') + 400)
+    for (const prop of ['laneName=', 'when=', 'question=']) expect(popoverCall, prop).toContain(prop)
+    expect(popoverCall).toContain('/>')
+    const drawerCall = BOARD.slice(BOARD.indexOf('<QuestionDrawerBody'), BOARD.indexOf('<QuestionDrawerBody') + 400)
+    for (const prop of ['laneName=', 'when=', 'question=']) expect(drawerCall, prop).toContain(prop)
+    expect(drawerCall).toContain('/>')
   })
 
-  it('the detail panel renders it ONLY for a question marker', () => {
-    expect(BOARD).toMatch(/message\.kind === 'question' && message\.question !== undefined \?/)
+  it('both cover the same three states with the same shared label keys', () => {
+    for (const key of ['questionStatusWaiting', 'questionStatusAnswered', 'questionStatusFailed']) {
+      expect(popoverBody(), key).toContain(key)
+      expect(questionStatusHelper(), key).toContain(key)
+    }
   })
 
-  it('a NON-question marker keeps the generic body, byte for byte', () => {
-    // The generic path must be untouched, including the three data attributes the PROXY
-    // suite in filter-dom.spec.ts relies on.
-    expect(BOARD).toContain('className="dtg-message-body"')
+  it('ANSWERS are the chosen labels only in both — never the unchosen options', () => {
+    // The user rejected the old list-every-option-and-its-description render ("不合适").
+    for (const source of [popoverBody(), questionBlock()]) {
+      expect(source).toContain('item.selected')
+      expect(source).toContain('item.custom')
+      expect(source, 'the unchosen choices must never be listed').not.toContain('item.options')
+      expect(source, 'option descriptions must never be listed').not.toContain('option.description')
+    }
+    // The drawer's chosen label carries the non-colour check cue the contract asks for.
+    expect(questionBlock()).toContain('dtg-drawer-choice-mark')
+    expect(questionBlock()).toContain('✓')
+  })
+
+  it('an unparsed result prints the raw text, and a failure gives only the code', () => {
+    expect(popoverBody()).toContain('question?.unparsed')
+    expect(popoverBody()).toContain('question.raw')
+    expect(popoverBody()).toContain('question?.errorCode')
+    const drawer = BOARD.slice(BOARD.indexOf('function QuestionDrawerBody'), BOARD.indexOf('export function BoardView'))
+    expect(drawer).toContain('question?.unparsed')
+    expect(drawer).toContain('question.raw')
+    expect(drawer).toContain('question?.errorCode')
+  })
+
+  it('the drawer renders the QUESTION kind only when the marker carries the detail', () => {
+    // Pure rule, so the "degraded payload still shows the generic body" case is locked
+    // without a DOM. A question marker WITHOUT its detail must not open an empty drawer.
+    const questionSpan = {
+      kind: 'question' as const,
+      time: 1,
+      end: null,
+      from: { kind: 'lead' as const, id: 'lead', name: 'lead' },
+      to: { kind: 'user' as const, id: 'user', name: 'you' },
+      sessionId: 'lead',
+    }
+    expect(messageDrawerKind({ ...questionSpan, question: { status: 'answered', questions: [] } })).toBe('question')
+    expect(messageDrawerKind(questionSpan)).toBe('message')
+    expect(messageDrawerKind({ ...questionSpan, kind: 'message' })).toBe('message')
+    expect(messageDrawerKind({ ...questionSpan, kind: 'dispatch' })).toBe('message')
+  })
+
+  it('a NON-question marker still reaches the generic FULL-BODY path', () => {
+    // RE-BASED, not deleted. The old byte-level assertions on `dtg-message-body` were
+    // about the in-flow panel; the semantic property is that the generic drawer is the
+    // ELSE branch and that it still renders the marker's complete body, with the three
+    // data attributes the PROXY suite in filter-dom.spec.ts relies on.
+    expect(BOARD).toContain('messageDrawerKind(message) === \'question\'')
+    expect(BOARD).toContain('<MessageDrawerBody')
     expect(BOARD).toContain('data-message-body=""')
     expect(BOARD).toContain('data-message-body-length={detail.body.length}')
     expect(BOARD).toContain("data-message-has-body={detail.hasBody ? 'true' : 'false'}")
-    expect(BOARD).toContain("{detail.hasBody ? detail.body : <span className=\"dtg-muted\">{uiLabel('messageNoBody')}</span>}")
-    // ...and it sits on the ELSE branch of the question test, so a question never shows both.
-    const branch = BOARD.slice(BOARD.indexOf("message.kind === 'question'"), BOARD.indexOf('className="dtg-message-body"'))
-    expect(branch, 'the generic body must be the else branch').toContain(') : (')
+    expect(BOARD).toContain('detail.hasBody ? detail.body')
+    expect(BOARD).toContain("uiLabel('messageNoBody')")
+    // The body is assembled by the shared helper (full text, never a preview).
+    expect(BOARD).toContain('messageDetail(')
   })
 
-  it('the shared component is a PURE BODY: no overlay positioning leaks into the panel', () => {
+  it('the popover body is a PURE BODY: no overlay positioning leaks into the drawer', () => {
     // The popover's clamp/flip/snap belongs to HoverPopover. Dragging it into a component
     // that also renders in the document flow would position a static region as if floating.
-    const body = GANTT.slice(GANTT.indexOf('export function QuestionPopoverBody'))
-    const end = body.indexOf('\n}\n')
-    const source = body.slice(0, end)
+    const body = popoverBody()
     for (const forbidden of ['overlaySpace', 'maxHeight', 'useLayoutEffect', 'HoverPopover', 'position:']) {
-      expect(source, `QuestionPopoverBody must not contain ${forbidden}`).not.toContain(forbidden)
+      expect(body, `QuestionPopoverBody must not contain ${forbidden}`).not.toContain(forbidden)
     }
     // Matching the IMPORT and the ELEMENT, not the word: the comment in BoardView names
     // HoverPopover while explaining that the positioning deliberately stays there.

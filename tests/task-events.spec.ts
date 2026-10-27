@@ -1,49 +1,62 @@
 /**
- * The task-transition rail: created / claimed / completed (and the rest) marked on the
- * task card.
+ * The CLAIM rail: when did a task actually start executing?
  *
- * The user's ask: "每个任务的创建，认领，完成，也有有标记显示在任务卡的地方，找一个方便阅读
- * 又美观的方式". The marks are resolved by `taskEventMarks` OUTSIDE JSX, so this asserts the
- * same array the component renders rather than a second, drifting implementation.
+ * The bar's two ends answer "created" and "completed", so the missing instant is the
+ * claim. `claimInstant` resolves it from the event history (the ONE vocabulary the panel
+ * already prints), and `claimOffsetPx` turns it into the x offset of the tick that the
+ * task card draws under its bar.
+ *
+ * The old spec asserted the removed multi-glyph transition rail (＋/▶/✓ under every
+ * bar). That encoding was replaced on purpose: three glyphs per task needed a legend
+ * entry to be readable, while the claim is the only one of the three instants the bar's
+ * geometry does not already show.
  */
 import { describe, expect, it } from 'vitest'
-import type { TaskEvent, TimelineTask } from '../src/shared/contract.ts'
-import { taskEventMarks } from '../src/client/ui/GanttChart.tsx'
-import type { TaskCardRect } from '../src/client/ui/timeline-layout.ts'
+import type { TaskEvent, TimelineResponse } from '../src/shared/contract.ts'
+import {
+  DEFAULT_HEADER_HEIGHT,
+  DEFAULT_LANE_HEIGHT,
+  claimInstant,
+  claimOffsetPx,
+  layoutTimeline,
+  type TaskCardRect,
+} from '../src/client/ui/timeline-layout.ts'
+import { claimStart } from '../src/client/ui/task-times.ts'
+import { validTimeline } from './helpers/timeline-assert.ts'
 
 function event(time: number, action: TaskEvent['action']): TaskEvent {
   return { time, action, revision: 1, sessionId: 'session-a' }
 }
 
-/** A card whose bar starts at x=40 and spans `durationMs` at `msPerPx`. */
-function card(history: TaskEvent[], over: Partial<TaskCardRect> = {}): TaskCardRect {
-  const at = history[0]?.time ?? 1_000
+/** A card whose bar starts at x=40 and is 100px wide. */
+function card(claimAt: number | null, over: Partial<TaskCardRect> = {}): TaskCardRect {
   return {
     laneId: 'lead',
     laneIndex: 0,
     task: {
       id: 't1',
-      revision: history.length,
+      revision: 2,
       laneId: 'lead',
       subject: 's',
       description: '',
-      status: 'completed',
+      status: 'in_progress',
       blockedBy: [],
       writeScopes: [],
       ready: true,
       writeScopeWarnings: [],
-      history,
-    } satisfies TimelineTask,
+      history: [event(10_000, 'created')],
+    },
     anchor: 'history',
-    at,
-    durationMs: 0,
+    at: 10_000,
+    durationMs: 1_000,
     historyIndex: 0,
+    claimAt,
     x: 40,
     y: 0,
-    h: 36,
+    h: 34,
     w: 100,
-    barY: 13,
-    barH: 10,
+    barY: 36,
+    barH: 22,
     viewX: 40,
     visible: true,
     live: false,
@@ -51,60 +64,107 @@ function card(history: TaskEvent[], over: Partial<TaskCardRect> = {}): TaskCardR
     labelX: 40,
     labelY: 0,
     labelW: 100,
-    labelH: 36,
+    labelH: 34,
+    ...over,
   }
 }
 
-describe('every dated transition gets a mark, at its own time', () => {
-  it('marks created, claimed and completed at the x their own times imply', () => {
-    // 1000ms/px, so an event 200ms after the anchor sits 0.2px to the right. Small
-    // numbers on purpose: a mark must not be rounded to "roughly the right place".
-    const history = [event(10_000, 'created'), event(10_200, 'claimed'), event(10_500, 'completed')]
-    const marks = taskEventMarks(card(history), 1_000)
-    expect(marks.map((m) => m.action)).toEqual(['created', 'claimed', 'completed'])
-    expect(marks.map((m) => m.x)).toEqual([40, 40.2, 40.5])
-    // The words come from the panel's ONE transition vocabulary.
-    expect(marks.map((m) => m.label)).toHaveLength(3)
-    expect(new Set(marks.map((m) => m.label)).size, 'the three actions must not share a word').toBe(3)
+describe('claimInstant: the first claim of the CURRENT execution', () => {
+  it('is null for a task that was created but never claimed', () => {
+    expect(claimInstant([event(10_000, 'created')])).toBeNull()
+    expect(claimInstant([])).toBeNull()
   })
 
-  it('gives every action a glyph, and the three the user named are distinct', () => {
-    const all: TaskEvent['action'][] = ['created', 'claimed', 'completed', 'reopened', 'updated', 'observed']
-    const marks = taskEventMarks(card(all.map((a, i) => event(10_000 + i * 1_000, a))), 1_000)
-    expect(marks).toHaveLength(6)
-    for (const mark of marks) expect(mark.glyph, `${mark.action} has no glyph`).not.toBe('')
-    const named = marks.filter((m) => ['created', 'claimed', 'completed'].includes(m.action)).map((m) => m.glyph)
-    expect(named).toHaveLength(3)
-    expect(new Set(named).size, `created/claimed/completed share a glyph: ${named.join(' ')}`).toBe(3)
+  it('returns the claimed event that follows the creation', () => {
+    expect(
+      claimInstant([event(10_000, 'created'), event(10_200, 'claimed'), event(10_500, 'completed')]),
+    ).toBe(10_200)
   })
 
-  it('places a created+claimed pair at the same instant as TWO marks, not one', () => {
-    // A real burst: team_task_create then an immediate claim. At the same x the second
-    // would be painted exactly over the first and the reader would count one transition.
-    const marks = taskEventMarks(card([event(10_000, 'created'), event(10_000, 'claimed')]), 1_000)
-    expect(marks).toHaveLength(2)
-    expect(marks[0]?.x).toBe(marks[1]?.x)
-    expect(marks[0]?.top, 'the second mark must be staggered').not.toBe(marks[1]?.top)
+  it('keeps the FIRST claim through a reopen, matching the drawer\'s 认领 column', () => {
+    // created -> claimed -> reopened -> claimed. `claimStart` (the drawer's source of
+    // truth) treats the run as continuous, so the rail must not invent a second start:
+    // the two places where the user reads "认领" would otherwise disagree.
+    const history = [
+      event(10_000, 'created'),
+      event(10_100, 'claimed'),
+      event(10_400, 'reopened'),
+      event(10_600, 'claimed'),
+      event(10_900, 'completed'),
+    ]
+    expect(claimInstant(history)).toBe(10_100)
+    expect(claimInstant(history)).toBe(claimStart(history))
   })
 
-  it('marks nothing when the scale is unusable, instead of a mark at NaN', () => {
-    // A mark at an infinite or NaN x paints nothing, and no screenshot review would
-    // catch it. Refusing to emit is the honest failure.
-    const history = [event(10_000, 'created')]
+  it('counts a reopen as the start when the task was never claimed', () => {
+    expect(claimInstant([event(10_000, 'created'), event(10_400, 'reopened')])).toBe(10_400)
+  })
+
+  it('is null after a plain creation that was never claimed', () => {
+    expect(claimInstant([event(10_000, 'created'), event(10_200, 'updated')])).toBeNull()
+  })
+
+  it('takes the FIRST claim of a burst, not the last', () => {
+    expect(
+      claimInstant([
+        event(10_000, 'created'),
+        event(10_100, 'claimed'),
+        event(10_120, 'claimed'),
+        event(10_200, 'completed'),
+      ]),
+    ).toBe(10_100)
+  })
+})
+
+describe('claimOffsetPx: where the tick lands inside the bar', () => {
+  it('puts a claimed task at the fraction of the bar its elapsed time implies', () => {
+    // 1s per px, claim 0.4s in => 0.4px. Small numbers on purpose: the tick must not be
+    // rounded to "roughly the right place".
+    const rect = card(10_000 + 400, { at: 10_000, w: 100 })
+    expect(claimOffsetPx(rect, 1_000)).toBeCloseTo(0.4, 6)
+  })
+
+  it('draws the whole rail as queued when the task was never claimed', () => {
+    expect(claimOffsetPx(card(null), 1_000)).toBe(100)
+  })
+
+  it('clamps a claim outside the drawn span onto the bar', () => {
+    // A task that started before the window: `at` is clamped to the window edge but the
+    // claim keeps its real time. The tick must stay on the card, never past its end.
+    expect(claimOffsetPx(card(120_000, { at: 10_000, w: 100 }), 1_000)).toBe(100)
+    expect(claimOffsetPx(card(5_000, { at: 10_000, w: 100 }), 1_000)).toBe(0)
+  })
+
+  it('treats an unusable scale as "no claim position" instead of NaN', () => {
     for (const bad of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
-      expect(taskEventMarks(card(history), bad), `msPerPx=${String(bad)}`).toEqual([])
+      expect(claimOffsetPx(card(10_100), bad), `msPerPx=${String(bad)}`).toBe(100)
     }
   })
+})
 
-  it('keeps the rail clear of the bar it annotates', () => {
-    // The rail must not sit ON the bar: TASK_BAR_HEIGHT is the measurement that has to
-    // stay exactly proportional, so a glyph over it would either cover it or force it
-    // taller. The check is positional rather than a comment.
-    const rect = card([event(10_000, 'created')])
-    const marks = taskEventMarks(rect, 1_000)
-    const barBottom = rect.barY + rect.barH
-    for (const mark of marks) {
-      expect(mark.top, 'a transition mark must start below the bar').toBeGreaterThanOrEqual(barBottom)
-    }
+describe('layout wiring: the task card carries the claim instant', () => {
+  it('computes claimAt from the task history', () => {
+    const data: TimelineResponse = validTimeline()
+    const start = data.range.start
+    const history = [
+      event(start, 'created'),
+      event(start + 500, 'claimed'),
+      event(start + 1_000, 'completed'),
+    ]
+    const task = data.tasks[0]
+    const laneTask = data.lanes[0]?.tasks[0]
+    if (task === undefined || laneTask === undefined) throw new Error('fixture has no task')
+    task.status = 'completed'
+    task.history = history
+    laneTask.status = 'completed'
+    laneTask.history = history
+    const layout = layoutTimeline(
+      data,
+      { width: 200, height: 400, laneHeight: DEFAULT_LANE_HEIGHT, headerHeight: DEFAULT_HEADER_HEIGHT },
+      { now: start + 2_000, msPerPx: 1_000 },
+    )
+    const drawn = layout.tasks[0]
+    expect(drawn?.claimAt).toBe(start + 500)
+    expect(drawn?.at).toBe(start)
   })
 })

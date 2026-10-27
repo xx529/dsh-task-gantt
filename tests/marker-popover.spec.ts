@@ -51,16 +51,16 @@ const wait = (start: number, end: number | null, extra: Partial<LaneWait> = {}):
 })
 
 describe('wait bands: the vertical place is the activity track (cross-check of the DOM numbers)', () => {
-  it('reports y/h that match the constants and the browser measurement (17 / 10)', () => {
+  it('reports y/h that match the constants and the approved 80px lane (22 / 10)', () => {
     const [band] = waitBandRects([wait(40_000, 45_000)], { ...base, laneY: 0 })
     expect(band?.y).toBe(ACTIVITY_TRACK_TOP)
     expect(band?.h).toBe(ACTIVITY_TRACK_HEIGHT)
-    // Measured in the browser: y = 17, h = 10, and the 8px step at y = 18.
-    expect(band?.y).toBe(17)
+    // The approved lane: message row 6..18, activity 22..32, task slot 36..70.
+    expect(band?.y).toBe(22)
     expect(band?.h).toBe(10)
-    // It is NOT the message track: MESSAGE_TRACK_TOP = 3, MESSAGE_TRACK_HEIGHT = 11.
-    expect(band?.y).not.toBe(3)
-    expect(band?.h).not.toBe(11)
+    // It is NOT the message track: MESSAGE_TRACK_TOP = 6, MESSAGE_TRACK_HEIGHT = 12.
+    expect(band?.y).not.toBe(6)
+    expect(band?.h).not.toBe(12)
   })
 
   it('offsets by laneY so lane 3 lands on ITS OWN activity track', () => {

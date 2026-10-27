@@ -19,6 +19,7 @@ export const BOARD_CSS = `
 .dtg-root {
   display: flex;
   flex-direction: column;
+  position: relative;
   height: 100%;
   min-height: 0;
   min-width: 0;
@@ -135,6 +136,9 @@ export const BOARD_CSS = `
 }
 .dtg-head-row-idle { opacity: 0.72; }
 .dtg-head-top { display: flex; align-items: center; gap: 4px; min-width: 0; }
+/* The single status indicator is pinned to the RIGHT edge of the head row: the name
+   pill may shrink (and ellipsise) but the status mark never drifts next to it. */
+.dtg-head-top > .dtg-ink { margin-left: auto; }
 /* The agent's identity is a PILL around the name, not a hairline stripe: a 2px
    left border was too easy to miss (the user's words: "a very narrow stripe, not
    obvious"). The background is supplied INLINE by the renderer from the lane's
@@ -144,27 +148,22 @@ export const BOARD_CSS = `
    free pixel of the row (it had no max width), so a long name would have pushed the
    status word and the spinner out instead of truncating itself. A name that does not fit
    ellipsises inside the pill — which is the intended degradation. */
+/* Lane identity: a NAME PILL (user requirement: colour background, white text).
+  20px tall / radius 4 / 11px medium, per the approved redesign. The fill and the ink
+  are both set inline from the lane's own tokens (see LaneHead): a saturated fill
+  needs the static light ink in both skins, which no theme alias can guarantee. */
 .dtg-head-name {
   min-width: 0;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   display: inline-block;
-  /* NO max-width cap. One was added while the row held three items (pill + status word
-     + spinner) so the word kept a seat; the status word has since moved to the meta line,
-     and the cap was then the only thing still truncating names — measured: host-data
-     needed 69px but was capped to 66px, against ~108px of free row. Without it the pill
-     uses the row (and shrinks only if a name genuinely does not fit). */
-  padding: 1px 6px;
-  border-radius: 3px;
+  max-width: 100%;
+  padding: 1px 7px;
+  border-radius: 4px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font: var(--dsw-font-xxs-strong-12);
-  /* A FALLBACK only — the real ink arrives INLINE from LaneColorTokens.on.
-     A saturated lane fill needs the same light ink in both skins, and every theme alias
-     that means "text on a fill" flips with the theme: the label-primary-inverted token is
-     white in the light skin and a dark grey (fifty-three, fifty-four, fifty-six) in the
-     dark one, which measured 2.34:1 on the blue fill — dark grey on blue. The static white
-     does not flip, so it is both the ink the host sends and this default. */
+  font: var(--dsw-font-xxxs-strong-11);
+  line-height: 18px;
   color: var(--dsw-static-neutral-bluish-00);
 }
 /* One fact per line. As a single flex row, role + status + task count + message
@@ -252,10 +251,18 @@ export const BOARD_CSS = `
   transform: translateX(1px);
   color: var(--dsw-alias-label-tertiary);
   font: var(--dsw-font-xxxs-11);
+  font-family: var(--ds-font-family-code);
   white-space: nowrap;
 }
 .dtg-tick-major .dtg-tick-label { color: var(--dsw-alias-label-secondary); font: var(--dsw-font-xxxs-strong-11); }
-.dtg-chart { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; min-width: 0; }
+.dtg-chart {
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
 .dtg-layer { position: absolute; left: 0; top: 0; right: 0; bottom: 0; pointer-events: none; }
 .dtg-lane-bg { position: absolute; left: 0; border-top: 1px solid var(--dsw-alias-border-l1); }
 .dtg-lane-bg-alt { background: var(--dsw-alias-bg-layer-2); opacity: 0.5; }
@@ -269,7 +276,7 @@ export const BOARD_CSS = `
   /* The renderer paints the lane colour inline (a token reference); this is the
      neutral default for a payload that carries no lane colour. */
   background: var(--dsw-alias-bg-layer-3);
-  opacity: 0.75;
+  opacity: 0.2;
 }
 .dtg-step {
   position: absolute;
@@ -314,6 +321,9 @@ export const BOARD_CSS = `
    不要用跟 agent 的颜色，用回之前那种"): a neutral surface whose only agent-coloured
    element is the 3px left edge. In between it was filled solid with the lane identity
    colour, which read as an identity swatch rather than as a task. */
+/* THE task box: its width IS the duration; nothing is ever padded to fit a label.
+  Neutral surface + a 3px lane-colour left edge (user requirement: the agent colour
+  identifies, it does not paint the whole task). 22px tall per the approved design. */
 .dtg-task {
   position: absolute;
   display: flex;
@@ -321,14 +331,14 @@ export const BOARD_CSS = `
   flex-wrap: nowrap;
   align-items: center;
   justify-content: flex-start;
-  gap: 0;
-  padding: 2px 6px 2px 8px;
+  gap: 4px;
+  padding: 0 6px 0 9px;
   margin: 0;
   text-align: left;
   border: 1px solid var(--dsw-alias-border-l2);
   border-left-width: 3px;
   border-left-color: currentColor;
-  border-radius: 4px;
+  border-radius: 5px;
   background: var(--dsw-alias-bg-layer-2);
   color: var(--dsw-alias-label-primary);
   cursor: pointer;
@@ -345,7 +355,7 @@ export const BOARD_CSS = `
    covers, with no hole in either case. */
 .dtg-task:hover { box-shadow: inset 0 0 0 999px var(--dsw-alias-interactive-bg-hover); }
 .dtg-task:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary); outline-offset: 1px; }
-.dtg-task[aria-pressed='true'] { outline: 2px solid var(--dsw-alias-brand-primary); outline-offset: 1px; }
+.dtg-task[aria-pressed='true'] { outline: 1.5px solid var(--dsw-alias-state-business-primary); outline-offset: 1px; }
 
 /* An OPEN task: its right edge is not a fact yet, so the box is squared off there and
    the edge is dashed. The fill stays the lane colour — a live task is still that lane's
@@ -383,6 +393,56 @@ export const BOARD_CSS = `
   color: var(--dsw-alias-label-secondary);
   font: var(--dsw-font-xxxs-strong-11);
   line-height: 1;
+}
+
+.dtg-task-state {
+  flex: 0 0 auto;
+  margin-left: auto;
+  font: var(--dsw-font-xxxs-strong-11);
+  line-height: 1;
+  color: var(--dsw-alias-label-tertiary);
+}
+.dtg-task-state-in_progress { color: var(--dsw-alias-state-business-primary); }
+.dtg-task-state-completed { color: var(--dsw-alias-label-tertiary); }
+.dtg-task-state-pending { color: var(--dsw-alias-label-tertiary); }
+.dtg-task-state-deleted { color: var(--dsw-alias-state-error-primary); }
+
+/* THE CLAIM RAIL — the one instant the bar's ends cannot show.
+   2px under the bar: an idle (queued) segment, a running segment, and a tick at the
+   claim instant itself. It is deliberately OUTSIDE the bar, whose 22px height is taken
+   by the label; a vertical line inside would cut the text. */
+.dtg-claim {
+  position: absolute;
+  height: 3px;
+  border-radius: 2px;
+  background: transparent;
+  pointer-events: none;
+}
+.dtg-claim-idle {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 3px;
+  border-radius: 2px 0 0 2px;
+  background: var(--dsw-alias-label-tertiary);
+  opacity: 0.3;
+}
+.dtg-claim-run {
+  position: absolute;
+  top: 0;
+  height: 3px;
+  border-radius: 0 2px 2px 0;
+  background: var(--dsw-alias-state-business-primary);
+  opacity: 0.55;
+}
+.dtg-claim-tick {
+  position: absolute;
+  top: -2px;
+  width: 2px;
+  height: 7px;
+  margin-left: -1px;
+  border-radius: 1px;
+  background: var(--dsw-alias-state-business-primary);
 }
 
 /* The hover/focus popover.
@@ -631,8 +691,8 @@ export const BOARD_CSS = `
    a fixed flex basis stops it being squeezed by a long name. */
 .dtg-spin {
   display: block;
-  width: 11px;
-  height: 11px;
+  width: 12px;
+  height: 12px;
   border-radius: 50%;
   border: 1.5px solid var(--dsw-alias-border-l2);
   border-top-color: currentColor;
@@ -827,20 +887,7 @@ export const BOARD_CSS = `
    it because TASK_BAR_HEIGHT is the one measurement on this chart that must stay
    exactly proportional — overlaying glyphs on a 10px bar would cover it or force it
    taller, and either would undo the "bar length IS duration" rule. */
-.dtg-task-event {
-  position: absolute;
-  font: var(--dsw-font-xxxs-strong-11);
-  line-height: 1;
-  pointer-events: none;
-  /* Above the label chip. A task's LAST transition is by definition at the bar's right
-     edge, which is exactly where an outside label chip begins — so without this the
-     completed mark is painted under the chip and vanishes, which is the "挤在一起"
-     defect in a new place. Raised with a hairline of the chip's own surface behind it,
-     so where a mark overlaps the card it reads as a badge on the card rather than as a
-     glyph cut in half. */
-  z-index: 1;
-  box-shadow: 0 0 0 1.5px var(--dsw-alias-bg-layer-2);
-}
+
 
 /* --- message markers --------------------------------------------------- */
 
@@ -1115,24 +1162,42 @@ export const BOARD_CSS = `
    clock label is readable instead of clipped by the canvas. */
 .dtg-tick-label-flip { transform: translateX(-100%); }
 
-.dtg-now { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--dsw-alias-brand-primary); }
+.dtg-now { position: absolute; top: 0; bottom: 0; width: 1.5px; background: var(--dsw-alias-state-business-primary); }
 /* Frozen board: the same line, but unmistakably not a live clock. */
 .dtg-now-ended {
   background: var(--dsw-alias-label-dimmed);
   border-left: 1px dashed var(--dsw-alias-label-dimmed);
   width: 0;
 }
+/* The NOW capsule is a BUTTON: clicking it returns to the live edge and switches
+  follow back on (the shell owns that state). Accent fill + the panel surface as ink,
+  which reads on both skins (the accent is light in the dark skin, dark in the light
+  one, and bg-layer-1 is its opposite in both). */
 .dtg-now-head {
   position: absolute;
-  top: 0;
-  padding: 0 3px;
+  top: 3px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 6px;
+  height: 17px;
   transform: translateX(-50%);
-  border-radius: 0 0 3px 3px;
-  background: var(--dsw-alias-brand-primary);
-  color: var(--dsw-alias-label-primary-inverted);
+  border: 0;
+  border-radius: 4px;
+  background: var(--dsw-alias-state-business-primary);
+  color: var(--dsw-alias-bg-layer-1);
   font: var(--dsw-font-xxxs-strong-11);
+  font-family: var(--ds-font-family-code);
   white-space: nowrap;
-  pointer-events: none;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+.dtg-now-head:hover { background: var(--dsw-alias-state-business-primary); box-shadow: var(--dsw-shadow-lv1); }
+.dtg-now-head:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary); outline-offset: 2px; }
+.dtg-now-head-ended {
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-secondary);
+  cursor: default;
 }
 
 /* --- details / notices ------------------------------------------------- */
@@ -1185,11 +1250,64 @@ export const BOARD_CSS = `
 }
 .dtg-center-title { color: var(--dsw-alias-label-primary); font: var(--dsw-font-s-14); }
 .dtg-empty-lane { position: absolute; color: var(--dsw-alias-label-dimmed); font: var(--dsw-font-xxxs-11); white-space: nowrap; }
-.dtg-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 3px 6px; color: var(--dsw-alias-label-tertiary); font: var(--dsw-font-xxxs-11); }
-.dtg-legend-item { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
+.dtg-foot {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  height: 32px;
+  padding: 0 8px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+  color: var(--dsw-alias-label-tertiary);
+  font: var(--dsw-font-xxxs-11);
+}
+.dtg-foot-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 5px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxxs-11);
+  white-space: nowrap;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+.dtg-foot-btn:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
+.dtg-foot-btn:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary); outline-offset: 1px; }
+.dtg-foot-legend { color: var(--dsw-alias-label-tertiary); }
+.dtg-foot-legend[aria-expanded='true'] { color: var(--dsw-alias-label-primary); background: var(--dsw-alias-interactive-bg-hover); }
+/* The legend popover: anchored above the footer, inside the chart, so it never moves
+   the canvas or changes scrollWidth (the trap the old footer legend had). */
+.dtg-legend-pop {
+  position: absolute;
+  right: 8px;
+  bottom: 36px;
+  z-index: 30;
+  width: 248px;
+  max-height: 260px;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2);
+  box-shadow: var(--dsw-shadow-lv2);
+  -webkit-app-region: no-drag;
+}
+.dtg-legend-pop-title { color: var(--dsw-alias-label-primary); font: var(--dsw-font-xxxs-strong-11); margin-bottom: 6px; }
+.dtg-legend-pop-grid { display: flex; flex-wrap: wrap; gap: 6px 12px; color: var(--dsw-alias-label-tertiary); font: var(--dsw-font-xxxs-11); }
+.dtg-legend-item { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
 .dtg-legend-turn { width: 14px; height: 8px; border-radius: 2px; background: var(--dsw-alias-bg-layer-3); opacity: 0.75; }
 .dtg-legend-step { width: 14px; height: 6px; border-radius: 2px; background: var(--dsw-alias-label-tertiary); }
-.dtg-legend-card { width: 14px; height: 9px; border: 1px dashed var(--dsw-alias-border-l2); border-left: 3px solid var(--dsw-alias-label-tertiary); border-radius: 3px; }
+.dtg-legend-card { width: 14px; height: 9px; border: 1px solid var(--dsw-alias-border-l2); border-left: 3px solid var(--dsw-alias-label-secondary); border-radius: 3px; background: var(--dsw-alias-bg-layer-2); }
+.dtg-legend-claim { position: relative; width: 18px; height: 6px; border-radius: 2px; background: var(--dsw-alias-label-tertiary); opacity: 0.3; }
+.dtg-legend-claim::before { content: ''; position: absolute; left: 35%; top: -2px; width: 2px; height: 10px; border-radius: 1px; background: var(--dsw-alias-state-business-primary); }
+.dtg-legend-claim::after { content: ''; position: absolute; left: 35%; right: 0; top: 0; bottom: 0; border-radius: 0 2px 2px 0; background: var(--dsw-alias-state-business-primary); opacity: 0.55; }
+.dtg-legend-state { color: var(--dsw-alias-label-secondary); font: var(--dsw-font-xxxs-strong-11); }
 /* Build identity: quiet, monospaced, never a call to action. */
 .dtg-build {
   padding: 1px 8px 3px;
