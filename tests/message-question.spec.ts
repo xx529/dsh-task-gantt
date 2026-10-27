@@ -604,7 +604,11 @@ describe('the question drawer and the popover render the SAME detail', () => {
     expect(BOARD).toContain('data-message-body=""')
     expect(BOARD).toContain('data-message-body-length={detail.body.length}')
     expect(BOARD).toContain("data-message-has-body={detail.hasBody ? 'true' : 'false'}")
-    expect(BOARD).toContain('detail.hasBody ? detail.body')
+    // The complete body reaches BOTH views of the same drawer: rendered Markdown by
+    // default, the exact text in the raw branch. Never a preview prefix.
+    expect(BOARD).toContain('!detail.hasBody ?')
+    expect(BOARD).toContain('<Markdown source={detail.body} />')
+    expect(BOARD).toContain('<pre className="dtg-drawer-pre">{detail.body}</pre>')
     expect(BOARD).toContain("uiLabel('messageNoBody')")
     // The body is assembled by the shared helper (full text, never a preview).
     expect(BOARD).toContain('messageDetail(')

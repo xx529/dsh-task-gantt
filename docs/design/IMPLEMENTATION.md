@@ -63,3 +63,19 @@ cd ~/.dsh && dsh plugin --profile web add "link:/Users/lzx/Documents/GitHub/dsh-
 - **查看完整详情**：详情抽屉头部新增展开按钮，弹窗复用同一个 `drawerBody` 节点（不可能出现两套
   渲染），覆盖整面板、正文自己滚动；Esc 先关弹窗再关抽屉；切换选中项自动收起。
 - 测试：43 files / 923 passed。
+
+## 6. 0.3.2 Markdown 渲染 + 应用级详情弹窗
+
+- **正文默认渲染 Markdown**：新增无依赖的 `src/client/ui/markdown.tsx`（块解析 + 行内解析，
+  产出 React 节点，不使用 `dangerouslySetInnerHTML`）。支持标题 / 段落（单换行保留为 `<br>`）/
+  **粗体** / *斜体* / ~~删除线~~ / `行内代码` / 围栏代码块 / 有序与无序列表 / 引用 / 分隔线 / 链接；
+  链接只允许 http/https/mailto，`javascript:` 与 `data:` 按纯文本渲染。
+- **原文切换**：抽屉与弹窗头部新增「原文 / 渲染」按钮（`aria-pressed`），默认渲染；切换不清空内容，
+  切换选中项时复位。应用范围：消息全文、任务描述、问题 prompt 与自由输入。
+- **弹窗改为应用级居中**：`position: fixed; inset: 0` + 打开时 `getBoundingClientRect()` 测量自身盒子，
+  若因祖先 transform/contain 未覆盖视口，则按偏移矫正并铺满窗口；宽度 `min(760px, 92vw)`、高
+  `min(88vh, 760px)`。这样在**整个应用窗口**居中，不再被 480px 侧栏限制（未引入 `react-dom`：
+  本包 bundle 的 external 契约只有 `react` / `react/jsx-runtime`）。
+  Esc 先关弹窗再关抽屉，遮罩点击关闭，切换选中项自动收起。
+- 测试：44 files / 939 passed；新增 `tests/markdown.spec.ts`（解析规则 + 安全 + 渲染树），
+  更新 `detail-expand.spec.ts`（固定定位 / 视口校正 / 原文切换）与 message-question 的全文断言。

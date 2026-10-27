@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.3.2 — 2026-10-27
+
+**详情正文按 Markdown 渲染（可切原文）；详情弹窗改为整个应用居中**
+
+真机反馈两条：详情里的文本本来就是 Markdown，应该渲染出来；展开的大弹窗要弹在整个应用的中间，
+而不是 480px 侧边栏的中间。
+
+**Markdown 渲染（默认）**
+- 新增 `src/client/ui/markdown.tsx`：无依赖的块/行内解析，产出 React 节点，**不用
+  `dangerouslySetInnerHTML`**。支持标题、段落（单个换行保留为 `<br>`，聊天场景的直觉）、
+  粗体/斜体/删除线、行内代码、围栏代码块、有序/无序列表、引用、分隔线、链接。
+- 安全：链接只允许 `http/https/mailto`，`javascript:` / `data:` 等按纯文本渲染；源码里的
+  `<script>` 只显示为文字。
+- 应用范围：消息全文、任务描述、问题 prompt 与自由输入。
+- 抽屉与弹窗头部新增「原文 / 渲染」切换（`aria-pressed`，中英双语 `rawText/renderedText`），
+  默认渲染；切换不改变内容，切换选中项时复位。
+
+**弹窗改为应用级**
+- 弹窗改为 `position: fixed; inset: 0`，宽度 `min(760px, 92vw)`、高 `min(88vh, 760px)`；由于
+  本包的 bundle 只允许 external `react` / `react/jsx-runtime`（不能引 `react-dom`，因此没有
+  `createPortal`），打开时用 `getBoundingClientRect()` 量一次自身盒子：若没有覆盖视口（祖先有
+  transform / contain 形成 containing block），就按测得的偏移矫正并铺满窗口。这样在**整个应用
+  窗口**居中，不再被 480px 侧栏限制；抽屉里的展开按钮触发。
+- Esc 先关弹窗再关抽屉；点遮罩关闭；切换选中项自动收起；弹窗继续复用**同一个 `drawerBody` 节点**。
+
+**测试**：44 files / 939 passed / 1 skipped。新增 `tests/markdown.spec.ts`（解析、安全、渲染树），
+更新 `detail-expand.spec.ts` 与 `message-question.spec.ts`。
+
 ## 0.3.1 — 2026-10-27
 
 **详情抽屉：保留消息正文的原始换行；新增「查看完整详情」弹窗**

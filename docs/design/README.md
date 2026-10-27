@@ -1,6 +1,6 @@
 # dsh-task-gantt · UI/UX 改版设计稿（Figma）
 
-> 状态：**设计稿完成（7 页），代码已按 v1 原型落地**（2026-10-27：`typecheck` 通过、`vitest` 42 files / 911 passed、`build` + `verify:build` + `verify:meta` 通过）。真机视觉仍待确认；实施细节与遗留项见 [IMPLEMENTATION.md](./IMPLEMENTATION.md)。
+> 状态：**设计稿 8 页，代码已按原型落地到 v0.3.2**（`typecheck` 通过、`vitest` 44 files / 939 passed、`build` + `verify:build` + `verify:meta` 通过）。真机视觉仍待确认；实施细节与遗留项见 [IMPLEMENTATION.md](./IMPLEMENTATION.md)。
 
 ## 1. Figma 文件
 
@@ -16,6 +16,7 @@
 | `04 · 状态与交互` | 选中+抽屉、悬停浮窗、筛选菜单、冻结、空态、错误 + 交互规范 | [04-states.png](./figma/04-states.png) |
 | `05 · 详情与时间语义` | 任务条「创建 → 认领 → 完成」解剖 + 任务/消息/问题详情抽屉 | [05-details.png](./figma/05-details.png) |
 | `06 · 设计规范` | 颜色/字号/尺寸/圆角/组件状态 + 与现状的关键差异 | [06-specs.png](./figma/06-specs.png) |
+| `07 · Markdown 与弹窗` | 正文 Markdown 渲染 + 原文切换；详情弹窗在**整个应用**居中（fixed + 视口校正） | [07-markdown-modal.png](./figma/07-markdown-modal.png) |
 
 单面板原图：[redesign-dark-480x580.png](./figma/redesign-dark-480x580.png)、[redesign-light-480x580.png](./figma/redesign-light-480x580.png)。
 

@@ -27,9 +27,11 @@
  * Lead) and `SHELL_CSS` (toolbar + drawer, this file's sibling) share the SAME
  * style element, so there is one ownership counter and one cleanup path.
  */
+import { Markdown } from './markdown.tsx'
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -590,6 +592,106 @@ function ErrorBar({
   )
 }
 
+/**
+ * The enlarged detail dialog.
+ *
+ * The dialog must be centered on the WHOLE application, but this bundle is only
+ * allowed to externalize `react` and `react/jsx-runtime` — no `react-dom`, so no
+ * `createPortal`. `position: fixed` is relative to the viewport UNLESS an ancestor
+ * creates a containing block (transform / filter / contain), which is exactly how a
+ * fixed overlay can end up confined to the sidebar. So on mount we MEASURE the
+ * resulting box and, if it does not cover the viewport, shift it by the measured
+ * offset and size it to the window. The result is "centered on the app" on both a
+ * plain and a transformed sidebar.
+ */
+function DetailModal({
+  label,
+  title,
+  word,
+  tone,
+  raw,
+  onToggleRaw,
+  onClose,
+  children,
+}: {
+  label: string
+  title: string
+  word: string
+  tone: StatusTone
+  raw: boolean
+  onToggleRaw: () => void
+  onClose: () => void
+  children: ReactNode
+}): ReactNode {
+  const ref = useRef<HTMLDivElement | null>(null)
+  const [viewportFix, setViewportFix] = useState<CSSProperties | null>(null)
+  useLayoutEffect(() => {
+    const element = ref.current
+    if (element === null || typeof window === 'undefined') return
+    const rect = element.getBoundingClientRect()
+    // Only correct when the box genuinely does not match the window: a no-op write on
+    // every open would be a layout thrash for the common (untransformed) case.
+    if (
+      Math.abs(rect.left) < 1 &&
+      Math.abs(rect.top) < 1 &&
+      Math.abs(rect.width - window.innerWidth) < 1 &&
+      Math.abs(rect.height - window.innerHeight) < 1
+    ) {
+      return
+    }
+    setViewportFix({
+      left: -rect.left,
+      top: -rect.top,
+      width: window.innerWidth,
+      height: window.innerHeight,
+    })
+  }, [])
+  return (
+    <div
+      className="dtg-modal"
+      role="presentation"
+      ref={ref}
+      style={viewportFix ?? undefined}
+      onClick={onClose}
+    >
+      <div
+        className="dtg-modal-card"
+        role="dialog"
+        aria-modal="true"
+        aria-label={label}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="dtg-modal-head">
+          <div className="dtg-drawer-heading">
+            <span className="dtg-drawer-title" title={title}>{title}</span>
+            <StatusWord tone={tone} word={word} />
+          </div>
+          <button
+            type="button"
+            className="dtg-raw-toggle"
+            onClick={onToggleRaw}
+            aria-pressed={raw}
+            title={uiLabel('rawToggleHint')}
+          >
+            {raw ? uiLabel('renderedText') : uiLabel('rawText')}
+          </button>
+          <button
+            type="button"
+            className="dtg-iconbtn dtg-modal-close"
+            onClick={onClose}
+            title={uiLabel('close')}
+            aria-label={uiLabel('close')}
+            autoFocus
+          >
+            <CloseIcon />
+          </button>
+        </div>
+        <div className="dtg-modal-body">{children}</div>
+      </div>
+    </div>
+  )
+}
+
 /* ------------------------------------------------------------------ drawer */
 
 /** The three status tones the drawer's 6px dot can take. */
@@ -652,11 +754,14 @@ function TaskDrawerBody({
   now,
   generatedAt,
   tzOffsetMinutes,
+  raw,
 }: {
   task: TimelineTask
   now: number
   generatedAt: number
   tzOffsetMinutes: number
+  /** `true` shows the exact text instead of rendering Markdown. */
+  raw: boolean
 }): ReactNode {
   const run = taskRunTimes(task, now)
   const claimed = run.startedIsFallback ? null : run.started
@@ -725,7 +830,15 @@ function TaskDrawerBody({
 
       {task.description === '' ? null : (
         <div className="dtg-drawer-section">
-          <p className="dtg-drawer-desc">{task.description}</p>
+          {task.description === '' ? (
+            <span className="dtg-drawer-note">—</span>
+          ) : raw ? (
+            <p className="dtg-drawer-desc">{task.description}</p>
+          ) : (
+            <div className="dtg-drawer-desc">
+              <Markdown source={task.description} />
+            </div>
+          )}
         </div>
       )}
 
@@ -766,12 +879,15 @@ function MessageDrawerBody({
   message,
   direction,
   tzOffsetMinutes,
+  raw,
 }: {
   laneId: string
   laneName: string
   message: MessageSpan
   direction: 'outgoing' | 'incoming'
   tzOffsetMinutes: number
+  /** `true` shows the exact text instead of rendering Markdown. */
+  raw: boolean
 }): ReactNode {
   const detail = messageDetail(
     {
@@ -809,14 +925,20 @@ function MessageDrawerBody({
       {detail.maybeTruncated ? (
         <div className="dtg-drawer-note">{uiLabel('messageTruncated', { max: MESSAGE_PREVIEW_MAX })}</div>
       ) : null}
-      <pre
-        className="dtg-drawer-pre"
+      <div
+        className="dtg-drawer-message"
         data-message-body=""
         data-message-body-length={detail.body.length}
         data-message-has-body={detail.hasBody ? 'true' : 'false'}
       >
-        {detail.hasBody ? detail.body : <span className="dtg-drawer-note">{uiLabel('messageNoBody')}</span>}
-      </pre>
+        {!detail.hasBody ? (
+          <span className="dtg-drawer-note">{uiLabel('messageNoBody')}</span>
+        ) : raw ? (
+          <pre className="dtg-drawer-pre">{detail.body}</pre>
+        ) : (
+          <Markdown source={detail.body} />
+        )}
+      </div>
     </>
   )
 }
@@ -835,10 +957,12 @@ function QuestionBlock({
   item,
   index,
   status,
+  raw,
 }: {
   item: QuestionItem
   index: number
   status: QuestionDetail['status']
+  raw: boolean
 }): ReactNode {
   const answered = status === 'answered'
   return (
@@ -847,7 +971,13 @@ function QuestionBlock({
         <span className="dtg-drawer-question-index" aria-hidden="true">{`Q${index + 1}`}</span>
         {item.header === undefined || item.header === '' ? null : <span>{item.header}</span>}
       </div>
-      <div className="dtg-drawer-question-prompt">{item.prompt}</div>
+      {raw ? (
+        <div className="dtg-drawer-question-prompt">{item.prompt}</div>
+      ) : (
+        <div className="dtg-drawer-question-prompt">
+          <Markdown source={item.prompt} />
+        </div>
+      )}
       {answered ? (
         <div className="dtg-drawer-answer">
           <span className="dtg-drawer-answer-label">{uiLabel('questionAnswerLabel')}</span>
@@ -860,7 +990,7 @@ function QuestionBlock({
           {item.custom === undefined || item.custom === '' ? null : (
             <div className="dtg-drawer-custom">
               <span className="dtg-drawer-answer-label">{uiLabel('questionCustomLabel')}</span>
-              <span>{item.custom}</span>
+              {raw ? <span>{item.custom}</span> : <Markdown source={item.custom} />}
             </div>
           )}
           {item.selected.length === 0 && (item.custom === undefined || item.custom === '') ? (
@@ -879,10 +1009,13 @@ function QuestionDrawerBody({
   question,
   when,
   laneName,
+  raw,
 }: {
   question: QuestionDetail | undefined
   when: string
   laneName: string
+  /** `true` shows the exact text instead of rendering Markdown. */
+  raw: boolean
 }): ReactNode {
   const status = question?.status ?? 'answered'
   const items = question?.questions ?? []
@@ -905,14 +1038,18 @@ function QuestionDrawerBody({
           )}
         </div>
       ) : status === 'waiting' ? (
-        items.map((item, index) => <QuestionBlock key={`${item.id}:${index}`} item={item} index={index} status={status} />)
+        items.map((item, index) => (
+          <QuestionBlock key={`${item.id}:${index}`} item={item} index={index} status={status} raw={raw} />
+        ))
       ) : question?.unparsed === true ? (
         <div className="dtg-drawer-section">
           <span className="dtg-drawer-note">{uiLabel('questionUnparsed')}</span>
           <pre className="dtg-drawer-pre">{question.raw ?? ''}</pre>
         </div>
       ) : (
-        items.map((item, index) => <QuestionBlock key={`${item.id}:${index}`} item={item} index={index} status={status} />)
+        items.map((item, index) => (
+          <QuestionBlock key={`${item.id}:${index}`} item={item} index={index} status={status} raw={raw} />
+        ))
       )}
     </>
   )
@@ -968,6 +1105,12 @@ export function BoardView({ sessionId, visible, routeBase, navigate }: BoardView
    * than closing the detail entirely.
    */
   const [detailExpanded, setDetailExpanded] = useState(false)
+  /**
+   * Markdown vs raw source. Details render Markdown BY DEFAULT (the transcript
+   * bodies are authored in it); the toggle reveals the exact text, so a reader can
+   * always check what was really said. Reset whenever the selection changes.
+   */
+  const [rawText, setRawText] = useState(false)
   const filterButtonRef = useRef<HTMLButtonElement>(null)
 
   /**
@@ -1071,6 +1214,7 @@ export function BoardView({ sessionId, visible, routeBase, navigate }: BoardView
   /** A different selection always starts from the compact drawer, never the modal. */
   useEffect(() => {
     setDetailExpanded(false)
+    setRawText(false)
   }, [selection])
 
   /** The selected task, looked up in the payload so its body survives re-renders. */
@@ -1274,6 +1418,7 @@ export function BoardView({ sessionId, visible, routeBase, navigate }: BoardView
         now={now}
         generatedAt={shownData.generatedAt}
         tzOffsetMinutes={tzOffsetMinutes}
+        raw={rawText}
       />
     )
   } else if (selectedMessage !== null) {
@@ -1288,6 +1433,7 @@ export function BoardView({ sessionId, visible, routeBase, navigate }: BoardView
           question={message.question}
           when={formatDateTime(message.time, tzOffsetMinutes)}
           laneName={selectedMessage.laneName}
+          raw={rawText}
         />
       )
     } else {
@@ -1303,6 +1449,7 @@ export function BoardView({ sessionId, visible, routeBase, navigate }: BoardView
           message={message}
           direction={selectedMessage.direction}
           tzOffsetMinutes={tzOffsetMinutes}
+          raw={rawText}
         />
       )
     }
@@ -1403,6 +1550,15 @@ export function BoardView({ sessionId, visible, routeBase, navigate }: BoardView
                 </div>
                 <button
                   type="button"
+                  className="dtg-raw-toggle"
+                  onClick={() => setRawText((value) => !value)}
+                  aria-pressed={rawText}
+                  title={uiLabel('rawToggleHint')}
+                >
+                  {rawText ? uiLabel('renderedText') : uiLabel('rawText')}
+                </button>
+                <button
+                  type="button"
                   className="dtg-iconbtn dtg-drawer-expand"
                   onClick={() => setDetailExpanded(true)}
                   title={uiLabel('expandDetails')}
@@ -1433,34 +1589,22 @@ export function BoardView({ sessionId, visible, routeBase, navigate }: BoardView
         drawer host (not inside it) so it covers the toolbar too; Esc closes it
         before the drawer.
       */}
+      {/* The detail enlarged into a dialog. `DetailModal` measures the viewport and
+          compensates for a transformed ancestor, so the dialog covers and centers on
+          the WHOLE app even without a react-dom portal (the bundle's external contract
+          permits only react / react-jsx-runtime). */}
       {drawerKind !== null && detailExpanded ? (
-        <div className="dtg-modal" role="presentation" onClick={() => setDetailExpanded(false)}>
-          <div
-            className="dtg-modal-card"
-            role="dialog"
-            aria-modal="true"
-            aria-label={drawerLabel}
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="dtg-modal-head">
-              <div className="dtg-drawer-heading">
-                <span className="dtg-drawer-title" title={drawerTitle}>{drawerTitle}</span>
-                <StatusWord tone={drawerTone} word={drawerStatusWord} />
-              </div>
-              <button
-                type="button"
-                className="dtg-iconbtn dtg-modal-close"
-                onClick={() => setDetailExpanded(false)}
-                title={uiLabel('close')}
-                aria-label={uiLabel('close')}
-                autoFocus
-              >
-                <CloseIcon />
-              </button>
-            </div>
-            <div className="dtg-modal-body">{drawerBody}</div>
-          </div>
-        </div>
+        <DetailModal
+          label={drawerLabel}
+          title={drawerTitle}
+          word={drawerStatusWord}
+          tone={drawerTone}
+          raw={rawText}
+          onToggleRaw={() => setRawText((value) => !value)}
+          onClose={() => setDetailExpanded(false)}
+        >
+          {drawerBody}
+        </DetailModal>
       ) : null}
 
       {/*

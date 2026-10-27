@@ -622,27 +622,119 @@ export const SHELL_CSS = `
   overflow-wrap: anywhere;
 }
 
+/* --- raw / rendered toggle --------------------------------------------- */
+/* A text button, not an icon: "原文 / 渲染" says exactly what changes, and the two
+   states are a word apart (an icon would need a tooltip to be understood). */
+.dtg-raw-toggle {
+  flex: 0 0 auto;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxxs-11);
+  white-space: nowrap;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+.dtg-raw-toggle:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
+.dtg-raw-toggle:focus-visible { outline: 2px solid var(--dsw-alias-state-business-primary); outline-offset: 1px; }
+.dtg-raw-toggle[aria-pressed='true'] {
+  color: var(--dsw-alias-label-primary);
+  border-color: var(--dsw-alias-label-secondary);
+}
+
+/* --- rendered markdown -------------------------------------------------- */
+/* The transcript is authored as Markdown; the drawer renders it by default and the
+   raw toggle reveals the source. Kept deliberately compact: chat bodies are dense and
+   the panel is 480px wide. */
+.dtg-md {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxs-12);
+  overflow-wrap: anywhere;
+}
+.dtg-md-p { margin: 0; }
+.dtg-md-heading {
+  color: var(--dsw-alias-label-primary);
+  font: var(--dsw-font-xxxs-strong-11);
+  line-height: 1.4;
+}
+.dtg-md-h1, .dtg-md-h2 { font: var(--dsw-font-xxs-strong-12); }
+.dtg-md-h3, .dtg-md-h4, .dtg-md-h5, .dtg-md-h6 { font: var(--dsw-font-xxxs-strong-11); }
+.dtg-md-code {
+  padding: 0 3px;
+  border-radius: 3px;
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--ds-font-family-code);
+  font-size: 11px;
+}
+.dtg-md-pre {
+  margin: 0;
+  padding: 6px 8px;
+  max-height: 30vh;
+  overflow: auto;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-secondary);
+  font-family: var(--ds-font-family-code);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre;
+}
+.dtg-md-list {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.dtg-md-quote {
+  margin: 0;
+  padding: 2px 0 2px 9px;
+  border-left: 2px solid var(--dsw-alias-border-l3);
+  color: var(--dsw-alias-label-tertiary);
+}
+.dtg-md-hr {
+  width: 100%;
+  height: 1px;
+  margin: 2px 0;
+  border: 0;
+  background: var(--dsw-alias-border-l1);
+}
+.dtg-md-link {
+  color: var(--dsw-alias-state-business-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.dtg-drawer-message { min-width: 0; }
+
 /* --- expanded detail (modal) ------------------------------------------- */
-/* The drawer's "查看完整详情" step: the SAME body node, in a dialog that covers the
-   whole panel. 45 sits above the drawer (35) and the legend popover (30) but below
-   the chart's hover popover (40 is below 45, so the popover cannot paint over a
-   modal — it is dismissed by the selection anyway). */
+/* The drawer's expand step: the SAME body node, in a dialog that covers the whole APP.
+   It is portaled to <body>, so position:fixed is relative to the VIEWPORT and the
+   dialog is centered on the application rather than inside the sidebar column. */
 .dtg-modal {
-  position: absolute;
+  position: fixed;
   inset: 0;
-  z-index: 45;
+  z-index: 1000;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 12px;
+  padding: 16px;
   background: var(--dsw-alias-bg-mask-1);
   -webkit-app-region: no-drag;
 }
 .dtg-modal-card {
   display: flex;
   flex-direction: column;
-  width: 100%;
-  max-height: 100%;
+  width: min(760px, 92vw);
+  max-height: min(88vh, 760px);
   min-height: 0;
   overflow: hidden;
   border: 1px solid var(--dsw-alias-border-l2);
