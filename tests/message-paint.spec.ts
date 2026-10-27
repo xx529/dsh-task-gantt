@@ -612,6 +612,23 @@ describe('the detail view shows the whole body of the marker', () => {
     expect(detail.when).toBe(`t${long.time}`)
   })
 
+  it('shows the body WITH its original line breaks when the host sent them', () => {
+    // The host keeps `preview` collapsed for the marker and adds `body` only when
+    // collapsing changed something; the detail must prefer the body so paragraphs
+    // survive.
+    const { long } = markers()
+    const multiline = { ...long, preview: 'first line second line', body: 'first line\nsecond line' }
+    const detail = messageDetail(multiline, texts, formatTime, MESSAGE_PREVIEW_MAX)
+    expect(detail.body).toBe('first line\nsecond line')
+    expect(detail.body).toContain('\n')
+  })
+
+  it('falls back to the collapsed preview when a payload has no `body` (older host)', () => {
+    const { long } = markers()
+    const detail = messageDetail({ ...long, body: undefined }, texts, formatTime, MESSAGE_PREVIEW_MAX)
+    expect(detail.body).toBe(long.preview)
+  })
+
   it('says "no body" explicitly instead of rendering an empty block', () => {
     const { empty } = markers()
     const detail = messageDetail(empty, texts, formatTime, MESSAGE_PREVIEW_MAX)

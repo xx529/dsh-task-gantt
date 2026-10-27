@@ -54,3 +54,12 @@ cd ~/.dsh && dsh plugin --profile web add "link:/Users/lzx/Documents/GitHub/dsh-
 4. **真机视觉校验**：抽屉遮罩层级、448px 工具栏预算、骨架/错误条、认领轨在 480px 下的可读性。
 5. **版本号 / CHANGELOG**：仍是 0.2.38；发布前应升到 0.3.0 并同时改 `BUILD_LABEL`（`tests/release.spec.ts` 要求两者一致），再补 CHANGELOG。
 6. 泳道头计数仍是 `✉ N` 而不是原型里的「N 消息」；空闲泳道 `.72` 透明度与 tertiary 对比度（审计 P1/P2）未调。
+
+## 5. 0.3.1 真机反馈修复
+
+- **消息正文换行**：host 的 `preview` 是压平的单行文本，详情复用它导致段落丢失。现在 host 额外产出
+  `MessageSpan.body`（换行保留、CRLF 归一、同一 16384 上限，仅当压平确实改变文本时附带），
+  `messageDetail()` 优先使用它，老 payload 自动回退 `preview`。
+- **查看完整详情**：详情抽屉头部新增展开按钮，弹窗复用同一个 `drawerBody` 节点（不可能出现两套
+  渲染），覆盖整面板、正文自己滚动；Esc 先关弹窗再关抽屉；切换选中项自动收起。
+- 测试：43 files / 923 passed。

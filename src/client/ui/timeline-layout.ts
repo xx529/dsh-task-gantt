@@ -1831,6 +1831,8 @@ export function messageDetail(
     from: SpanSpeaker
     to?: SpanSpeaker | undefined
     preview?: string | undefined
+    /** The body WITH line breaks preserved (the host's `MessageSpan.body`). */
+    body?: string | undefined
     /**
      * The lane this message is DRAWN on. Used only to infer a missing
      * recipient — see {@link MessageDetailInput} notes below.
@@ -1842,7 +1844,9 @@ export function messageDetail(
   previewMax: number = MESSAGE_PREVIEW_MAX,
 ): MessageDetail {
   const marker = input
-  const body = marker.preview ?? ''
+  // The detail shows the ORIGINAL line breaks when the host sent them; `preview` is
+  // the collapsed fallback for a payload from an older host.
+  const body = marker.body ?? marker.preview ?? ''
   const isUser = marker.from.kind === 'user'
   const fromName = isUser ? texts.you : marker.from.name !== '' ? marker.from.name : marker.from.id
   // A missing `to` is not "unknown": the host deliberately records no recipient

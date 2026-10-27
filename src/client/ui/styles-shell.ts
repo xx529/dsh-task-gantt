@@ -621,6 +621,55 @@ export const SHELL_CSS = `
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+/* --- expanded detail (modal) ------------------------------------------- */
+/* The drawer's "查看完整详情" step: the SAME body node, in a dialog that covers the
+   whole panel. 45 sits above the drawer (35) and the legend popover (30) but below
+   the chart's hover popover (40 is below 45, so the popover cannot paint over a
+   modal — it is dismissed by the selection anyway). */
+.dtg-modal {
+  position: absolute;
+  inset: 0;
+  z-index: 45;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  background: var(--dsw-alias-bg-mask-1);
+  -webkit-app-region: no-drag;
+}
+.dtg-modal-card {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-layer-1);
+  box-shadow: var(--dsw-shadow-lv3);
+}
+.dtg-modal-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 10px 12px 8px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+.dtg-modal-head .dtg-drawer-heading { flex: 1 1 auto; min-width: 0; }
+.dtg-modal-close { margin-left: auto; }
+.dtg-modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px 12px 12px;
+  overscroll-behavior: contain;
+}
+/* In the dialog the text is the point: let it use the whole height and scroll the
+   BODY, not a nested 34vh box. */
+.dtg-modal-body .dtg-drawer-pre { max-height: none; }
 `
 
 assertNoBackticksInCss(SHELL_CSS, 'styles-shell.ts SHELL_CSS')

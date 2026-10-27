@@ -393,6 +393,15 @@ function CloseIcon(): ReactNode {
   )
 }
 
+/** Expand: four corner brackets, the conventional "open larger" affordance. */
+function ExpandIcon(): ReactNode {
+  return (
+    <svg viewBox="0 0 16 16" width={14} height={14} aria-hidden="true" focusable="false" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M6 2.5H2.5V6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10" />
+    </svg>
+  )
+}
+
 /** The empty state's glyph: an empty timeline (a row of ticks with nothing on it). */
 function EmptyIcon(): ReactNode {
   return (
@@ -772,6 +781,7 @@ function MessageDrawerBody({
       from: message.from,
       to: message.to,
       preview: message.preview,
+      body: message.body,
       laneName,
     },
     { you: t('you'), recipientUnrecorded: uiLabel('messageRecipientUnrecorded') },
@@ -952,6 +962,12 @@ export function BoardView({ sessionId, visible, routeBase, navigate }: BoardView
    */
   const [workingOnly, setWorkingOnly] = useState(false)
   const [filterOpen, setFilterOpen] = useState(false)
+  /**
+   * The detail drawer expanded into a modal. Kept separate from `selection` so
+   * closing the modal returns to the drawer (same content, same selection) rather
+   * than closing the detail entirely.
+   */
+  const [detailExpanded, setDetailExpanded] = useState(false)
   const filterButtonRef = useRef<HTMLButtonElement>(null)
 
   /**
@@ -1048,7 +1064,14 @@ export function BoardView({ sessionId, visible, routeBase, navigate }: BoardView
   const onSelectMessage = useCallback((key: string | null) => {
     setSelection((previous) => nextMessageSelection(previous, key))
   }, [])
-  const closeDrawer = useCallback(() => setSelection(null), [])
+  const closeDrawer = useCallback(() => {
+    setSelection(null)
+    setDetailExpanded(false)
+  }, [])
+  /** A different selection always starts from the compact drawer, never the modal. */
+  useEffect(() => {
+    setDetailExpanded(false)
+  }, [selection])
 
   /** The selected task, looked up in the payload so its body survives re-renders. */
   const selectedTask = useMemo<TimelineTask | null>(() => {
@@ -1115,16 +1138,24 @@ export function BoardView({ sessionId, visible, routeBase, navigate }: BoardView
     }
   }, [selectedMessageKey, selectedMessage, data])
 
-  /** Esc closes the one drawer, whatever kind it is. */
+  /**
+   * Esc closes the MODAL first, then the drawer: one key, outermost layer at a
+   * time — pressing it once should not throw away the detail the reader is
+   * looking at.
+   */
   useEffect(() => {
     if (!visible) return
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key !== 'Escape') return
+      if (detailExpanded) {
+        setDetailExpanded(false)
+        return
+      }
       setSelection(null)
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [visible])
+  }, [visible, detailExpanded])
 
   const retry = useCallback(() => setReloadKey((key) => key + 1), [])
   /**
@@ -1162,6 +1193,7 @@ export function BoardView({ sessionId, visible, routeBase, navigate }: BoardView
       if (target === null) return
       if (target.closest('button, a, input, select, textarea, label, [role="button"], [data-drawer]') !== null) return
       setSelection(null)
+      setDetailExpanded(false)
     },
     [selection],
   )
@@ -1371,6 +1403,16 @@ export function BoardView({ sessionId, visible, routeBase, navigate }: BoardView
                 </div>
                 <button
                   type="button"
+                  className="dtg-iconbtn dtg-drawer-expand"
+                  onClick={() => setDetailExpanded(true)}
+                  title={uiLabel('expandDetails')}
+                  aria-label={uiLabel('expandDetails')}
+                  aria-haspopup="dialog"
+                >
+                  <ExpandIcon />
+                </button>
+                <button
+                  type="button"
                   className="dtg-iconbtn dtg-drawer-close"
                   onClick={closeDrawer}
                   title={uiLabel('close')}
@@ -1384,6 +1426,42 @@ export function BoardView({ sessionId, visible, routeBase, navigate }: BoardView
           )}
         </div>
       )}
+
+      {/*
+        The EXPANDED detail: the same `drawerBody` node in a modal, so the drawer and
+        the dialog can never disagree about content. Rendered as a sibling of the
+        drawer host (not inside it) so it covers the toolbar too; Esc closes it
+        before the drawer.
+      */}
+      {drawerKind !== null && detailExpanded ? (
+        <div className="dtg-modal" role="presentation" onClick={() => setDetailExpanded(false)}>
+          <div
+            className="dtg-modal-card"
+            role="dialog"
+            aria-modal="true"
+            aria-label={drawerLabel}
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="dtg-modal-head">
+              <div className="dtg-drawer-heading">
+                <span className="dtg-drawer-title" title={drawerTitle}>{drawerTitle}</span>
+                <StatusWord tone={drawerTone} word={drawerStatusWord} />
+              </div>
+              <button
+                type="button"
+                className="dtg-iconbtn dtg-modal-close"
+                onClick={() => setDetailExpanded(false)}
+                title={uiLabel('close')}
+                aria-label={uiLabel('close')}
+                autoFocus
+              >
+                <CloseIcon />
+              </button>
+            </div>
+            <div className="dtg-modal-body">{drawerBody}</div>
+          </div>
+        </div>
+      ) : null}
 
       {/*
         The host's `notes` are deliberately NOT rendered.

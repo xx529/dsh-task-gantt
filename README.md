@@ -28,7 +28,7 @@ duration, with the title drawn inside each bar](docs/screenshots/panel-v4.png)
 
 | | |
 |---|---|
-| Version | `0.3.0` |
+| Version | `0.3.1` |
 | Frozen contract (`src/shared/contract.ts`) | done |
 | Host data layer (`src/host/**`) | in progress |
 | Sidebar tab registration (`src/client/index.ts`) | done |

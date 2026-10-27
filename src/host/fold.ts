@@ -622,6 +622,8 @@ function readInjectedExchange(
   const preview = previewOf(parts.body)
   if (preview !== undefined) {
     record.preview = preview
+    const body = bodyOf(parts.body)
+    if (body !== undefined && body !== preview) record.body = body
     if (collapseWhitespace(parts.body).length > PREVIEW_MAX) {
       record.truncated = true
       diagnostics.truncatedBodies += 1
@@ -714,6 +716,16 @@ export interface FoldedMessageRecord {
   /** Collapsed `content[].text`, clipped to {@link PREVIEW_MAX}. */
   preview?: string
   /**
+   * The body WITH its line breaks preserved, clipped to {@link PREVIEW_MAX}.
+   *
+   * The marker and tooltip need one line, so `preview` stays collapsed. The details
+   * panel shows the message the way it was written, and a prompt with paragraphs
+   * flattened into one blob is unreadable — this is the same text before
+   * `collapseWhitespace`, attached ONLY when collapsing actually changed it (so a
+   * single-line message does not pay for a duplicate field on every poll).
+   */
+  body?: string
+  /**
    * True when {@link PREVIEW_MAX} clipped this body — i.e. `preview` is the head
    * of a longer message and the tail is gone.
    */
@@ -740,8 +752,10 @@ export interface FoldedUserPrompt {
   time: number
   /** Log `seq`, for stable ordering against the other records. */
   seq: number
-  /** Clipped prompt text. */
+  /** Clipped prompt text, whitespace-collapsed. */
   preview?: string
+  /** The prompt WITH its line breaks preserved (same rule as {@link FoldedMessageRecord.body}). */
+  body?: string
   /**
    * `data.source.kind` — always {@link USER_SOURCE_KIND} today, kept so the
    * caller can prove the discriminator rather than trust it.
@@ -789,6 +803,19 @@ export interface FoldedMessages {
   /** Ascending human prompts. */
   userPrompts: FoldedUserPrompt[]
   diagnostics: MessageFoldDiagnostics
+}
+
+/**
+ * Normalize line endings and clip to {@link PREVIEW_MAX}, PRESERVING line breaks.
+ *
+ * Separate from {@link previewOf} on purpose: the marker needs one line, the details
+ * panel needs the original paragraphs. Only the edges are trimmed — leading
+ * indentation inside the body is the author's, not ours to rewrite.
+ */
+function bodyOf(value: string): string | undefined {
+  const normalized = value.replace(/\r\n?/g, '\n').trim()
+  if (normalized === '') return undefined
+  return normalized.length <= PREVIEW_MAX ? normalized : `${normalized.slice(0, PREVIEW_MAX - 1)}\u2026`
 }
 
 /** Collapse every whitespace run to one space and clip to {@link PREVIEW_MAX}. */
@@ -897,12 +924,15 @@ export function foldMessageRecords(events: readonly unknown[]): FoldedMessages {
       if (senderName !== undefined) record.senderName = senderName
       const targetId = asText(message.targetId)
       if (targetId !== undefined) record.targetId = targetId
-      const preview = previewFromContent(message.content)
+      const raw = previewFromText(message.content)
+      const preview = previewOf(raw)
       if (preview !== undefined) {
         record.preview = preview
+        const body = bodyOf(raw)
+        if (body !== undefined && body !== preview) record.body = body
         // Flag by comparing the collapsed source, not by looking for the ellipsis
         // (a message may legitimately end with one).
-        const collapsed = collapseWhitespace(previewFromText(message.content))
+        const collapsed = collapseWhitespace(raw)
         if (collapsed.length > PREVIEW_MAX) {
           record.truncated = true
           diagnostics.truncatedBodies += 1
@@ -946,8 +976,13 @@ export function foldMessageRecords(events: readonly unknown[]): FoldedMessages {
       if (time === undefined) continue
       diagnostics.userPrompts += 1
       const prompt: FoldedUserPrompt = { time, seq: item.seq, sourceKind }
-      const preview = previewFromContent(data.content)
-      if (preview !== undefined) prompt.preview = preview
+      const rawPrompt = previewFromText(data.content)
+      const preview = previewOf(rawPrompt)
+      if (preview !== undefined) {
+        prompt.preview = preview
+        const body = bodyOf(rawPrompt)
+        if (body !== undefined && body !== preview) prompt.body = body
+      }
       userPrompts.push(prompt)
     }
   }

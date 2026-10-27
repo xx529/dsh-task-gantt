@@ -499,6 +499,7 @@ function messageSpansFrom(
     const to = record.injected === true ? lookup(fold.sessionId, undefined) : lookup(record.targetId, undefined)
     if (to !== undefined) span.to = to
     if (record.preview !== undefined) span.preview = record.preview
+    if (record.body !== undefined) span.body = record.body
     spans.push(span)
   }
   return spans
@@ -529,6 +530,7 @@ function userPromptSpansFrom(fold: FoldedSession): MessageSpan[] {
       sessionId: fold.sessionId,
     }
     if (prompt.preview !== undefined) span.preview = prompt.preview
+    if (prompt.body !== undefined) span.body = prompt.body
     return span
   })
 }

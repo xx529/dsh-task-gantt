@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.3.1 — 2026-10-27
+
+**详情抽屉：保留消息正文的原始换行；新增「查看完整详情」弹窗**
+
+真机反馈两条：
+
+1. 消息详情的正文被压成一大段，原文本里的换行没了；
+2. 抽屉里希望能有一个按钮，点了用弹窗看完整详情。
+
+**根因（换行）**：host 侧 `fold.ts` 只产出一个 `preview`（`collapseWhitespace` + 裁剪到 16384），
+图上的标记和 tooltip 需要单行，所以这个字段被压平；详情抽屉复用了同一个字段，于是段落结构在
+到达 UI 之前就已经丢失。
+
+**修复**
+- `MessageSpan` 新增可选 `body`：换行保留、CRLF 归一、裁到同一个 16384 上限；**只在「压平确实
+  改变了文本」时才附带**，单行消息不多付一份字节。
+- `fold.ts` 的消息 / 注入消息 / 人类 prompt 三条路径都产出 `body`；`timeline.ts` 原样映射；
+  `messageDetail()` 优先用 `body`，老 host 没有该字段时回退 `preview`（不会白屏）。
+- 详情抽屉本来就是 `white-space: pre-wrap` 的 `<pre>`，所以拿到带换行的 body 后直接正确显示。
+
+**新增「查看完整详情」**
+- 抽屉头部新增展开按钮（四角图标；`expandDetails` 中英双语）。
+- 弹窗复用**同一个 `drawerBody` 节点**（不是第二套渲染），因此抽屉与弹窗内容不可能漂移；
+  覆盖整个面板（`z-index: 45`）、`.dtg-modal-body` 自己滚动；正文的 `max-height: 34vh`
+  在弹窗内解除，长消息能真正铺开。
+- Esc **先关弹窗、再关抽屉**；切换选中项时弹窗自动收起；点遮罩关闭。
+
+**测试**：43 files / 923 passed / 1 skipped。新增 `detail-expand.spec.ts`（弹窗契约）、
+`host-messages.spec.ts` 的换行保留用例、`message-paint.spec.ts` 的 body 优先/回退用例。
+
 ## 0.3.0 — 2026-10-27
 
 **UI/UX 改版：按已确认的 Figma v1 原型重做面板的视觉与交互**

@@ -221,6 +221,37 @@ describe('foldMessageRecords — previews', () => {
     expect(folded.diagnostics.truncatedBodies).toBe(0)
   })
 
+  it('keeps the ORIGINAL line breaks in `body` while `preview` stays one line', () => {
+    // The reported defect: a prompt written in paragraphs reached the drawer as one
+    // blob because the only body field was the collapsed preview.
+    const folded = foldMessageRecords([
+      queued({ seq: 1, time: T, id: 'm-1', text: 'line one\nline two\n\nparagraph two' }),
+    ])
+    expect(folded.records[0]?.preview).toBe('line one line two paragraph two')
+    expect(folded.records[0]?.body).toBe('line one\nline two\n\nparagraph two')
+  })
+
+  it('normalizes CRLF in `body` and trims only the edges', () => {
+    const folded = foldMessageRecords([
+      queued({ seq: 1, time: T, id: 'm-1', text: '  a\r\nb\r\n  indented\t\t' }),
+    ])
+    expect(folded.records[0]?.body).toBe('a\nb\n  indented')
+  })
+
+  it('omits `body` for a single-line message so the field is not duplicated on every poll', () => {
+    const folded = foldMessageRecords([queued({ seq: 1, time: T, id: 'm-1', text: 'one short line' })])
+    expect(folded.records[0]?.preview).toBe('one short line')
+    expect(folded.records[0]?.body).toBeUndefined()
+  })
+
+  it('keeps the human prompt\'s line breaks too', () => {
+    const folded = foldMessageRecords([
+      userMessage({ seq: 1, time: T, sourceKind: 'user', text: 'first line\nsecond line' }),
+    ])
+    expect(folded.userPrompts[0]?.preview).toBe('first line second line')
+    expect(folded.userPrompts[0]?.body).toBe('first line\nsecond line')
+  })
+
   it('joins multiple content parts and drops non-text items', () => {
     const folded = foldMessageRecords([
       queued({

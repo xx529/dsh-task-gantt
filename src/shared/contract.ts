@@ -28,7 +28,7 @@ export const API_VERSION = 1 as const
  * or behaviour changes, and a tester can read the version off the screen
  * instead of guessing from a screenshot.
  */
-export const BUILD_LABEL = 'v0.3.0' as const
+export const BUILD_LABEL = 'v0.3.1' as const
 
 /** The sidebar tab type id registered through `ctx.betterSidebar.registerTab`. */
 export const TAB_TYPE_ID = 'dsh-task-gantt:board' as const
@@ -148,6 +148,16 @@ export interface MessageSpan {
    * name the parent gave the child, e.g. `Map codebase concerns`.
    */
   preview?: string
+  /**
+   * The same text WITH its line breaks preserved, for the details view.
+   *
+   * `preview` exists for the marker/tooltip and is deliberately whitespace-collapsed
+   * to one line; a human prompt written in paragraphs would lose its structure
+   * there. The host attaches this field ONLY when collapsing actually changed the
+   * text, so a single-line message costs no extra bytes on the poll. Clipped at
+   * {@link MESSAGE_PREVIEW_MAX} exactly like `preview`.
+   */
+  body?: string
   /** The journal's message id, for correlating a queue with its delivery. For a dispatch it is the parent's `callId`. */
   messageId?: string
   /**
