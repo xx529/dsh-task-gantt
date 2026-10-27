@@ -20,6 +20,8 @@
 
 单面板原图：[redesign-dark-480x580.png](./figma/redesign-dark-480x580.png)、[redesign-light-480x580.png](./figma/redesign-light-480x580.png)。
 
+> **设计源码**：搭建这 8 页的 **90 个构建脚本**保存在 [`figma-src/`](./figma-src/)，按 `manifest.json` 的顺序重放即可无损恢复并继续修改（不需要 `.fig` 文件）。
+
 ## 2. 事实依据（不猜）
 
 - **现状还原依据当前源码 v0.2.38**：`docs/screenshots/panel-v4.png` 是 v0.2.11，和代码差 27 个版本，旧截图里的状态词、两行计数、「活动+消息」开关等形态**都已不存在**。

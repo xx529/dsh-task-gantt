@@ -1,0 +1,727 @@
+{
+  "file": "gantt",
+  "recorded": "2026-10-27",
+  "steps": 90,
+  "items": [
+    {
+      "step": 1,
+      "file": "001-turn1-step37.js",
+      "turn": 1,
+      "stepInTurn": 37,
+      "result": "error",
+      "bytes": 3998
+    },
+    {
+      "step": 2,
+      "file": "002-turn1-step39.js",
+      "turn": 1,
+      "stepInTurn": 39,
+      "result": "ok",
+      "bytes": 6614
+    },
+    {
+      "step": 3,
+      "file": "003-turn1-step43.js",
+      "turn": 1,
+      "stepInTurn": 43,
+      "result": "error",
+      "bytes": 15216
+    },
+    {
+      "step": 4,
+      "file": "004-turn1-step45.js",
+      "turn": 1,
+      "stepInTurn": 45,
+      "result": "ok",
+      "bytes": 598
+    },
+    {
+      "step": 5,
+      "file": "005-turn1-step46.js",
+      "turn": 1,
+      "stepInTurn": 46,
+      "result": "ok",
+      "bytes": 14508
+    },
+    {
+      "step": 6,
+      "file": "006-turn1-step47.js",
+      "turn": 1,
+      "stepInTurn": 47,
+      "result": "ok",
+      "bytes": 1178
+    },
+    {
+      "step": 7,
+      "file": "007-turn1-step48.js",
+      "turn": 1,
+      "stepInTurn": 48,
+      "result": "ok",
+      "bytes": 1026
+    },
+    {
+      "step": 8,
+      "file": "008-turn1-step49.js",
+      "turn": 1,
+      "stepInTurn": 49,
+      "result": "ok",
+      "bytes": 5678
+    },
+    {
+      "step": 9,
+      "file": "009-turn1-step50.js",
+      "turn": 1,
+      "stepInTurn": 50,
+      "result": "ok",
+      "bytes": 1646
+    },
+    {
+      "step": 10,
+      "file": "010-turn1-step51.js",
+      "turn": 1,
+      "stepInTurn": 51,
+      "result": "ok",
+      "bytes": 15739
+    },
+    {
+      "step": 11,
+      "file": "011-turn1-step53.js",
+      "turn": 1,
+      "stepInTurn": 53,
+      "result": "ok",
+      "bytes": 578
+    },
+    {
+      "step": 12,
+      "file": "012-turn1-step54.js",
+      "turn": 1,
+      "stepInTurn": 54,
+      "result": "ok",
+      "bytes": 17798
+    },
+    {
+      "step": 13,
+      "file": "013-turn1-step56.js",
+      "turn": 1,
+      "stepInTurn": 56,
+      "result": "ok",
+      "bytes": 2081
+    },
+    {
+      "step": 14,
+      "file": "014-turn1-step58.js",
+      "turn": 1,
+      "stepInTurn": 58,
+      "result": "error",
+      "bytes": 8809
+    },
+    {
+      "step": 15,
+      "file": "015-turn1-step60.js",
+      "turn": 1,
+      "stepInTurn": 60,
+      "result": "ok",
+      "bytes": 8360
+    },
+    {
+      "step": 16,
+      "file": "016-turn1-step64.js",
+      "turn": 1,
+      "stepInTurn": 64,
+      "result": "ok",
+      "bytes": 8786
+    },
+    {
+      "step": 17,
+      "file": "017-turn1-step67.js",
+      "turn": 1,
+      "stepInTurn": 67,
+      "result": "ok",
+      "bytes": 2321
+    },
+    {
+      "step": 18,
+      "file": "018-turn1-step68.js",
+      "turn": 1,
+      "stepInTurn": 68,
+      "result": "ok",
+      "bytes": 17266
+    },
+    {
+      "step": 19,
+      "file": "019-turn1-step70.js",
+      "turn": 1,
+      "stepInTurn": 70,
+      "result": "ok",
+      "bytes": 458
+    },
+    {
+      "step": 20,
+      "file": "020-turn1-step71.js",
+      "turn": 1,
+      "stepInTurn": 71,
+      "result": "error",
+      "bytes": 16418
+    },
+    {
+      "step": 21,
+      "file": "021-turn1-step72.js",
+      "turn": 1,
+      "stepInTurn": 72,
+      "result": "error",
+      "bytes": 16416
+    },
+    {
+      "step": 22,
+      "file": "022-turn1-step74.js",
+      "turn": 1,
+      "stepInTurn": 74,
+      "result": "ok",
+      "bytes": 16274
+    },
+    {
+      "step": 23,
+      "file": "023-turn1-step77.js",
+      "turn": 1,
+      "stepInTurn": 77,
+      "result": "ok",
+      "bytes": 601
+    },
+    {
+      "step": 24,
+      "file": "024-turn1-step78.js",
+      "turn": 1,
+      "stepInTurn": 78,
+      "result": "ok",
+      "bytes": 14078
+    },
+    {
+      "step": 25,
+      "file": "025-turn1-step81.js",
+      "turn": 1,
+      "stepInTurn": 81,
+      "result": "ok",
+      "bytes": 2469
+    },
+    {
+      "step": 26,
+      "file": "026-turn1-step82.js",
+      "turn": 1,
+      "stepInTurn": 82,
+      "result": "ok",
+      "bytes": 389
+    },
+    {
+      "step": 27,
+      "file": "027-turn1-step83.js",
+      "turn": 1,
+      "stepInTurn": 83,
+      "result": "ok",
+      "bytes": 12827
+    },
+    {
+      "step": 28,
+      "file": "028-turn1-step86.js",
+      "turn": 1,
+      "stepInTurn": 86,
+      "result": "ok",
+      "bytes": 13232
+    },
+    {
+      "step": 29,
+      "file": "029-turn1-step90.js",
+      "turn": 1,
+      "stepInTurn": 90,
+      "result": "error",
+      "bytes": 417
+    },
+    {
+      "step": 30,
+      "file": "030-turn1-step91.js",
+      "turn": 1,
+      "stepInTurn": 91,
+      "result": "error",
+      "bytes": 463
+    },
+    {
+      "step": 31,
+      "file": "031-turn1-step93.js",
+      "turn": 1,
+      "stepInTurn": 93,
+      "result": "ok",
+      "bytes": 517
+    },
+    {
+      "step": 32,
+      "file": "032-turn1-step94.js",
+      "turn": 1,
+      "stepInTurn": 94,
+      "result": "ok",
+      "bytes": 181
+    },
+    {
+      "step": 33,
+      "file": "033-turn1-step98.js",
+      "turn": 1,
+      "stepInTurn": 98,
+      "result": "ok",
+      "bytes": 365
+    },
+    {
+      "step": 34,
+      "file": "034-turn1-step100.js",
+      "turn": 1,
+      "stepInTurn": 100,
+      "result": "ok",
+      "bytes": 1582
+    },
+    {
+      "step": 35,
+      "file": "035-turn1-step102.js",
+      "turn": 1,
+      "stepInTurn": 102,
+      "result": "ok",
+      "bytes": 2605
+    },
+    {
+      "step": 36,
+      "file": "036-turn1-step106.js",
+      "turn": 1,
+      "stepInTurn": 106,
+      "result": "ok",
+      "bytes": 315
+    },
+    {
+      "step": 37,
+      "file": "037-turn1-step110.js",
+      "turn": 1,
+      "stepInTurn": 110,
+      "result": "ok",
+      "bytes": 735
+    },
+    {
+      "step": 38,
+      "file": "038-turn1-step115.js",
+      "turn": 1,
+      "stepInTurn": 115,
+      "result": "ok",
+      "bytes": 678
+    },
+    {
+      "step": 39,
+      "file": "039-turn2-step4.js",
+      "turn": 2,
+      "stepInTurn": 4,
+      "result": "ok",
+      "bytes": 1739
+    },
+    {
+      "step": 40,
+      "file": "040-turn2-step5.js",
+      "turn": 2,
+      "stepInTurn": 5,
+      "result": "ok",
+      "bytes": 400
+    },
+    {
+      "step": 41,
+      "file": "041-turn2-step7.js",
+      "turn": 2,
+      "stepInTurn": 7,
+      "result": "ok",
+      "bytes": 1813
+    },
+    {
+      "step": 42,
+      "file": "042-turn2-step9.js",
+      "turn": 2,
+      "stepInTurn": 9,
+      "result": "error",
+      "bytes": 1715
+    },
+    {
+      "step": 43,
+      "file": "043-turn2-step11.js",
+      "turn": 2,
+      "stepInTurn": 11,
+      "result": "ok",
+      "bytes": 2054
+    },
+    {
+      "step": 44,
+      "file": "044-turn2-step13.js",
+      "turn": 2,
+      "stepInTurn": 13,
+      "result": "ok",
+      "bytes": 1486
+    },
+    {
+      "step": 45,
+      "file": "045-turn2-step15.js",
+      "turn": 2,
+      "stepInTurn": 15,
+      "result": "ok",
+      "bytes": 2089
+    },
+    {
+      "step": 46,
+      "file": "046-turn2-step17.js",
+      "turn": 2,
+      "stepInTurn": 17,
+      "result": "ok",
+      "bytes": 9285
+    },
+    {
+      "step": 47,
+      "file": "047-turn2-step18.js",
+      "turn": 2,
+      "stepInTurn": 18,
+      "result": "ok",
+      "bytes": 12909
+    },
+    {
+      "step": 48,
+      "file": "048-turn2-step21.js",
+      "turn": 2,
+      "stepInTurn": 21,
+      "result": "ok",
+      "bytes": 16570
+    },
+    {
+      "step": 49,
+      "file": "049-turn2-step24.js",
+      "turn": 2,
+      "stepInTurn": 24,
+      "result": "error",
+      "bytes": 4455
+    },
+    {
+      "step": 50,
+      "file": "050-turn2-step26.js",
+      "turn": 2,
+      "stepInTurn": 26,
+      "result": "error",
+      "bytes": 2454
+    },
+    {
+      "step": 51,
+      "file": "051-turn2-step28.js",
+      "turn": 2,
+      "stepInTurn": 28,
+      "result": "ok",
+      "bytes": 171
+    },
+    {
+      "step": 52,
+      "file": "052-turn2-step29.js",
+      "turn": 2,
+      "stepInTurn": 29,
+      "result": "error",
+      "bytes": 2383
+    },
+    {
+      "step": 53,
+      "file": "053-turn2-step30.js",
+      "turn": 2,
+      "stepInTurn": 30,
+      "result": "error",
+      "bytes": 2385
+    },
+    {
+      "step": 54,
+      "file": "054-turn2-step32.js",
+      "turn": 2,
+      "stepInTurn": 32,
+      "result": "ok",
+      "bytes": 213
+    },
+    {
+      "step": 55,
+      "file": "055-turn2-step33.js",
+      "turn": 2,
+      "stepInTurn": 33,
+      "result": "ok",
+      "bytes": 2413
+    },
+    {
+      "step": 56,
+      "file": "056-turn2-step38.js",
+      "turn": 2,
+      "stepInTurn": 38,
+      "result": "ok",
+      "bytes": 285
+    },
+    {
+      "step": 57,
+      "file": "057-turn2-step39.js",
+      "turn": 2,
+      "stepInTurn": 39,
+      "result": "ok",
+      "bytes": 2313
+    },
+    {
+      "step": 58,
+      "file": "058-turn2-step42.js",
+      "turn": 2,
+      "stepInTurn": 42,
+      "result": "ok",
+      "bytes": 834
+    },
+    {
+      "step": 59,
+      "file": "059-turn2-step49.js",
+      "turn": 2,
+      "stepInTurn": 49,
+      "result": "ok",
+      "bytes": 378
+    },
+    {
+      "step": 60,
+      "file": "060-turn2-step50.js",
+      "turn": 2,
+      "stepInTurn": 50,
+      "result": "ok",
+      "bytes": 529
+    },
+    {
+      "step": 61,
+      "file": "061-turn2-step51.js",
+      "turn": 2,
+      "stepInTurn": 51,
+      "result": "ok",
+      "bytes": 2043
+    },
+    {
+      "step": 62,
+      "file": "062-turn3-step3.js",
+      "turn": 3,
+      "stepInTurn": 3,
+      "result": "ok",
+      "bytes": 630
+    },
+    {
+      "step": 63,
+      "file": "063-turn3-step5.js",
+      "turn": 3,
+      "stepInTurn": 5,
+      "result": "ok",
+      "bytes": 396
+    },
+    {
+      "step": 64,
+      "file": "064-turn3-step7.js",
+      "turn": 3,
+      "stepInTurn": 7,
+      "result": "ok",
+      "bytes": 2249
+    },
+    {
+      "step": 65,
+      "file": "065-turn3-step9.js",
+      "turn": 3,
+      "stepInTurn": 9,
+      "result": "error",
+      "bytes": 2448
+    },
+    {
+      "step": 66,
+      "file": "066-turn3-step11.js",
+      "turn": 3,
+      "stepInTurn": 11,
+      "result": "ok",
+      "bytes": 2086
+    },
+    {
+      "step": 67,
+      "file": "067-turn3-step12.js",
+      "turn": 3,
+      "stepInTurn": 12,
+      "result": "ok",
+      "bytes": 8945
+    },
+    {
+      "step": 68,
+      "file": "068-turn3-step14.js",
+      "turn": 3,
+      "stepInTurn": 14,
+      "result": "ok",
+      "bytes": 257
+    },
+    {
+      "step": 69,
+      "file": "069-turn3-step16.js",
+      "turn": 3,
+      "stepInTurn": 16,
+      "result": "ok",
+      "bytes": 295
+    },
+    {
+      "step": 70,
+      "file": "070-turn3-step18.js",
+      "turn": 3,
+      "stepInTurn": 18,
+      "result": "ok",
+      "bytes": 628
+    },
+    {
+      "step": 71,
+      "file": "071-turn3-step23.js",
+      "turn": 3,
+      "stepInTurn": 23,
+      "result": "ok",
+      "bytes": 793
+    },
+    {
+      "step": 72,
+      "file": "072-turn3-step24.js",
+      "turn": 3,
+      "stepInTurn": 24,
+      "result": "ok",
+      "bytes": 1130
+    },
+    {
+      "step": 73,
+      "file": "073-turn4-step1.js",
+      "turn": 4,
+      "stepInTurn": 1,
+      "result": "ok",
+      "bytes": 8997
+    },
+    {
+      "step": 74,
+      "file": "074-turn4-step4.js",
+      "turn": 4,
+      "stepInTurn": 4,
+      "result": "ok",
+      "bytes": 9512
+    },
+    {
+      "step": 75,
+      "file": "075-turn4-step5.js",
+      "turn": 4,
+      "stepInTurn": 5,
+      "result": "ok",
+      "bytes": 3331
+    },
+    {
+      "step": 76,
+      "file": "076-turn4-step7.js",
+      "turn": 4,
+      "stepInTurn": 7,
+      "result": "ok",
+      "bytes": 300
+    },
+    {
+      "step": 77,
+      "file": "077-turn4-step9.js",
+      "turn": 4,
+      "stepInTurn": 9,
+      "result": "ok",
+      "bytes": 462
+    },
+    {
+      "step": 78,
+      "file": "078-turn4-step10.js",
+      "turn": 4,
+      "stepInTurn": 10,
+      "result": "ok",
+      "bytes": 8376
+    },
+    {
+      "step": 79,
+      "file": "079-turn4-step12.js",
+      "turn": 4,
+      "stepInTurn": 12,
+      "result": "ok",
+      "bytes": 4796
+    },
+    {
+      "step": 80,
+      "file": "080-turn4-step13.js",
+      "turn": 4,
+      "stepInTurn": 13,
+      "result": "ok",
+      "bytes": 1428
+    },
+    {
+      "step": 81,
+      "file": "081-turn4-step15.js",
+      "turn": 4,
+      "stepInTurn": 15,
+      "result": "ok",
+      "bytes": 657
+    },
+    {
+      "step": 82,
+      "file": "082-turn8-step27.js",
+      "turn": 8,
+      "stepInTurn": 27,
+      "result": "ok",
+      "bytes": 331
+    },
+    {
+      "step": 83,
+      "file": "083-turn8-step28.js",
+      "turn": 8,
+      "stepInTurn": 28,
+      "result": "ok",
+      "bytes": 691
+    },
+    {
+      "step": 84,
+      "file": "084-turn8-step29.js",
+      "turn": 8,
+      "stepInTurn": 29,
+      "result": "ok",
+      "bytes": 4772
+    },
+    {
+      "step": 85,
+      "file": "085-turn8-step30.js",
+      "turn": 8,
+      "stepInTurn": 30,
+      "result": "error",
+      "bytes": 7560
+    },
+    {
+      "step": 86,
+      "file": "086-turn8-step32.js",
+      "turn": 8,
+      "stepInTurn": 32,
+      "result": "ok",
+      "bytes": 7336
+    },
+    {
+      "step": 87,
+      "file": "087-turn8-step34.js",
+      "turn": 8,
+      "stepInTurn": 34,
+      "result": "ok",
+      "bytes": 2132
+    },
+    {
+      "step": 88,
+      "file": "088-turn8-step35.js",
+      "turn": 8,
+      "stepInTurn": 35,
+      "result": "ok",
+      "bytes": 344
+    },
+    {
+      "step": 89,
+      "file": "089-turn8-step37.js",
+      "turn": 8,
+      "stepInTurn": 37,
+      "result": "ok",
+      "bytes": 1231
+    },
+    {
+      "step": 90,
+      "file": "090-turn8-step58.js",
+      "turn": 8,
+      "stepInTurn": 58,
+      "result": "ok",
+      "bytes": 890
+    }
+  ]
+}
