@@ -33,6 +33,11 @@
   工作区可能是空会话（如 htDot-bridge 的 `0c5d531f`，lanes=1），断言空转。改为
   bare id 两侧归一化比较、按"最新且带 `team/task|team/member` 的根日志"选 Lead、
   mount 段复用同一 Lead，并新增 `--root <session-id>` 显式指定根。
+- 修参数解析回归（审计复核时发现）：`--root` 缺席时 `argv.find` 的 `index !== rootFlagIndex + 1`
+  退化为 `index !== 0`，把 index 0 上的 workspace slug 当成选项值滤掉，`dev-verify <slug>`
+  会静默校验默认工作区；改为只在 `--root` 存在时才剔除 flag 与值。三种形式实测：
+  无参 → 当前 0.2.2 团队 `792532d9`；`<slug>` → `sessions in <slug>`（htDot-bridge 32）；  
+  `--root 4d51254b…` → 0.2.1 旧团队（368 条邮箱 + 1 条仅注入），全部 `ALL CHECKS PASSED`。
 - 实测：0.2.2 三个团队工作区（`dsh-htdot-bridge`、`Htdot-OrderCenter`、`dsh-team-group`）
   由 FAIL 转为 `ALL CHECKS PASSED`；默认仓库工作区现在验的是**当前 0.2.2 团队会话**
   （`792532d9`，lanes=3）；`--root 4d51254b…` 指回 0.2.1 旧团队（368 条邮箱 + 1 条仅注入）

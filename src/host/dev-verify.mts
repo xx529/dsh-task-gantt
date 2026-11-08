@@ -101,8 +101,13 @@ function assert(condition: boolean, message: string): void {
 // its value is excluded from the positional search.
 const argv = process.argv.slice(2)
 const rootFlagIndex = argv.indexOf('--root')
-const slug = argv.find((arg, index) => index !== rootFlagIndex && index !== rootFlagIndex + 1)
-  ?? '--Users-lzx-Documents-GitHub-dsh-task-gantt--'
+// Only drop the two flag tokens when the flag is actually present: with
+// `rootFlagIndex === -1` the filter below would drop argv[0] (the workspace slug
+// itself, which also starts with `--`) and silently check the default workspace.
+const positionals = rootFlagIndex === -1
+  ? argv
+  : argv.filter((_, index) => index !== rootFlagIndex && index !== rootFlagIndex + 1)
+const slug = positionals[0] ?? '--Users-lzx-Documents-GitHub-dsh-task-gantt--'
 const root = join(homedir(), '.dsh', 'sessions', slug)
 const dirs = readdirSync(root).filter((name) => statSync(join(root, name)).isDirectory())
 

@@ -5,7 +5,7 @@
 > 分析脚本全部在 `/tmp/events-audit/`（`01-inventory.mts` … `14-settled-check.mts`、`quick.py`、`peek.py`）；**未修改** `src/**`、`lib/**`、`tests/**`、`package.json`。
 > 本文件是本次唯一写入的产物；真实日志里的用户消息正文不摘录，只记事件类型/字段形状/条数/头行模板。
 
-时间基线：2026-11-08T23:05–23:35 +08:00。仓库 HEAD = `2e095be`。审计期间 Lead 正在工作区里并行修改 `src/host/dev-verify.mts`（未提交）；凡引用该文件处，同时给出 **HEAD 行号** 与 **当时工作区行号**，避免行号漂移造成误读。
+时间基线：2026-11-08T23:05–23:50 +08:00。审计起点仓库 HEAD = `2e095be`；报告期间 Lead 把修复提交为 `164011e`（见 §13）。凡引用 `src/host/dev-verify.mts` 处，同时给出 **HEAD(`2e095be`) 行号** 与 **当前(`164011e`) 行号**，避免行号漂移造成误读。
 
 ---
 
@@ -26,7 +26,7 @@
 | D8 | 可选增强（低） | 0.2.2 新增 `subagent/descriptor`（v3，写进**子会话自己的日志**，含 `label`/`mode`/`provider`/`agentModel`），是比父日志 `subagent/catalog.label` 更稳的泳道名来源；当前完全未读。 | §5；代码 `dsh-subagent/lib/index.js:1806` | 可选：泳道名链在 catalog.label 缺失时补 descriptor.label |
 | — | **无（用户可见）** | **未发现** 0.2.2 真实团队日志上的用户可见缺陷：消息箭头 from/to 全部落在真实泳道（0 个 undefined、0 个 fallback `system`）、泳道名无 id 化、任务历史/计数正常、无假箭头。 | §2/§4/§6/§9 的 live API 实测 | 保留 overlay 断言作为回归锁 |
 
-> 双份事实边界：D2/D3/D4 在 HEAD 上 FAIL，但 23:25 的工作区版本已修（23:29 复测 5/5 工作区 **ALL CHECKS PASSED**，见 §8.2）。本报告的“失效”指的是 HEAD 语义，不是当前工作区。工作区仍在被并行修改，行号可能继续漂移。
+> 双份事实边界：D2/D3/D4/D1/D5/D6 均已由 Lead 在 commit `164011e` 修复并复测通过（23:29 工作区版 5/5 `ALL CHECKS PASSED`；23:37 提交后三例复测见 §13.2）。本报告的“失效”指 HEAD `2e095be` 语义，不是当前代码；D5/D6 修复时引入的参数回归 D9 也已修复（见 §13.3），三种调用形式均实测生效。
 
 ---
 
@@ -376,18 +376,19 @@ team-group         delivery form: injected only (queued=0, unpaired=0, injectedO
 
 ---
 
-## 10. 建议修复点（与当前工作区对照）
+## 10. 建议修复点与落地状态（截至 commit `164011e`）
 
 | # | 文件:行 | 建议 | 状态 |
 |---|---|---|---|
-| 1 | `src/host/dev-verify.mts:181-185`（工作区 :203） | 投递账本加入注入项；逐日志再做一次账本断言 | **工作区已修** |
-| 2 | `src/host/dev-verify.mts:590,598-601`（工作区 :632） | id-named 断言区分 `nameIsFallback`；最终以 `buildTimeline` 泳道名复核 | **工作区已修** |
-| 3 | `src/host/dev-verify.mts:663-666`（工作区 :714） | 人类提问锁改为 `askCalls===0 || questionTotal>0` | **工作区已修** |
-| 4 | `src/host/dev-verify.mts:114-129`、`:521-527` | 归一化 `parentSession` 与 id；lead 选择器加“最近活跃团队 / 显式 --root”；`buildTimeline` 用 `lead.id` | 待办 |
-| 5 | `src/host/timeline.ts:1241`（及 `fold.ts:533-535,736-746,1019-1025` 注释） | 把 “DSH 0.2.1's delivery form” 改成版本中立措辞（0.2.2 只有这一形态；面板不渲染 notes，但 API/dev-verify 读者会看到） | 待办（API 文案） |
-| 6 | `src/host/fold.ts:609-617` | 可选：用 `agent/inbox/spliced` 回填注入消息的 `queuedAt`（跨日志 id 配对），恢复“排队→投递”跨度；同时修正“one observed instant”注释 | 可选 |
-| 7 | `src/host/fold.ts`（新增读取 `subagent/descriptor`）与 `timeline.ts:868-872` | 可选：泳道名链在 catalog.label 缺失时补子会话自身 descriptor.label，减少 id 化泳道 | 可选 |
-| 8 | `src/host/dev-verify.mts:164-170` | 诊断打印注入记录时把 `to` 显示为“carrier=fold.sessionId”或 `injected`,避免 `to=-` 被误读成“没有收件人” | 可选 |
+| 1 | HEAD `src/host/dev-verify.mts:181-185` → 新文件 `:203` | 投递账本加入注入项；逐日志再做一次账本断言 | **已修（164011e）** |
+| 2 | HEAD `:590,598-601` → 新文件 `:632` | id-named 断言区分 `nameIsFallback`；最终以 `buildTimeline` 泳道名复核 | **已修（164011e）** |
+| 3 | HEAD `:663-666` → 新文件 `:714` | 人类提问锁改为 `askCalls===0 \|\| questionTotal>0` | **已修（164011e）** |
+| 4 | HEAD `:114-129`、`:521-527` → 新文件 `:104-190` | `bareId()` 归一化后比 `parentSession`；lead 选择改“最新团队根”；`buildTimeline` 复用同一 lead；新增 `--root` | **已修（164011e），但 `--root` 缺席时 slug 被丢弃，见 D9/§13** |
+| 5 | `src/host/timeline.ts:1243`（及 `fold.ts` 注释） | “DSH 0.2.1's delivery form” 改为版本中立措辞 | **已修（164011e）** |
+| 6 | `src/host/fold.ts:609-617` | 可选：用 `agent/inbox/spliced` 回填注入消息的 `queuedAt`（跨日志 id 配对），恢复“排队→投递”跨度；同时修正“one observed instant”注释 | 可选，本轮不实现 |
+| 7 | `src/host/fold.ts`（新增读取 `subagent/descriptor`）与 `timeline.ts:868-872` | 可选：泳道名链在 catalog.label 缺失时补子会话自身 descriptor.label，减少 id 化泳道 | 可选，本轮不实现 |
+| 8 | `src/host/dev-verify.mts` | 诊断打印注入记录时把 `to` 显示为 “carrier=fold.sessionId”/`injected`，避免 `to=-` 被误读成“没有收件人” | 可选，本轮不实现 |
+| 9 | `src/host/dev-verify.mts:102-105` → 修复后 `:102-111` | `--root` 缺席时 `argv.find` 的 `index !== rootFlagIndex + 1` 恒等于 `index !== 0`，把 workspace slug 当选项跳过 → `dev-verify <slug>` 静默跑默认工作区 | **已修（紧随 `164011e` 的后续提交，见 §13.3）** |
 
 ---
 
@@ -419,3 +420,90 @@ team-group         delivery form: injected only (queued=0, unpaired=0, injectedO
 - 事实（可复跑）：事件计数/时间戳/字段集合/代码行/运行中 API 返回。
 - 推断（未直接观测）：dev-verify 修复后对“未来 DSH 版本”的健壮性；候选增强（descriptor 命名、spliced 回填队列时间）的收益。
 - 未取证（不在本任务范围）：0.2.2 客户端加载契约、SDK API 变化、better-sidebar 接口（属 task-2）；`tools.resolve`/PTC 等执行面变化。
+
+---
+
+## 13. Addendum（23:4x–23:5x：修复落地状态与新增回归）
+
+Lead 于 23:4x 把 0.2.2 适配修复提交为 **`164011e`**（`fix(dsh-0.2.2-rc1): the mailbox is gone; make the fold and the real-log verifier era-neutral`；工作区已干净）。本节记录该提交后的实测状态；前文所有“HEAD/工作区”措辞在阅读时请对照本节。
+
+### 13.1 D1–D6 状态：已修
+
+| ID | 落地位置（commit `164011e`） | 复测结果 |
+|---|---|---|
+| D1 文案 | `src/host/timeline.ts:1243` 改为 “injected `user/message` events (the delivery form DSH 0.2.2 writes)”；`fold.ts` 的 0.2.1-only 注释同步改为版本中立（`fold.ts:533-545,740-756,792-796,911,971-974,1027`） | 源码核对通过；面板本就不渲染 notes，无可回归面 |
+| D2 投递账本 | `dev-verify.mts:190-203`（制作 `injectedOnlyRecords` 并计入断言）；逐日志账本断言在 `:820-826` | 5/5 工作区 `ALL CHECKS PASSED` |
+| D3 id-named | `dev-verify.mts:600-632`（拆出 `fallbackIdNamed`，只有“声称有名字却仍等于 id”才 FAIL） | research 的本例计入 `honest fallbacks: 1`，`id-named WITH a name claim: 0`，通过 |
+| D4 人类提问 | `dev-verify.mts:646-714`（先数原始 `tool/call`，`askCalls===0` 时跳过） | htDot-bridge `question tool calls in the raw logs: 0` 不再 FAIL |
+| D5 `children` 恒 0 | `dev-verify.mts:120-125` 新增 `bareId()` 归一化，`:167-186` 用它比较 `parentSession` | 默认工作区选中当前 0.2.2 团队（见 13.2） |
+| D6 选择器/覆盖 | `dev-verify.mts:139-190`：`--root <session-id>` 显式指定根（bare / `session-` 两种拼写都接受）；默认改为“最新的、带 team/task 或 team/member 的根日志”，并列时优先有 children；`buildTimeline` 段复用同一 lead | 见 13.2 的三条输出 |
+| 回归锁 | 新增 `tests/host-message-022.spec.ts`（14 KB，锁“0.2.2 只有注入形态”的折叠与账本） | 文件已提交（`git show 164011e --stat`） |
+
+### 13.2 三条实测（23:37，`node --experimental-strip-types src/host/dev-verify.mts …`）
+
+```
+# 默认（task-gantt 工作区）
+sessions in --Users-lzx-Documents-GitHub-dsh-task-gantt--: 17
+=== lead 792532d9-b234-4a60-8b04-153ae52141f9: 1537 events
+  root=792532d9 source=log lanes=3
+ALL CHECKS PASSED
+
+# 显式指回 0.2.1 旧团队日志
+=== lead 4d51254b-d8f4-4f21-a245-6b3ee56f6a99: 18533 events
+  root=4d51254b source=log lanes=9
+ALL CHECKS PASSED
+
+# htDot-bridge（见 D9 提醒：必须带 slug + --root，否则 slug 被丢弃）
+sessions in --Users-lzx-Documents-GitHub-dsh-htdot-bridge--: 32
+=== lead d4d2e505-5cc6-4322-8186-38f472fee03f: 2539 events
+  root=d4d2e505 source=log lanes=9
+ALL CHECKS PASSED
+```
+
+结论：D1–D6 已修复；**当前 0.2.2 团队**（`792532d9`，lanes=3）成为默认校验目标，旧的 0.2.1 团队日志仍可通过 `--root` 复验。
+
+### 13.3 新发现 D9（dev-verify 参数解析）—— 已修
+
+`src/host/dev-verify.mts:102-105`：
+
+```ts
+const argv = process.argv.slice(2)
+const rootFlagIndex = argv.indexOf('--root')
+const slug = argv.find((arg, index) => index !== rootFlagIndex && index !== rootFlagIndex + 1)
+  ?? '--Users-lzx-Documents-GitHub-dsh-task-gantt--'
+```
+
+无 `--root` 时 `rootFlagIndex === -1`，条件 `index !== rootFlagIndex + 1` 退化为 `index !== 0`，于是 **index 0 上的 workspace slug 永远被当成选项值跳过**，`slug` 落到默认值。实测：
+
+```
+$ node … dev-verify.mts '--Users-lzx-Documents-GitHub-dsh-htdot-bridge--'
+sessions in --Users-lzx-Documents-GitHub-dsh-task-gantt--: 17     # ← slug 被丢弃
+
+$ node … dev-verify.mts '--Users-lzx-Documents-GitHub-dsh-htdot-bridge--' --root session-d4d2e505-…
+sessions in --Users-lzx-Documents-GitHub-dsh-htdot-bridge--: 32    # ← 带 --root 时正常
+```
+
+影响：`dev-verify <slug>` 会静默校验错误的工作区，任何“某工作区 PASS/FAIL”的口头结论都可能不可复现；不影响插件运行面。
+
+**已修**（紧随 `164011e` 的后续提交，`src/host/dev-verify.mts` 参数解析）：
+
+```ts
+const positionals = rootFlagIndex === -1
+  ? argv
+  : argv.filter((_, index) => index !== rootFlagIndex && index !== rootFlagIndex + 1)
+const slug = positionals[0] ?? '--Users-lzx-Documents-GitHub-dsh-task-gantt--'
+```
+
+修后三形式实测（23:44）：
+
+```
+$ node … dev-verify.mts                                  → sessions in …dsh-task-gantt--: 18, lead 792532d9, lanes=3, PASS
+$ node … dev-verify.mts '--Users-lzx-…-dsh-htdot-bridge--' → sessions in …htdot-bridge--: 32, lead d4d2e505, lanes=9, PASS
+$ node … dev-verify.mts --root 4d51254b-…                  → sessions in …dsh-task-gantt--: 18, lead 4d51254b, lanes=9, PASS
+```
+
+### 13.4 D7 / D8：本轮不实现
+
+- **D7（用 `agent/inbox/spliced` 回填 `queuedAt`）**：0.2.2 的 spliced item 确带完整 `source` 与 `id`，可跨日志按 id 配对（§9 的 126/126 配对与 75 ms/19 s/57 min 时差是可行性证据）；但当前 UI 只画消息瞬时标记，不做排队跨度，属于产品增强而非兼容性缺陷。
+- **D8（用 `subagent/descriptor.label` 补泳道名）**：0.2.2 的 catalog 行全部带 label（§5），descriptor 只在“父日志 catalog 丢 label”时才可能救场；属健壮性增强。
+- 两者均**未**在 `164011e` 中引入新读取路径（`fold.ts` 依旧只读 `team/message/*`、`user/message`、`team/*`、`subagent/catalog`、tool 事件），与“可选、不进本轮”的取舍一致。
