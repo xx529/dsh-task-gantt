@@ -1,5 +1,69 @@
 # Changelog
 
+## 0.3.3 — 2026-11-08
+
+**适配 DSH 0.2.2-rc.1：团队消息只剩注入形态；真机自检不再按 0.2.0 的邮箱事件计数**
+
+宿主升级到 `0.2.2-rc.1` 后逐项核对（运行版本取自 app.asar 内 `dsh/package.json`；
+真实日志取 2026-11-04 之后写入的 117 个 `session.v4.jsonl.zstd`）。
+
+**实测到的唯一投递变化：`team/message/*` 消失了**
+- 0.2.2 只写注入形态：`user/message` + `data.source = {kind:'agent-message', form:'relay',
+  senderSessionId}`，头部文本仍是 `Team message from <name>:`。全库最后一次
+  `team/message/queued|delivered` 是 2026-10-21；0.2.2 期间 0 条。真实 Lead 日志
+  （`dsh-htdot-bridge` 的 `session-d4d2e505…`）有 32 条 relay 注入、0 条邮箱事件。
+- 插件 0.2.1 加入的注入折叠路径继续生效，UI 没有丢箭头：对运行中实例
+  `POST /dsh-task-gantt/api/timeline` 折该 0.2.2 团队会话得到 9 条泳道、32 条交换，
+  逐方向统计 15 组（lead↔devops 16/14、lead↔tester 18/18、lead↔pm 8/10 …），
+  **0 条缺收件人、0 条发送者回落 `system`**。`targetId` 缺失由"日志所属会话"兜底
+  （`src/host/timeline.ts:497`），这是 0.2.2 下唯一在用的收件人来源。
+- 语义与代码注释同步：`fold.ts` / `timeline.ts` 不再把注入形态称作"0.2.1 的兼容分支"。
+
+**修复：真机自检（dev-verify）在 0.2.2 上误报 FAIL**
+- 旧断言 `queued + unpairedDeliveries === records.length` 在 0.2.2 必然失败（邮箱事件
+  为 0，记录只有注入）。改为时代无关恒等式
+  `queued + unpairedDeliveries + (injectedExchanges − injectedDuplicates) === records.length`，
+  并新增 injection-only era 检测与逐日志会计。
+- 两个"工作区内容差异"不再被当成回归：问题记录断言改为"raw 日志里确实有
+  `ask_user_question` 调用时才要求折出记录"；泳道命名断言只惩罚"有名字却仍回落成会话 id"，
+  子代理日志的诚实地 id 回退单独计数（research 工作区的 1 条即此类）。
+- 修两处"验错日志"的自检缺陷：① `children` 计数恒为 0 —— 目录 id 去掉了
+  `session-` 前缀，而 header 的 `parentSession` 带前缀，`===` 永远不成立，Lead 评分
+  因此退化成"历史事件量"；② `buildTimeline` 段另取"目录序第一个无父会话"，在真实
+  工作区可能是空会话（如 htDot-bridge 的 `0c5d531f`，lanes=1），断言空转。改为
+  bare id 两侧归一化比较、按"最新且带 `team/task|team/member` 的根日志"选 Lead、
+  mount 段复用同一 Lead，并新增 `--root <session-id>` 显式指定根。
+- 实测：0.2.2 三个团队工作区（`dsh-htdot-bridge`、`Htdot-OrderCenter`、`dsh-team-group`）
+  由 FAIL 转为 `ALL CHECKS PASSED`；默认仓库工作区现在验的是**当前 0.2.2 团队会话**
+  （`792532d9`，lanes=3）；`--root 4d51254b…` 指回 0.2.1 旧团队（368 条邮箱 + 1 条仅注入）
+  仍 PASS；htDot-bridge 选中 `d4d2e505`（lanes=9）PASS。
+
+**宿主主题快照按 0.2.2-rc.1 重生成**
+- `dsh-client-ui-theme/lib/client.js` 定义数 408 → **419**：新增 12 个
+  （`--dsw-alias-illustration-*`、`--dsw-alias-state-done-primary`、`--dsw-static-violet-*` 等），
+  删除 `--dsw-specific-sidebar-nav-item-hover`（本插件未引用）。
+- 插件引用的 51 个 token 全部仍定义；`theme-token-values.json` 的 2 个 ink + 16 个 static
+  解析值复核未变。快照与 408 说明同步更新。
+
+**新增回归测试 `tests/host-message-022.spec.ts`（7 用例）**
+- injection-only 会计恒等式；relay 头解析出 sender（0.2.2 的 source 无 `senderName`）；
+  Lead 的 `session-<uuid>` 前缀逐字保留且能解析到 lead 泳道；
+  `subagent-settled/notice` 不画箭头；`system/message`、`developer/message`、`job/*`、
+  `command/*`、`llm/retry`、`agent/inbox/spliced` 等新事件不产生记录或 prompt；
+  `agent/inbox/spliced` 不作为第二消息源；端到端双向箭头都不回落 `system`。
+
+**SDK / 客户端 API 核对（无破坏性变化，证据见 `docs/COMPAT-022-API.md`）**
+- `window.__ModuleLoader__.load({id, factory})` 与 `dsh.client` 清单字段（`platform` 必填，
+  `inject`/`external`/`immediately` 可选）未变；`dsh.bundle.patch` 仍被读取。
+- 插件兼容性预检只评估 `engines.dsh`（优先）与 `@deepseek-ai/dsh*` peers；本插件只声明
+  可选 `@deepseek-ai/cordis:^4.0.0`（4.1.0 满足），因此不会被静默禁用。
+- `webServer.register(route)`、`sessionPersistence.open(id, access, options)`、
+  `Session.snapshotEvents` 签名不变；运行中实例 `api/ping` 与 `api/timeline` 实测可用。
+- better-sidebar 0.30.1 的 `registerTab` / `TabDescriptor` / `openTab` 与本插件用法一致。
+
+**测试**：45 files / 946 passed / 1 skipped；typecheck 0 错误。
+**Build identity**: `v0.3.3`.
+
 ## 0.3.2 — 2026-10-27
 
 **详情正文按 Markdown 渲染（可切原文）；详情弹窗改为整个应用居中**

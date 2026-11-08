@@ -28,7 +28,7 @@ duration, with the title drawn inside each bar](docs/screenshots/panel-v4.png)
 
 | | |
 |---|---|
-| Version | `0.3.2` |
+| Version | `0.3.3` |
 | Frozen contract (`src/shared/contract.ts`) | done |
 | Host data layer (`src/host/**`) | in progress |
 | Sidebar tab registration (`src/client/index.ts`) | done |
@@ -63,9 +63,9 @@ this README does not restate untested claims as results.
 
 | Requirement | Value |
 |---|---|
-| DSH | `0.2.0-rc.2` (the version this plugin was developed against) |
+| DSH | `0.2.2-rc.1` (validated on 0.2.2-rc.1 and 0.2.1; developed against 0.2.0-rc.2) |
 | dsh-better-sidebar | `>= 0.4.0` (the release that introduced the `ctx.betterSidebar` registry service) |
-| Node | `>= 20` |
+| Node | `>= 20` for this plugin — DSH 0.2.2 itself requires Node >= 24.9 |
 | Profile | any browser-backed DSH Web profile |
 
 The plugin declares one peer, `@deepseek-ai/cordis@^4.0.0`, and marks it

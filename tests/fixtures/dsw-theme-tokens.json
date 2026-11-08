@@ -1,7 +1,7 @@
 {
  "_note": "Snapshot of every CSS custom property DEFINED by the host theme package. Used to prove a lane colour token actually exists, not merely that its name is well-formed. Regenerate with: extract '@deepseek-ai/dsh-client-ui-theme/lib/client.js' from the app.asar and collect /(--(?:dsw|ds)-[a-z0-9-]+)\\s*:/ matches.",
- "_source": "@deepseek-ai/dsh-client-ui-theme/lib/client.js inside /Applications/DeepSeek Harness.app/Contents/Resources/app.asar (101853 B, extracted 2026-10-11)",
- "_count": 408,
+ "_source": "@deepseek-ai/dsh-client-ui-theme/lib/client.js inside /Applications/DeepSeek Harness.app/Contents/Resources/app.asar (138133 B, DSH 0.2.2-rc.1, extracted 2026-11-08)",
+ "_count": 419,
  "tokens": [
   "--ds-ease-in-out",
   "--ds-font-family-code",
@@ -57,6 +57,12 @@
   "--dsw-alias-file-diff-deleted-bg",
   "--dsw-alias-file-diff-deleted-gutter",
   "--dsw-alias-file-diff-deleted-marker",
+  "--dsw-alias-illustration-background",
+  "--dsw-alias-illustration-backing",
+  "--dsw-alias-illustration-detail",
+  "--dsw-alias-illustration-inset",
+  "--dsw-alias-illustration-shadow",
+  "--dsw-alias-illustration-surface",
   "--dsw-alias-interactive-bg-active",
   "--dsw-alias-interactive-bg-hover",
   "--dsw-alias-interactive-bg-hover-accent",
@@ -98,6 +104,7 @@
   "--dsw-alias-settings-card-stroke",
   "--dsw-alias-state-business-primary",
   "--dsw-alias-state-business-tertiary",
+  "--dsw-alias-state-done-primary",
   "--dsw-alias-state-error-primary",
   "--dsw-alias-state-error-secondary",
   "--dsw-alias-state-idle-primary",
@@ -332,7 +339,6 @@
   "--dsw-specific-sidebar-fill",
   "--dsw-specific-sidebar-nav-item-active",
   "--dsw-specific-sidebar-nav-item-active-accent",
-  "--dsw-specific-sidebar-nav-item-hover",
   "--dsw-specific-tip",
   "--dsw-static-amber-100",
   "--dsw-static-amber-400",
@@ -390,9 +396,11 @@
   "--dsw-static-neutral-bluish-150",
   "--dsw-static-neutral-bluish-200",
   "--dsw-static-neutral-bluish-300",
+  "--dsw-static-neutral-bluish-310",
   "--dsw-static-neutral-bluish-400",
   "--dsw-static-neutral-bluish-50",
   "--dsw-static-neutral-bluish-500",
+  "--dsw-static-neutral-bluish-55",
   "--dsw-static-neutral-bluish-60",
   "--dsw-static-neutral-bluish-600",
   "--dsw-static-neutral-bluish-700",
@@ -401,6 +409,7 @@
   "--dsw-static-neutral-bluish-800",
   "--dsw-static-neutral-bluish-850",
   "--dsw-static-neutral-bluish-875",
+  "--dsw-static-neutral-bluish-90",
   "--dsw-static-neutral-bluish-900",
   "--dsw-static-neutral-bluish-950",
   "--dsw-static-red-100",
@@ -410,6 +419,8 @@
   "--dsw-static-red-500",
   "--dsw-static-red-600",
   "--dsw-static-red-600-a08",
-  "--dsw-static-red-900"
+  "--dsw-static-red-900",
+  "--dsw-static-violet-400",
+  "--dsw-static-violet-600"
  ]
 }

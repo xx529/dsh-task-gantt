@@ -22,7 +22,7 @@
 
 | | |
 |---|---|
-| 版本 | `0.3.2` |
+| 版本 | `0.3.3` |
 | 冻结契约（`src/shared/contract.ts`） | 已完成 |
 | host 数据层（`src/host/**`） | 进行中 |
 | 页签注册（`src/client/index.ts`） | 已完成 |
@@ -52,9 +52,9 @@
 
 | 要求 | 值 |
 |---|---|
-| DSH | `0.2.0-rc.2`（本插件的开发基准版本） |
+| DSH | `0.2.2-rc.1`（已在 0.2.2-rc.1 与 0.2.1 上验证；开发基准为 0.2.0-rc.2） |
 | dsh-better-sidebar | `>= 0.4.0`（引入 `ctx.betterSidebar` 注册表服务的版本） |
-| Node | `>= 20` |
+| Node | `>= 20`（本插件）——DSH 0.2.2 本体要求 Node >= 24.9 |
 | Profile | 任意带浏览器的 DSH Web profile |
 
 插件只声明一个 peer：`@deepseek-ai/cordis@^4.0.0`，且标为 optional。它**故意不声明**

@@ -493,9 +493,10 @@ function messageSpansFrom(
       messageId: record.messageId,
       sessionId: fold.sessionId,
     }
-    // The receiver. A mailbox record names it (`targetId`); an INJECTED message
-    // (DSH 0.2.1's delivery form) does not, because it is only ever written into the
-    // RECEIVER's log — so the receiving side is the session that carried the event.
+    // The receiver. A mailbox record names it (`targetId`); an INJECTED message does
+    // not, because it is only ever written into the RECEIVER's log — so the receiving
+    // side is the session that carried the event. That fallback is the ONLY one in use
+    // on DSH 0.2.2-rc.1, which stopped writing mailbox events entirely.
     const to = record.injected === true ? lookup(fold.sessionId, undefined) : lookup(record.targetId, undefined)
     if (to !== undefined) span.to = to
     if (record.preview !== undefined) span.preview = record.preview
@@ -1235,10 +1236,11 @@ async function deriveTimeline(ctx: Context, sessionId: string, generatedAt: numb
     )
   }
   if (injectedExchanges > 0 || injectedDuplicates > 0) {
-    // DSH 0.2.1's delivery form. Say both halves out loud: what was drawn, and what was
-    // merged away — a silent merge would look like a lost message.
+    // The injected delivery form (DSH 0.2.1 added it, 0.2.2 writes only it). Say both
+    // halves out loud: what was drawn, and what was merged away — a silent merge would
+    // look like a lost message.
     notes.push(
-      `${injectedExchanges} team/agent message(s) arrived as injected \`user/message\` events (DSH 0.2.1's delivery form) and are drawn as exchanges` +
+      `${injectedExchanges} team/agent message(s) arrived as injected \`user/message\` events (the delivery form DSH 0.2.2 writes) and are drawn as exchanges` +
         (injectedDuplicates > 0
           ? `; ${injectedDuplicates} more duplicated a \`team/message/queued\` record and were merged by message id so the same message is not drawn twice`
           : ''),

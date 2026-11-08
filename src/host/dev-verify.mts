@@ -2,11 +2,18 @@
  * Manual, REAL-DATA self-check for the host fold — NOT part of the test suite.
  *
  * The unit tests in `tests/` must not depend on this machine's session logs, so
- * the end-to-end proof that the fold works on actual DSH 0.2.0-rc.2 logs lives
+ * the end-to-end proof that the fold works on actual DSH session logs lives
  * here. It reads the live team's Lead/teammate logs straight off disk, runs the
  * real `foldSessionEvents`, and asserts the invariants the plugin promises
  * (real timestamps only, ascending history, no negative spans, exact actor
  * attribution through `expected_revision`).
+ *
+ * Both delivery eras must pass: DSH 0.2.1 wrote the `team/message/queued` +
+ * `team/message/delivered` mailbox pair *and* the injected `user/message` form,
+ * while DSH 0.2.2-rc.1 writes **only** the injected form (measured: 0 mailbox
+ * events after 2026-10-21 across 117 post-upgrade logs). A queue-only assertion
+ * therefore fails on every 0.2.2 workspace even though the arrows are drawn
+ * correctly; the accounting below is deliberately era-neutral.
  *
  * Run it with Node's type stripping (Node >= 22.6):
  *
@@ -15,7 +22,12 @@
  * node --experimental-strip-types src/host/dev-verify.mts
  * ```
  *
- * Pass a different workspace slug as argv[2] to point it at another team.
+ * Pass a different workspace slug as argv[2] to point it at another team, and
+ * `--root <session-id>` (any spelling: bare uuid or `session-<uuid>`) to pin the
+ * root session instead of the auto-selected one. Without an override the script
+ * picks the MOST RECENT team Lead — picking the historical team with the most
+ * events (the old behaviour) verified a team that had not been touched since a
+ * previous DSH version, which is exactly the wrong log for an upgrade check.
  *
  * Expected shape of the output: a table of folded tasks/members, then a list of
  * `ok : …` lines. Any `FAIL:` line sets a non-zero exit code.
@@ -84,7 +96,13 @@ function assert(condition: boolean, message: string): void {
   }
 }
 
-const slug = process.argv[2] ?? '--Users-lzx-Documents-GitHub-dsh-task-gantt--'
+// Argument parsing: a workspace slug itself starts with `--` (e.g.
+// `--Users-lzx-…`), so only the literal flag '--root' is treated as an option and
+// its value is excluded from the positional search.
+const argv = process.argv.slice(2)
+const rootFlagIndex = argv.indexOf('--root')
+const slug = argv.find((arg, index) => index !== rootFlagIndex && index !== rootFlagIndex + 1)
+  ?? '--Users-lzx-Documents-GitHub-dsh-task-gantt--'
 const root = join(homedir(), '.dsh', 'sessions', slug)
 const dirs = readdirSync(root).filter((name) => statSync(join(root, name)).isDirectory())
 
@@ -110,21 +128,65 @@ console.log(`sessions in ${slug}: ${loaded.length}`)
 // Picking the first parentless session is not enough — a fresh empty session has
 // no `parentSession` either, and it carries none of the journal this check is
 // about.
-let lead: Loaded | undefined
-let bestScore = -1
-for (const session of loaded) {
-  const header = session.events.find((event) => event.type === 'session') as Record<string, unknown> | undefined
-  if (header === undefined || header.parentSession !== undefined) continue
-  const children = loaded.filter((other) => {
-    const otherHeader = other.events.find((event) => event.type === 'session') as Record<string, unknown> | undefined
-    return otherHeader?.parentSession === session.id
-  }).length
-  const teamEvents = session.events.filter((event) => typeof event.type === 'string' && event.type.startsWith('team/')).length
-  const score = children * 1000 + teamEvents
-  if (score > bestScore) {
-    bestScore = score
-    lead = session
+/** `session-<uuid>` and `<uuid>` must compare equal: headers carry the prefix form. */
+const bareId = (value: unknown): string | undefined =>
+  typeof value === 'string' ? value.replace(/^session-/, '') : undefined
+
+/** The last event instant in one log (0 when the log has no dated event). */
+function lastEventTime(session: Loaded): number {
+  let latest = 0
+  for (const event of session.events) {
+    const time = (event as { time?: unknown }).time
+    if (typeof time === 'number' && Number.isFinite(time) && time > latest) latest = time
   }
+  return latest
+}
+
+// `--root <session-id>` pins the root; otherwise the most recent team Lead wins.
+const rootOverride = rootFlagIndex === -1 ? undefined : bareId(argv[rootFlagIndex + 1])
+
+let lead: Loaded | undefined
+if (rootOverride !== undefined) {
+  lead = loaded.find((session) => bareId(session.id) === rootOverride)
+  if (lead === undefined) console.warn(`--root ${rootOverride}: no such session in this workspace`)
+}
+
+if (lead === undefined) {
+  /** Roots only: a child session carries a `parentSession`. */
+  const roots: Loaded[] = []
+  for (const session of loaded) {
+    const header = session.events.find((event) => event.type === 'session') as Record<string, unknown> | undefined
+    if (header !== undefined && header.parentSession === undefined) roots.push(session)
+  }
+  /** Whether this log carries a team journal at all (roster or board). */
+  const isTeamLog = (session: Loaded): boolean =>
+    session.events.some((event) => event.type === 'team/task' || event.type === 'team/member')
+  /**
+   * Pick the LATEST log in `pool`: an upgrade check must read the log the version
+   * under test actually wrote. Children are counted on the BARE id — the directory
+   * (and `Loaded.id`) drops the `session-` prefix while the header's `parentSession`
+   * keeps it, so the old exact comparison was always false and "has children" never
+   * contributed.
+   */
+  const pickLatest = (pool: Loaded[]): Loaded | undefined => {
+    let best: Loaded | undefined
+    let bestRank = Number.NEGATIVE_INFINITY
+    for (const session of pool) {
+      const children = loaded.filter((other) => {
+        const otherHeader = other.events.find((event) => event.type === 'session') as Record<string, unknown> | undefined
+        return bareId(otherHeader?.parentSession) === bareId(session.id)
+      }).length
+      const rank = lastEventTime(session) + (children > 0 ? 1 : 0)
+      if (rank > bestRank) {
+        bestRank = rank
+        best = session
+      }
+    }
+    return best
+  }
+  // Prefer the most recent log that actually HAS a team journal; fall back to the most
+  // recent root when this workspace never ran a team at all.
+  lead = pickLatest(roots.filter(isTeamLog)) ?? pickLatest(roots)
 }
 lead ??= loaded[0]
 
@@ -169,19 +231,31 @@ for (const record of messages.records.slice(0, 6)) {
   )
 }
 
-// Team-specific: a workspace where only plain sub-agents ran has no mailbox at all
-// (the HtDot run has zero `team/message/*`), so these two locks are conditional on
-// this slug actually carrying a team log.
+// Team-specific: a workspace where only plain sub-agents ran has no mailbox and no
+// injected exchange at all (the HtDot run has zero `team/message/*` and zero
+// `agent-message` relays), so these two locks are conditional on this slug actually
+// carrying a team log.
 const isTeamWorkspace = messages.records.length > 0
 if (isTeamWorkspace) {
   assert(true, `the real lead log yielded message records (${messages.records.length})`)
 } else {
-  console.log('  (no `team/message/*` in this workspace — a sub-agent-only slug; team locks skipped)')
+  console.log('  (no team mailbox or injected exchange in this workspace — a sub-agent-only slug; team locks skipped)')
 }
+// Era-neutral accounting. A record is exactly one of:
+//   * a mailbox `queued` event (DSH <= 0.2.1),
+//   * a delivery with no readable queue (explicitly counted), or
+//   * an injected `user/message` exchange that had no mailbox twin
+//     (`injectedExchanges - injectedDuplicates`; 0.2.2 writes ONLY this form).
+const injectedOnlyRecords =
+  messages.diagnostics.injectedExchanges - messages.diagnostics.injectedDuplicates
+console.log(
+  `  delivery form: ${messages.diagnostics.queued > 0 ? 'mailbox + injected' : 'injected only'}` +
+    ` (queued=${messages.diagnostics.queued}, unpaired=${messages.diagnostics.unpairedDeliveries}, injectedOnly=${injectedOnlyRecords})`,
+)
 assert(
-  messages.diagnostics.queued + messages.diagnostics.unpairedDeliveries ===
+  messages.diagnostics.queued + messages.diagnostics.unpairedDeliveries + injectedOnlyRecords ===
     messages.records.length,
-  'every emitted record came from a queue, or is an explicitly-counted unpaired delivery',
+  'every emitted record is a queue, an explicitly-counted unpaired delivery, or an injection-only exchange',
 )
 assert(
   messages.records.every((record, i, all) => {
@@ -518,12 +592,11 @@ const stubCtx = {
   },
 } as never
 
-const rootSession = loaded.find((s) => {
-  const header = s.events.find((e) => (e as { type?: unknown }).type === 'session') as
-    | Record<string, unknown>
-    | undefined
-  return header !== undefined && header.parentSession === undefined
-})
+// The SAME root the rest of this script inspected: the most recent team Lead (or the
+// `--root` override). The old code re-picked "first parentless session in directory
+// order", which on a real workspace could be an idle shell session with no team at all —
+// the mount assertions then passed vacuously.
+const rootSession: Loaded | undefined = lead
 if (rootSession === undefined) {
   console.log('  (no root session found; skipping the end-to-end mount check)')
 } else {
@@ -574,6 +647,7 @@ console.log('\n=== sub-agent compatibility (real logs) ===')
 let dispatchesSeen = 0
 let labelledMembers = 0
 let idNamedMembers = 0
+let fallbackIdNamed = 0
 for (const session of loaded) {
   const team = foldTeamEvents(session.events, session.id)
   const dispatches = foldSubagentDispatches(session.events)
@@ -587,17 +661,29 @@ for (const session of loaded) {
   for (const member of team.members) {
     const labelled = member.nameIsFallback !== true
     if (labelled) labelledMembers += 1
-    if (member.name === member.id) idNamedMembers += 1
+    if (member.name === member.id) {
+      if (member.nameIsFallback === true) {
+        // Honest fallback: the log carries no name at all (a standalone child log with
+        // neither `team/member` nor a session title). `timeline.ts` upgrades it from the
+        // child's own log when that title exists; there is nothing to invent otherwise.
+        fallbackIdNamed += 1
+      } else {
+        idNamedMembers += 1
+      }
+    }
     if (!labelled && team.sessionTitle !== undefined) {
       // The child's own log gave a real title; the lane name would come from there.
       labelledMembers += 1
     }
   }
 }
-console.log(`  dispatches total: ${dispatchesSeen}; lane rows named by something other than their id: ${labelledMembers}; still id-named: ${idNamedMembers}`)
+console.log(
+  `  dispatches total: ${dispatchesSeen}; lane rows named by something other than their id: ${labelledMembers};` +
+    ` id-named honest fallbacks: ${fallbackIdNamed}; id-named WITH a name claim: ${idNamedMembers}`,
+)
 assert(
   idNamedMembers === 0,
-  `no roster row may be NAMED after its own session id (found ${idNamedMembers})`,
+  `no roster row that HAS a name may still be named after its own session id (found ${idNamedMembers})`,
 )
 assert(
   dispatchesSeen === 0 || loaded.some((s) => foldSubagentDispatches(s.events).every((d) => d.childId !== '')),
@@ -614,8 +700,17 @@ console.log('\n=== questions to a human (real logs) ===')
 let questionTotal = 0
 let duplicated = 0
 let placeholderStoleEnd = 0
+/** Raw question tool calls, so "nobody asked" is distinguishable from "all folds lost". */
+let askCalls = 0
+const ASK_TOOL_NAMES: ReadonlySet<string> = new Set(['ask_user_question', 'request_user_input'])
 const questionStatus = new Map<string, number>()
 for (const session of loaded) {
+  for (const event of session.events) {
+    const e = event as { type?: unknown; data?: { name?: unknown } }
+    if (e.type !== 'tool/call') continue
+    const name = e.data?.name
+    if (typeof name === 'string' && ASK_TOOL_NAMES.has(name)) askCalls += 1
+  }
   const records = foldQuestionRecords(session.events)
   if (records.length === 0) continue
   // Every result time per callId, in log order, from the raw events.
@@ -660,10 +755,17 @@ for (const session of loaded) {
   }
 }
 console.log(`  questions folded: ${questionTotal}; status tally: ${JSON.stringify([...questionStatus])}`)
+console.log(`  question tool calls in the raw logs: ${askCalls}`)
 console.log(`  calls whose callId had several tool/results (compaction rewrites): ${duplicated}`)
+// Workspace-content dependent: a slug where nobody used ask_user_question must not
+// fail the run, but once the tool WAS called, losing the record is a real defect — the
+// "?" markers and the answered/failed states depend on it.
+if (askCalls === 0) {
+  console.log('  (no question tool call in this workspace; the folded-record lock is skipped)')
+}
 assert(
-  questionTotal > 0,
-  `the real logs contain questions to a human (${questionTotal})`,
+  askCalls === 0 || questionTotal > 0,
+  `every raw question call produced a folded record (${askCalls} call(s), ${questionTotal} folded)`,
 )
 assert(
   placeholderStoleEnd === 0,
@@ -732,17 +834,19 @@ console.log('\n=== question markers vs the 9px thinning (real logs) ===')
   }
 }
 
-// ---- DSH 0.2.1 delivery drift over the REAL logs ---------------------------
-// 0.2.1 also delivers a team/agent message as an injected `user/message`
-// (`source.kind` of `team-message` or `agent-message`). Before the fix those were counted
-// and thrown away, so every exchange arrow disappeared. This section locks the merge on
-// real data: both forms folded, no message drawn twice, and at least one real 0.2.1
-// session actually producing an exchange span.
-console.log('\n=== DSH 0.2.1 injected messages (real logs) ===')
+// ---- injected delivery form over the REAL logs -----------------------------
+// DSH 0.2.1 delivers a team/agent message as an injected `user/message`
+// (`source.kind` of `team-message` or `agent-message`) *in addition to* the mailbox
+// pair; DSH 0.2.2-rc.1 delivers ONLY this form. Before the 0.2.1 fix those were
+// counted and thrown away, so every exchange arrow disappeared. This section locks
+// the merge on real data: every form folded, no message drawn twice, and at least
+// one real session actually producing an exchange span.
+console.log('\n=== injected team/agent messages (real logs) ===')
 let injectedKept = 0
 let injectedDupes = 0
 let queuedSeen = 0
 let duplicateIds = 0
+let accountingMismatches = 0
 let injectedLogs = 0
 let firstInjectedSession: string | undefined
 for (const session of loaded) {
@@ -756,15 +860,24 @@ for (const session of loaded) {
   }
   const ids = fold.records.map((record) => record.messageId)
   if (new Set(ids).size !== ids.length) duplicateIds += 1
+  const accounted =
+    fold.diagnostics.queued +
+    fold.diagnostics.unpairedDeliveries +
+    fold.diagnostics.injectedExchanges -
+    fold.diagnostics.injectedDuplicates
+  if (fold.records.length !== accounted) accountingMismatches += 1
 }
 console.log(
   `  mailbox queued events: ${queuedSeen}; injected exchanges kept: ${injectedKept}; merged as duplicates: ${injectedDupes}`,
 )
 console.log(`  logs carrying an injected exchange: ${injectedLogs}`)
+if (queuedSeen === 0 && injectedKept > 0) {
+  console.log('  era: injection-only — DSH 0.2.2-rc.1 no longer writes team/message/* (expected)')
+}
 assert(duplicateIds === 0, `no log folds the same message id twice (offenders: ${duplicateIds})`)
 assert(
-  injectedKept + injectedDupes === 0 || queuedSeen >= 0,
-  'both delivery forms are read side by side',
+  accountingMismatches === 0,
+  `per-log accounting: every record is a queue, an unpaired delivery, or an injection-only exchange (offending logs: ${accountingMismatches})`,
 )
 if (firstInjectedSession !== undefined) {
   const response = await buildTimeline(stubCtx, firstInjectedSession)
@@ -772,8 +885,8 @@ if (firstInjectedSession !== undefined) {
     (total, lane) => total + lane.messages.filter((span) => span.kind === 'message').length,
     0,
   )
-  console.log(`  a real 0.2.1 session (${firstInjectedSession.slice(0, 8)}) draws ${drawn} exchange span(s)`)
-  assert(drawn > 0, 'a real 0.2.1 session with injected messages draws at least one exchange span')
+  console.log(`  a real session with injected messages (${firstInjectedSession.slice(0, 8)}) draws ${drawn} exchange span(s)`)
+  assert(drawn > 0, 'a real session with injected messages draws at least one exchange span')
   // A sender that is genuinely OFF this roster (a member of another team, or — in this
   // script — the real Lead, because the stub cannot supply session headers for the
   // upward root walk) must degrade to `system`; that is honest. What must never happen

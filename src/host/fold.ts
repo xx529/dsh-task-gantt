@@ -530,7 +530,7 @@ export function foldActivitySpans(events: readonly unknown[]): FoldedActivity {
 const USER_SOURCE_KIND = 'user'
 
 /**
- * `user/message` source kinds that carry a **teammate/agent message** in DSH 0.2.1.
+ * `user/message` source kinds that carry a **teammate/agent message**.
  *
  * The delivery form changed in 0.2.1: instead of (only) appending
  * `team/message/queued` + `team/message/delivered`, the mailbox now injects the
@@ -538,6 +538,13 @@ const USER_SOURCE_KIND = 'user'
  * Measured over 272 real logs: `team-message` 581, `agent-message` 56, while the older
  * `team/message/queued` pair still exists (601 each), so both forms must be read and
  * merged — see {@link foldMessageRecords}.
+ *
+ * DSH 0.2.2-rc.1 writes **only** this form. Measured on 2026-11-08 over 117 logs written
+ * after the upgrade: `team/message/queued` / `team/message/delivered` = 0 occurrences
+ * (the last mailbox event anywhere in the store is 2026-10-21), while the real Lead log
+ * `session-d4d2e505…` of workspace `dsh-htdot-bridge` carries 32 `agent-message` relay
+ * injections and 0 mailbox records. So the injected path is not a compatibility branch
+ * any more — it is the main path, and `tests/host-message-022.spec.ts` locks it.
  */
 const INJECTED_MESSAGE_KINDS: ReadonlySet<string> = new Set(['team-message', 'agent-message'])
 
@@ -733,15 +740,17 @@ export interface FoldedMessageRecord {
   /** Log `seq` of the record that opened this exchange (stable ordering). */
   seq: number
   /**
-   * True when this exchange came from DSH 0.2.1's **injection** form rather than from
-   * the `team/message/queued` + `delivered` journal pair.
+   * True when this exchange came from the **injection** form rather than from the
+   * `team/message/queued` + `delivered` journal pair.
    *
-   * 0.2.1 delivers a team/agent message as a `user/message` whose
+   * DSH 0.2.1 delivers a team/agent message as a `user/message` whose
    * `data.source.kind` is `team-message` or `agent-message`; the mailbox events still
    * exist for older sessions, so both forms are read and merged (see
-   * {@link foldMessageRecords}). An injected record knows only ONE instant, so it sets
-   * both `queuedAt` and `deliveredAt` to it, and its receiver is the session whose log
-   * carried the event — which is why the caller fills `to` from `fold.sessionId`.
+   * {@link foldMessageRecords}). DSH 0.2.2-rc.1 writes **only** the injection — every
+   * exchange on a post-upgrade log is this form. An injected record knows only ONE
+   * instant, so it sets both `queuedAt` and `deliveredAt` to it, and its receiver is
+   * the session whose log carried the event — which is why the caller fills `to` from
+   * `fold.sessionId`.
    */
   injected?: boolean
 }
@@ -783,7 +792,8 @@ export interface MessageFoldDiagnostics {
   /**
    * Injected exchanges dropped because the same message id was already covered by a
    * `team/message/queued` record — the 0.2.1 duplicate. Counted so the merge is visible
-   * rather than silent.
+   * rather than silent. This is 0 on DSH 0.2.2-rc.1 logs: there is no mailbox any more,
+   * so `injectedExchanges - injectedDuplicates` is exactly the number of records.
    */
   injectedDuplicates: number
   /**
@@ -901,7 +911,7 @@ export function foldMessageRecords(events: readonly unknown[]): FoldedMessages {
   const deliveries = new Map<string, { time: number; targetId?: string; seq: number }>()
   const deliveryOrder: string[] = []
   const userPrompts: FoldedUserPrompt[] = []
-  /** 0.2.1's injected exchanges, kept in log order until the dedupe pass below. */
+  /** Injected exchanges (0.2.2's only form), kept in log order until the dedupe pass below. */
   const injections: FoldedMessageRecord[] = []
   const rosterNames = rosterNamesBySession(indexed)
 
@@ -961,7 +971,8 @@ export function foldMessageRecords(events: readonly unknown[]): FoldedMessages {
       const sourceKind = asText(source?.kind)
       if (sourceKind !== USER_SOURCE_KIND) {
         if (sourceKind !== undefined) diagnostics.injectedUserMessages += 1
-        // DSH 0.2.1 delivers a teammate/agent message as an injected user/message.
+        // DSH 0.2.1 delivers a teammate/agent message as an injected user/message, and
+        // DSH 0.2.2-rc.1 delivers it this way and no other way.
         // Before this branch existed these were counted and thrown away, which is why
         // every exchange arrow vanished after the upgrade.
         if (sourceKind !== undefined && INJECTED_MESSAGE_KINDS.has(sourceKind) && source !== undefined) {
@@ -1016,7 +1027,7 @@ export function foldMessageRecords(events: readonly unknown[]): FoldedMessages {
     records.push(record)
   }
 
-  // Merge 0.2.1's injected form with the 0.2.0 mailbox form, preferring the mailbox:
+  // Merge the injected form with the mailbox form, preferring the mailbox:
   // its `queued` record carries the real hand-over time and an explicit `targetId`.
   // The keys line up exactly — `source.messageId` of an injected team message equals
   // `message.id` of its `queued` event (verified on 13 sessions that carry both).
