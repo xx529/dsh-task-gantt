@@ -13,8 +13,9 @@
   `team/message/queued|delivered` 是 2026-10-21；0.2.2 期间 0 条。真实 Lead 日志
   （`dsh-htdot-bridge` 的 `session-d4d2e505…`）有 32 条 relay 注入、0 条邮箱事件。
 - 插件 0.2.1 加入的注入折叠路径继续生效，UI 没有丢箭头：对运行中实例
-  `POST /dsh-task-gantt/api/timeline` 折该 0.2.2 团队会话得到 9 条泳道、32 条交换，
-  逐方向统计 15 组（lead↔devops 16/14、lead↔tester 18/18、lead↔pm 8/10 …），
+  `POST /dsh-task-gantt/api/timeline` 折该 0.2.2 团队会话得到 9 条泳道、32 条交换
+  （Lead 日志自身折叠结果；全图共 130 个消息跨度），逐方向统计 16 组（8 名 teammate
+  双向：lead↔devops 16/14、lead↔tester 18/18、lead↔pm 8/10 …），
   **0 条缺收件人、0 条发送者回落 `system`**。`targetId` 缺失由"日志所属会话"兜底
   （`src/host/timeline.ts:497`），这是 0.2.2 下唯一在用的收件人来源。
 - 语义与代码注释同步：`fold.ts` / `timeline.ts` 不再把注入形态称作"0.2.1 的兼容分支"。
@@ -40,7 +41,7 @@
   `--root 4d51254b…` → 0.2.1 旧团队（368 条邮箱 + 1 条仅注入），全部 `ALL CHECKS PASSED`。
 - 实测：0.2.2 三个团队工作区（`dsh-htdot-bridge`、`Htdot-OrderCenter`、`dsh-team-group`）
   由 FAIL 转为 `ALL CHECKS PASSED`；默认仓库工作区现在验的是**当前 0.2.2 团队会话**
-  （`792532d9`，lanes=3）；`--root 4d51254b…` 指回 0.2.1 旧团队（368 条邮箱 + 1 条仅注入）
+  （`792532d9`；泳道数随团队增长，当时为 3）；`--root 4d51254b…` 指回 0.2.1 旧团队（368 条邮箱 + 1 条仅注入）
   仍 PASS；htDot-bridge 选中 `d4d2e505`（lanes=9）PASS。
 
 **宿主主题快照按 0.2.2-rc.1 重生成**
@@ -65,6 +66,15 @@
 - `webServer.register(route)`、`sessionPersistence.open(id, access, options)`、
   `Session.snapshotEvents` 签名不变；运行中实例 `api/ping` 与 `api/timeline` 实测可用。
 - better-sidebar 0.30.1 的 `registerTab` / `TabDescriptor` / `openTab` 与本插件用法一致。
+
+**独立验证**
+- teammate `verifier` 不采信任何自述，独立重跑全部门禁（`git`、`pnpm run check`、9 条 dev-verify 调用、
+  三条事实复核、运行中实例 API、对抗性审阅），对本次交付判定 **PASS**（产物
+  `docs/COMPAT-022-VERIFY.md`）；并抓出 10 条不一致，其中 7 条文档数字/口径已更正
+  （见 `docs/COMPAT-022-EVENTS.md` §13.5）。
+- 据此再加固 3 处门禁：`--root` 拼错改为硬失败（原为 warn 后静默回退，可造成假 PASS）；
+  提问锁从 `askCalls>0 ⇒ folded>0` 加强为 `questionTotal === askCalls`（7 个工作区一一对应）；
+  注入形态新增“每条 message span 必须有 `to`”断言（0.2.2 的收件人只有日志所有者兜底）。
 
 **测试**：45 files / 946 passed / 1 skipped；typecheck 0 错误。
 **Build identity**: `v0.3.3`.

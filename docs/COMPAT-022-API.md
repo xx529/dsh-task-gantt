@@ -24,7 +24,7 @@
 | 8 | 活会话事件读取 | `Session.snapshotEvents(fromSeq, toSeqExclusive)` 在 0.2.2 仍存在（`dsh-session/lib/index.js:1454`；0.2.1 为 `:1452`，实现未变） | `src/host/session-log.ts` 活会话优先、持久化次之 | OK（仍带 host 的 `@deprecated` 注释，插件已有第二通道） |
 | 9 | 团队事件 | `team/task`、`team/member` 仍写在 Lead 会话日志里，形状未变；`team/message/queued|delivered` **0.2.2 不再写**（见 `docs/COMPAT-022-EVENTS.md`） | `src/host/fold.ts` 两种形态都读；注入形态是 0.2.2 唯一形态 | OK（已补测试） |
 | 10 | better-sidebar tab 服务（非 DSH 本体） | 已装 `dsh-better-sidebar@0.30.1`：`TabDescriptor` 仍有 `id/title/description/icon/order/hidden/available/single/dedupeKey/component`，`registerTab(descriptor)` 与 `openTab(seed, scope)` 均在（`lib/types/client/service.d.ts:148,619,710`；`lib/client-registry.js:1625`） | `src/client/index.ts` 只传这些字段 | OK |
-| 11 | 主题 token | `dsh-client-ui-theme/lib/client.js`（0.2.2，138 133 B）定义 **419** 个 `--(dsw|ds)-*`；0.2.1 为 408。新增 12 个（illustration/state-done 等），删除 `--dsw-specific-sidebar-nav-item-hover` | 插件引用 51 个 token，全部仍定义；未用到被删的那个 | 快照已重生成（`tests/fixtures/dsw-theme-tokens.json`） |
+| 11 | 主题 token | `dsh-client-ui-theme/lib/client.js`（0.2.2，asar 条目 **140 148 B**）定义 **419** 个 `--(dsw|ds)-*`；0.2.1 为 408。新增 12 个（illustration/state-done 等），删除 `--dsw-specific-sidebar-nav-item-hover` | 剥离注释后源码真实引用 **46** 个 distinct token，全部仍定义；未用到被删的那个 | 快照已重生成（`tests/fixtures/dsw-theme-tokens.json`） |
 | 12 | 主题值 | `theme-token-values.json` 的 2 个 ink + 16 个 static 解析值在 0.2.2 未变（唯一差异是 `#fff` 与 `#ffffff` 的写法） | 对比度测试内容不变 | OK |
 
 ## 2. 运行中实例实测（只读）
@@ -39,8 +39,8 @@ curl -s -X POST -H 'content-type: application/json' -d '{}' \
 
 # 0.2.2 团队会话（dsh-htdot-bridge 的 Lead）
 POST /dsh-task-gantt/api/timeline {"sessionId":"session-d4d2e505-5cc6-4322-8186-38f472fee03f"}
-→ ok:true, lanes=9, tasks, 消息跨度：lead↔devops 16/14、lead↔pm 8/10、lead↔tester 18/18 …
-  逐组统计 15 个方向、0 条缺 to、0 条 from.kind=system
+→ ok:true, lanes=9, tasks；全图 130 个 message span、16 个方向对（8 名 teammate 双向：
+  lead↔devops 16/14、lead↔pm 8/10、lead↔tester 18/18 …），0 条缺 to、0 条 from.kind=system
 ```
 
 **Fact**：host 半在 0.2.2-rc.1 能加载、能注册路由、能从冷日志折出泳道/任务/箭头。
@@ -62,7 +62,12 @@ POST /dsh-task-gantt/api/timeline {"sessionId":"session-d4d2e505-5cc6-4322-8186-
    `session-` 前缀两侧不一致恒为 0；`buildTimeline` 段另取"目录序第一个无父会话"
    （可能是空会话，断言空转）。改为 bare id 归一化、选"最新且有团队日记的根日志"、
    mount 段复用同一 Lead，并新增 `--root <session-id>`。实测默认工作区现在验当前
-   0.2.2 团队会话（`792532d9`，lanes=3），`--root 4d51254b…` 回到 0.2.1 旧库仍 PASS。
+   0.2.2 团队会话（`792532d9`；泳道数随团队增长），`--root 4d51254b…` 回到 0.2.1 旧库仍 PASS。
+5. 独立验证（`docs/COMPAT-022-VERIFY.md`）又抓出并已修的 3 个门禁健壮性问题：
+   `--root` 拼错时改为硬失败（原为 warn 后静默回退）；提问锁改为
+   `questionTotal === askCalls`（7 个工作区实测一一对应，原文案弱于断言）；
+   注入时代新增“每条消息跨度必须有收件人”断言（0.2.2 收件人只有日志所有者兜底，
+   缺 to 即兜底失效）。
 
 ## 4. 复现命令
 

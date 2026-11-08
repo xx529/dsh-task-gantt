@@ -153,7 +153,12 @@ const rootOverride = rootFlagIndex === -1 ? undefined : bareId(argv[rootFlagInde
 let lead: Loaded | undefined
 if (rootOverride !== undefined) {
   lead = loaded.find((session) => bareId(session.id) === rootOverride)
-  if (lead === undefined) console.warn(`--root ${rootOverride}: no such session in this workspace`)
+  if (lead === undefined) {
+    // A mistyped root must be loud: silently falling back to the auto-selected team
+    // turns a typo into a PASS for a workspace the caller never asked about.
+    console.error(`FAIL: --root ${rootOverride}: no such session in ${slug}`)
+    process.exit(1)
+  }
 }
 
 if (lead === undefined) {
@@ -626,6 +631,18 @@ if (rootSession === undefined) {
     ),
     'toolName is present exactly when evidence is running-tool',
   )
+  // I-10: on an injection-only log the recipient is inferred from the log's owner, so
+  // there is no reason for a drawn exchange to lack `to`. A missing recipient means the
+  // owner fallback broke (this is the only recipient source 0.2.2 has).
+  if (messages.diagnostics.queued === 0) {
+    const missingRecipient = response.lanes
+      .flatMap((lane) => lane.messages)
+      .filter((span) => span.kind === 'message' && span.to === undefined).length
+    assert(
+      missingRecipient === 0,
+      `an injection-only log never draws an exchange without a recipient (missing: ${missingRecipient})`,
+    )
+  }
   // The wire form is what the client actually sees.
   const wire = JSON.parse(JSON.stringify(response)) as { lanes: { activity?: unknown }[] }
   assert(
@@ -762,15 +779,15 @@ for (const session of loaded) {
 console.log(`  questions folded: ${questionTotal}; status tally: ${JSON.stringify([...questionStatus])}`)
 console.log(`  question tool calls in the raw logs: ${askCalls}`)
 console.log(`  calls whose callId had several tool/results (compaction rewrites): ${duplicated}`)
-// Workspace-content dependent: a slug where nobody used ask_user_question must not
-// fail the run, but once the tool WAS called, losing the record is a real defect — the
-// "?" markers and the answered/failed states depend on it.
-if (askCalls === 0) {
-  console.log('  (no question tool call in this workspace; the folded-record lock is skipped)')
-}
+// Both counters come from the SAME raw events (a `tool/call` named
+// ask_user_question / request_user_input), so they must be EQUAL — not merely both
+// non-zero: a dropped call silently loses a "?" marker while the weaker
+// `askCalls > 0 ⇒ folded > 0` form still passes. 0 calls ⇒ 0 records is equally
+// valid, so the lock needs no workspace-content skip. (Verified on 7 workspaces:
+// 12/12, 3/3, 28/28, 9/9, 1/1, 0/0, 0/0.)
 assert(
-  askCalls === 0 || questionTotal > 0,
-  `every raw question call produced a folded record (${askCalls} call(s), ${questionTotal} folded)`,
+  questionTotal === askCalls,
+  `every raw question tool call folds into exactly one record (${askCalls} call(s), ${questionTotal} folded)`,
 )
 assert(
   placeholderStoleEnd === 0,

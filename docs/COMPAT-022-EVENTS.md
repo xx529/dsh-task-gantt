@@ -23,7 +23,7 @@
 | D6 | dev-verify 覆盖缺口 | “当前 0.2.2 团队”从未被验到：lead 选择器偏好**历史上最大的团队**（capability-settings 选 10-15 的 `dffb11e4`，而非 11-08 的 `4767a48b`；task-gantt 选 10-10 的 `4d51254b`，而非当前的 `792532d9`）；`buildTimeline` 段的 root 又是“目录序第一个无父会话”，htDot-bridge 里是 `0c5d531f`（lanes=1，空队），断言空转。 | HEAD `:114-129`、`:521-527`；见 §8.1 | 增加 `--root <id>` / `--latest` 选择器；`buildTimeline` 用 `lead.id` |
 | D1 | 仅 API/内部文案 | 响应 `notes` 仍写 “DSH 0.2.1's delivery form”。0.2.2 的团队消息**只有**这种注入形式，文案把它说成“0.2.1 的过渡形态”。面板不渲染 notes，只有直接看 API/dev-verify 输出的人会看到。 | `src/host/timeline.ts:1241`；live API notes 原样返回该句 | 改为版本中立措辞（如 “injected `user/message` (DSH 0.2.1+ delivery form)”），并同步 `fold.ts:533-535/736-746/1019-1025` 注释 |
 | D7 | 仅内部语义（低） | `fold.ts` 把注入消息的 `queuedAt` 与 `deliveredAt` 都设为同一时刻，注释称“注入即同时投递”。0.2.2 实测不是：`agent/inbox/spliced` 记入 inbox 的时刻（队列）比 `user/message` 的投递时刻早，中位 75 ms、p90 19.3 s、最长 56.7 min。当前 UI 只画瞬时标记，因此不产生错误箭头；但“排队等待”这一段在 0.2.2 是可恢复的。 | `src/host/fold.ts:609-617`；实测见 §9 | 可选：用 `spliced.inserted[].id` 与 `user/message.data.id` 配对回填 `queuedAt`（0.2.2 的 spliced item 带完整 `source`+`id`） |
-| D8 | 可选增强（低） | 0.2.2 新增 `subagent/descriptor`（v3，写进**子会话自己的日志**，含 `label`/`mode`/`provider`/`agentModel`），是比父日志 `subagent/catalog.label` 更稳的泳道名来源；当前完全未读。 | §5；代码 `dsh-subagent/lib/index.js:1806` | 可选：泳道名链在 catalog.label 缺失时补 descriptor.label |
+| D8 | 可选增强（低） | `subagent/descriptor`（v3，写进**子会话自己的日志**，含 `label`/`mode`/`provider`/`agentModel`）——**并非 0.2.2 新增**（verifier 在 2026-10-15 的旧日志已见；见 §13.5 I-1 更正），但它是比父日志 `subagent/catalog.label` 更稳的泳道名来源；当前完全未读。 | §5；代码 `dsh-subagent/lib/index.js:1806` | 可选：泳道名链在 catalog.label 缺失时补 descriptor.label |
 | — | **无（用户可见）** | **未发现** 0.2.2 真实团队日志上的用户可见缺陷：消息箭头 from/to 全部落在真实泳道（0 个 undefined、0 个 fallback `system`）、泳道名无 id 化、任务历史/计数正常、无假箭头。 | §2/§4/§6/§9 的 live API 实测 | 保留 overlay 断言作为回归锁 |
 
 > 双份事实边界：D2/D3/D4/D1/D5/D6 均已由 Lead 在 commit `164011e` 修复并复测通过（23:29 工作区版 5/5 `ALL CHECKS PASSED`；23:37 提交后三例复测见 §13.2）。本报告的“失效”指 HEAD `2e095be` 语义，不是当前代码；D5/D6 修复时引入的参数回归 D9 也已修复（见 §13.3），三种调用形式均实测生效。
@@ -208,7 +208,7 @@ compact-checkpoint/- 7      session-reference/recall 2
 
 **Fact F3-2** `fold.ts` 只把 `kind ∈ {team-message, agent-message}` 当消息（`fold.ts:542`、`:967`）。实测：
 - 含 `subagent-settled` 的日志共 83 个（含其他代际），其中 15 个日志“只有 settled、没有任何 agent/team 消息”，它们的 `injectedExchanges` 全为 **0**，`records` 只来自 mailbox（或 0）→ settled **从未产生 record**。
-- 0.2.2 时期的 settled 注入：122 个追加文件里 90 条；4 个 0.2.2 团队根 + 成员日志里分别为 2 / 2 / 5 / 4 条，**0 条**带 `Team message` 头。
+- 0.2.2 时期的 settled 注入：本审计在 122 个追加文件里数到 90 条（口径可能含 `agent/inbox/spliced` 副本）；verifier 独立复测 `user/message` 形态为 **59 条**（§13.5 I-6），含 settled 的日志数 83 一致。无论 59 还是 90，**0 条**带 `Team message` 头，结论不变。4 个 0.2.2 团队根 + 成员日志里分别为 2 / 2 / 5 / 4 条。
 - settled 的 source 形状（0.2.2 代码）：`{kind:'subagent-settled', form:'notice', senderSessionId, summary}`（`dsh-subagent/lib/types/continuation-messages.js:105-115`；`dsh-subagent/lib/index.js:540`），头行模板 `Background subagent <childId> finished …` —— 与两条消息头正则不匹配。
 
 **Fact F3-3** 全量头部归类（见 F1-4）：除 `team-message`/`agent-message` 外，其余 1064 条注入（122 个追加文件）**没有一条**匹配消息头模板。
@@ -223,7 +223,8 @@ compact-checkpoint/- 7      session-reference/recall 2
 
 **Fact F4-1** `subagent/catalog`（0.2.2 时期 35 条 / 11 个日志；全量文件里 36 行样本）：形状与旧版**完全一致** `{childId, childCreatedAt, mode, label, version:0}`（`06-subagent.mts`）。0.2.2 样本中 `label` **36/36 非空**，`mode=continuable`。→ childId→泳道映射仍成立（当前团队两条 catalog 即 events-auditor/sdk-auditor 的名字来源）。
 
-**Fact F4-2** `subagent/descriptor` 是 **0.2.2 新增事件**：0.2.2 时期 36 条 / 36 个会话；< 2026-11-04 为 0 条。形状 v3：
+**Fact F4-2** ~~`subagent/descriptor` 是 **0.2.2 新增事件**：0.2.2 时期 36 条 / 36 个会话；< 2026-11-04 为 0 条。~~
+**更正（§13.5 I-1，verifier 独立实测）**：`subagent/descriptor` **不是 0.2.2 新增**——全库 pre-2026-11-04 有 312 条（v3，311 条带 `label`；样本 2026-10-15/10-22/10-23）；Lead 复核 240 个日志中 pre-cutoff 95 条（样本 2026-10-15T06:46Z）。上文“36 条”只是本审计对**0.2.2 追加文件**（122 个）的扫描口径，不是“新增事件”。形状 v3：
 
 ```json
 {"type":"subagent/descriptor","data":{"version":3,"mode":"continuable","provider":"spawn",
@@ -326,6 +327,11 @@ HEAD 输出摘要（完整日志在 `/tmp/events-audit/out/devverify-*.log`）�
 - D5：`:101`（`id: dir.replace(/^session-/,'')`）与 `:114-129`（`otherHeader?.parentSession === session.id`）——一侧带前缀一侧不带，`children` 实际只剩“父本身是子会话”的 1 条能命中（见 F6-2 的 770 样本：352 条带前缀引用 + 1 条裸 uuid 引用）。
 
 ### 8.2 工作区（未提交）版本复测：5/5 PASS
+
+> 口径提示（§13.5 I-4）：本节的 `capability-settings injectedOnly=61`、`task-gantt 368+1`
+> 是 **23:29 旧选择器**下的快照；选择器修好后（`164011e` 起）默认目标变为**当前团队**
+> `792532d9`，capability-settings 选中 `4767a48b`（injectedOnly=2）。现行数字以 §13.2
+> 与 `docs/COMPAT-022-VERIFY.md` 为准。
 
 Lead 在审计期间已修改 `src/host/dev-verify.mts`（+82/−23，未提交）。用同一命令在 23:29 复测：
 
@@ -507,3 +513,27 @@ $ node … dev-verify.mts --root 4d51254b-…                  → sessions in �
 - **D7（用 `agent/inbox/spliced` 回填 `queuedAt`）**：0.2.2 的 spliced item 确带完整 `source` 与 `id`，可跨日志按 id 配对（§9 的 126/126 配对与 75 ms/19 s/57 min 时差是可行性证据）；但当前 UI 只画消息瞬时标记，不做排队跨度，属于产品增强而非兼容性缺陷。
 - **D8（用 `subagent/descriptor.label` 补泳道名）**：0.2.2 的 catalog 行全部带 label（§5），descriptor 只在“父日志 catalog 丢 label”时才可能救场；属健壮性增强。
 - 两者均**未**在 `164011e` 中引入新读取路径（`fold.ts` 依旧只读 `team/message/*`、`user/message`、`team/*`、`subagent/catalog`、tool 事件），与“可选、不进本轮”的取舍一致。
+
+---
+
+## 13.5 独立验证与文档更正（verifier，commit `926886e` 之后）
+
+`docs/COMPAT-022-VERIFY.md` 由 teammate `verifier` 独立重跑全部门禁（不采信本报告与 Lead 自述），
+对 `926886e` 的结论是 **PASS**（门禁全绿、0.2.1 无回退、0.2.2 真机 0 缺收件人/0 system）。
+它同时列出 10 条不一致，本报告按实测更正如下（I-1/I-2/I-4/I-6 为文档事实错误，其余为口径/健壮性）：
+
+| ID | 更正 |
+|---|---|
+| I-1 | §5 F4-2 已更正：`subagent/descriptor` **不是 0.2.2 新增**。verifier 实测全库 pre-2026-11-04 312 条（v3，311 带 label；样本 2026-10-15/10-22/10-23），Lead 复核 240 个日志中 95 条（2026-10-15 起）。原文“36 条 / 新增”只是对 **0.2.2 追加文件**的扫描口径。 |
+| I-2 | §2/§4 引用的“15 个方向对”更正为 **16**（8 名 teammate × 双向）；`docs/COMPAT-022-API.md`、CHANGELOG 0.3.3 已同步。 |
+| I-3 | §13.2 的默认工作区数字是 23:37 快照；当前团队会随 teammate 增长（verifier 加入后 lanes 3→4、sessions 17→18），属活数据漂移，不是缺陷。 |
+| I-4 | §8.2 的 `capability-settings injectedOnly=61`、`task-gantt 368+1` 是**旧选择器**快照；现行默认目标为 `792532d9`（injectedOnly=3），capability-settings 为 `4767a48b`（injectedOnly=2）。 |
+| I-5 | 主题快照 `_source` 的 138 133 是 JS 字符串长度，不是字节数；asar 条目实际 **140 148 B**，fixture 已更正。419 token 计数不受影响。 |
+| I-6 | §2 F3-2 的“settled 90 条”口径可疑：verifier 测 `user/message` 形态 **59 条**（含 settled 的日志数 83 一致）。已加注，结论（0 条带团队头、不产生箭头）不变。 |
+| I-7 | “插件引用 51 token”是含注释裸串的原始 grep；剥离注释后 distinct 引用为 **46**，均已定义。API 文档已更正。 |
+| I-8 | 门禁健壮性已修：`--root` 指向不存在的 session 现在 `FAIL` 并 exit 1（原先 warn 后静默回退可造成假 PASS）。 |
+| I-9 | 门禁断言已加强：问题锁从 `askCalls>0 ⇒ folded>0` 改为 `questionTotal === askCalls`（7 个工作区实测一一对应）。 |
+| I-10 | 门禁已补断言：注入形态下每条 message span 必须有 `to`（0.2.2 的收件人只有“日志所有者”兜底，缺 to 即兜底失效）。 |
+
+未验证（沿用 verifier 的 UNVERIFIED）：v0.3.3 包在真实宿主上的加载（运行中 profile 装的是 0.3.2，
+其 `lib/index.js` 与 HEAD 构建仅差 notes 一行）、client boot 注册（`GET /` 401 无法读取）。

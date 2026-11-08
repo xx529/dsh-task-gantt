@@ -1,6 +1,6 @@
 {
  "_note": "Snapshot of every CSS custom property DEFINED by the host theme package. Used to prove a lane colour token actually exists, not merely that its name is well-formed. Regenerate with: extract '@deepseek-ai/dsh-client-ui-theme/lib/client.js' from the app.asar and collect /(--(?:dsw|ds)-[a-z0-9-]+)\\s*:/ matches.",
- "_source": "@deepseek-ai/dsh-client-ui-theme/lib/client.js inside /Applications/DeepSeek Harness.app/Contents/Resources/app.asar (138133 B, DSH 0.2.2-rc.1, extracted 2026-11-08)",
+ "_source": "@deepseek-ai/dsh-client-ui-theme/lib/client.js inside /Applications/DeepSeek Harness.app/Contents/Resources/app.asar (asar entry 140148 B, DSH 0.2.2-rc.1, extracted 2026-11-08; 138133 was the decoded JS string length, not the byte size)",
  "_count": 419,
  "tokens": [
   "--ds-ease-in-out",
