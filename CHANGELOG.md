@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.3.4 — 2026-11-10
+
+**首个 teammate 出现时自动弹出「任务甘特图」页签（修 v0.3.3 触发失效）**
+
+需求：`dsh-trace-inspect` 负责把右侧栏在会话首轮弹出来；本插件在**同一段对话**的第一个
+teammate（或直接 subagent）出现时，把甘特图作为**多出来的一个页签**打开并拿走焦点；
+右侧栏收着就顺带展开（窄屏例外：只挂页签，不抢全屏栏）。
+
+根因（v0.3.3 及以前）：触发统计的是**全局** `origin:'subagent'` 行数的 0 → N 跨越，且整页
+只锁一次。历史里已有 subagent 会话（Agent Teams 的常态）时，首次读到的基线就 > 0，
+跨越永远不成立 —— 页签一直不弹；而跨对话的 subagent 又可能误触发。
+
+现在：
+- 只看**屏上会话**（`ctx.sidebarRight.mounted`，"which session's seat is on screen" 的
+  权威 feed；缺失时回落 better-sidebar 的 `sessionId`）的**直接** subagent 子会话
+  （`parentId === seat`），并排除 Side Chat 线程（`Side: ` 标题）——与 better-sidebar
+  自己的 `detectNewDirectSubagent` 同口径；
+- 基线**按对话**装备，而且必须等列表先发布该对话自己的行（未发布 ≠ "0 个 teammate"，
+  否则水合中的列表会被误挂成空对话）；已经有 team 的旧对话永不抢占；
+- 0 → N 之后再防抖 500ms 复核（Side Chat 标题晚一帧的竞态，同 better-sidebar）；
+- 打开走 better-sidebar 的定向 `openTab({type,title,reveal},{sessionId})`：宽屏
+  `reveal:true` 抢焦点、必要时展开右栏；窄屏 `reveal:false` 只挂页签，不接管全屏栏；
+- 每段对话只弹一次（已弹出的会话被记住，手动关闭后不再复弹；切换到新对话重新装备）。
+
+回归：`tests/auto-reveal.spec.ts` 重写 —— 覆盖"别的对话出现 teammate 不弹"（v0.3.3
+的原缺陷）、"旧对话已有 team 不弹"、"列表未发布时不装备基线"、"切换到新对话后重新
+装备"、"teammate 自己的会话不算团队板"、"窄屏只挂不抢"、"订阅缺失时 2s 心跳兜底"。
+
 ## 0.3.3 — 2026-11-08
 
 **适配 DSH 0.2.2-rc.1：团队消息只剩注入形态；真机自检不再按 0.2.0 的邮箱事件计数**

@@ -1,50 +1,135 @@
 /**
- * The one-time reveal on the first sub-agent / team invocation.
+ * The one-time reveal on the conversation's FIRST teammate.
  *
- * Two layers, because the honest question is not "does the timer fire" but
- * "does it fire EXACTLY once, only for the first invocation, and never break
- * anything when the API is absent":
+ * Three layers, because the honest question is not "does a timer fire" but
+ * "does it fire for THIS conversation's first teammate, exactly once, and never
+ * when the reader already had a team — nor when another conversation spawns
+ * one":
  *
- * 1. the pure predicate and the counter, exhaustively;
- * 2. the watcher driven with fake timers against a fake `betterSidebar` and a
- *    fake `sessions` feed — including the capability-absent and
- *    implementation-throws paths, which are the ones a real deployment will hit
- *    on an older runtime.
+ * 1. the pure helpers (`sessionRowsOf`, `isTeammateRow`,
+ *    `countDirectTeammates`, `firstTeammateDue`), exhaustively;
+ * 2. the watcher driven with fake timers against a fake `sessions` feed, a fake
+ *    `sidebarRight` column, and a fake `betterSidebar` service — including the
+ *    capability-absent and implementation-throws paths, which are the ones a
+ *    real deployment will hit on an older runtime;
+ * 3. source guards, so the invariants that are cheap to lose in a refactor
+ *    (capability by method presence, one open call site, no version strings)
+ *    stay asserted.
  *
- * The API this exercises is quoted from the installed `dsh-better-sidebar@0.25.0`:
- * `BetterSidebarService.openTab(seed, scope?)` (`src/client/service.ts:639`),
- * `OpenTabSeed.reveal?: boolean` defaulting to true (`:483-491`). The built-in
- * it mirrors is `activateTasksPage` (`src/client/sidebar/use-host-feeds.ts:97`),
- * armed by a 0 → N direct-subagent transition (`src/client/subagent-detect.ts:47-56`)
- * after a 500 ms debounce (`use-host-feeds.ts:31`, used at `:258`).
+ * The API exercised here is the installed `dsh-better-sidebar@0.30.1` surface:
+ * `BetterSidebarService.openTab(seed, scope?)` (`src/client/service.ts`),
+ * `OpenTabSeed.reveal` defaulting to true (focus), the 0 → N
+ * `detectNewDirectSubagent` trigger (`src/client/subagent-detect.ts`), its
+ * 500 ms debounce (`src/client/sidebar/use-host-feeds.ts`), and
+ * `ctx.sidebarRight.mounted` as the sanctioned "session on screen" feed
+ * (`src/context-types.ts:545`).
+ *
+ * v0.3.4 replaced the old GLOBAL 0 → N counter with this per-conversation one:
+ * on a machine that keeps finished subagent sessions in the list the global
+ * baseline was already > 0 at page load, so the crossing could never happen and
+ * the tab stayed shut. Test 6 below is that exact regression.
  */
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import { countSubagentSessions, isFirstSubagentTransition, watchForFirstTeam } from '../src/client/index.ts'
+import {
+  countDirectTeammates,
+  firstTeammateDue,
+  isTeammateRow,
+  sessionRowsOf,
+  watchForFirstTeam,
+} from '../src/client/index.ts'
 import { TAB_TYPE_ID, type BetterSidebarTabService } from '../src/shared/contract.ts'
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const SOURCE = readFileSync(resolve(ROOT, 'src/client/index.ts'), 'utf8')
 
 /** One session-list snapshot with the given rows. */
-function snapshot(rows: readonly Record<string, unknown>[]): unknown {
-  return { byId: Object.fromEntries(rows.map((row, index) => [`s${index}`, row])) }
+function snapshot(rows: Record<string, Record<string, unknown>>): unknown {
+  return { byId: rows }
 }
 
-/** A row as the client feed publishes it (`origin` / `parentId`). */
-function subagentRow(parentId = 'lead'): Record<string, unknown> {
-  return { id: 'child', origin: 'subagent', parentId, displayTitle: 'teammate' }
+/** A durable subagent child row. */
+function teammateRow(parentId: string, over: Record<string, unknown> = {}): Record<string, unknown> {
+  return { origin: 'subagent', parentId, displayTitle: 'teammate', ...over }
 }
 
-/** A fake client context whose `sessions` read is swapped between ticks. */
-function fakeCtx(read: () => unknown): { ctx: never; setFeed: (next: () => unknown) => void } {
-  let feed = read
-  const ctx = {
-    get: (key: string) => (key === 'sessions' ? { list: { getSnapshot: () => feed() } } : undefined),
+/** A root conversation row. */
+function rootRow(): Record<string, unknown> {
+  return { displayTitle: 'conversation' }
+}
+
+interface Harness {
+  ctx: never
+  setRows(rows: unknown): void
+  setMounted(id: string | undefined): void
+  emitList(): void
+  emitMounted(): void
+  listenerCount(): number
+  setExpanded(value: boolean): void
+  toggles(): number
+}
+
+/**
+ * A fake client context: `sessions.list` and `sidebarRight.mounted` are
+ * mutable feeds with real subscription semantics, and `toggleExpanded` records
+ * its calls.
+ */
+function harness(
+  options: {
+    rows?: unknown
+    mounted?: string | undefined
+    subscribe?: boolean
+    expanded?: boolean
+    right?: boolean
+  } = {},
+): Harness {
+  let rows: unknown = options.rows ?? { byId: {} }
+  let mounted = options.mounted
+  let expanded = options.expanded ?? true
+  let toggleCount = 0
+  const listListeners = new Set<() => void>()
+  const mountedListeners = new Set<() => void>()
+  const subscribeTo = (listeners: Set<() => void>) => (listener: () => void): (() => void) => {
+    listeners.add(listener)
+    return () => { listeners.delete(listener) }
   }
-  return { ctx: ctx as never, setFeed: (next) => { feed = next } }
+  const useSubscribe = options.subscribe !== false
+  const useRight = options.right !== false
+  const ctx = {
+    get(name: string) {
+      if (name === 'sessions') {
+        return {
+          list: {
+            getSnapshot: () => rows,
+            ...(useSubscribe ? { subscribe: subscribeTo(listListeners) } : {}),
+          },
+        }
+      }
+      if (name === 'sidebarRight' && useRight) {
+        return {
+          mounted: {
+            getSnapshot: () => mounted,
+            ...(useSubscribe ? { subscribe: subscribeTo(mountedListeners) } : {}),
+          },
+          isExpanded: () => expanded,
+          toggleExpanded: () => { toggleCount += 1; expanded = true },
+        }
+      }
+      return undefined
+    },
+  }
+  return {
+    ctx: ctx as never,
+    setRows: (next) => { rows = next },
+    setMounted: (id) => { mounted = id },
+    emitList: () => { for (const listener of [...listListeners]) listener() },
+    emitMounted: () => { for (const listener of [...mountedListeners]) listener() },
+    listenerCount: () => listListeners.size + mountedListeners.size,
+    setExpanded: (value) => { expanded = value },
+    toggles: () => toggleCount,
+  }
 }
 
 /** A fake better-sidebar service with spies. */
@@ -53,107 +138,320 @@ function fakeService(over: Record<string, unknown> = {}): {
   openTab: ReturnType<typeof vi.fn>
 } {
   const openTab = vi.fn()
-  const service = { registerTab: () => () => {}, openTab, ...over } as unknown as BetterSidebarTabService
+  const service = {
+    registerTab: () => () => {},
+    openTab,
+    getSnapshot: () => ({ sessionId: undefined }),
+    subscribeState: () => () => {},
+    ...over,
+  } as unknown as BetterSidebarTabService
   return { service, openTab }
+}
+
+/** Watch + seed one teammate + flush the debounce. */
+function spawnFirstTeammate(h: Harness, seat: string): void {
+  h.setRows(snapshot({
+    [seat]: rootRow(),
+    [`${seat}-child`]: teammateRow(seat),
+  }))
+  h.emitList()
 }
 
 afterEach(() => {
   vi.useRealTimers()
 })
 
-describe('auto-reveal: the first sub-agent / team invocation', () => {
-  /* ------------------------------------------------------- pure predicate */
+describe('auto-reveal: the conversation\'s first teammate', () => {
+  /* --------------------------------------------------------- pure helpers */
 
-  it('counts sub-agent rows in a session-list snapshot and nothing else', () => {
-    expect(countSubagentSessions(snapshot([subagentRow(), subagentRow('other')]))).toBe(2)
-    // A root conversation row is not a sub-agent.
-    expect(countSubagentSessions(snapshot([{ id: 'lead', origin: undefined, parentId: undefined }]))).toBe(0)
-    expect(countSubagentSessions(snapshot([{ id: 'x', origin: 'user' }]))).toBe(0)
-    // A `parentId` without the durable `origin` is NOT a sub-agent row: the feed
-    // publishes both, and better-sidebar's own counter requires `origin`.
-    expect(countSubagentSessions(snapshot([{ id: 'x', parentId: 'lead' }]))).toBe(0)
-  })
-
-  it('is total over hostile snapshots', () => {
-    for (const value of [undefined, null, 0, '', 'nope', [], {}, { byId: null }, { byId: 'x' }]) {
-      expect(countSubagentSessions(value), JSON.stringify(value) ?? 'undefined').toBe(0)
+  it('reads only a real byId record and is total over hostile snapshots', () => {
+    expect(sessionRowsOf({ byId: { a: rootRow() } })).toEqual({ a: rootRow() })
+    for (const value of [undefined, null, 0, '', 'nope', [], {}, { byId: null }, { byId: 'x' }, { byId: [] }]) {
+      expect(sessionRowsOf(value), JSON.stringify(value) ?? 'undefined').toBeUndefined()
     }
-    // Non-object rows are skipped, not dereferenced.
-    expect(countSubagentSessions({ byId: { a: null, b: 3, c: subagentRow() } })).toBe(1)
-    expect(countSubagentSessions(Object.create(null))).toBe(0)
   })
 
-  it('fires only on the 0 -> N crossing, exactly as the built-in does', () => {
-    expect(isFirstSubagentTransition(0, 1)).toBe(true)
-    expect(isFirstSubagentTransition(0, 5)).toBe(true)
-    // No sub-agent yet.
-    expect(isFirstSubagentTransition(0, 0)).toBe(false)
-    // A page that ALREADY had a team when the plugin loaded: its baseline is the
-    // current count, so a later spawn is not "the first invocation" and the view
-    // is left alone. This is `detectNewDirectSubagent`'s documented behaviour.
-    expect(isFirstSubagentTransition(3, 4)).toBe(false)
-    // Sub-agents finishing is not an invocation.
-    expect(isFirstSubagentTransition(2, 0)).toBe(false)
-    expect(isFirstSubagentTransition(2, 1)).toBe(false)
+  it('counts only durable subagent children, scoped to the seat, minus Side Chat', () => {
+    const rows = sessionRowsOf(snapshot({
+      lead: rootRow(),
+      a: teammateRow('lead'),
+      b: teammateRow('lead'),
+      'side-thread': teammateRow('lead', { displayTitle: 'Side: quick question' }),
+      foreign: teammateRow('other'),
+      'no-origin': { parentId: 'lead', displayTitle: 'not a subagent' },
+      'broken-row': 3 as unknown as Record<string, unknown>,
+    }))
+    expect(countDirectTeammates(rows, 'lead')).toBe(2)
+    expect(countDirectTeammates(rows, 'other')).toBe(1)
+    expect(countDirectTeammates(rows, 'nobody')).toBe(0)
+    // A bare parentId without the durable origin is NOT a teammate row.
+    expect(countDirectTeammates(sessionRowsOf(snapshot({ x: { parentId: 'lead' } })), 'lead')).toBe(0)
+    // Total when the list is unknown.
+    expect(countDirectTeammates(undefined, 'lead')).toBe(0)
   })
 
-  /* ------------------------------------------------------------- watcher */
+  it('classifies one row exactly like better-sidebar\'s isSideThreadSummary, inverted', () => {
+    expect(isTeammateRow(teammateRow('lead'))).toBe(true)
+    // A title-less subagent (the list can publish a hydrating row) is a teammate.
+    expect(isTeammateRow({ origin: 'subagent', parentId: 'lead' })).toBe(true)
+    // Side Chat rides the subagent origin but is not team topology.
+    expect(isTeammateRow(teammateRow('lead', { displayTitle: 'Side: hi' }))).toBe(false)
+    expect(isTeammateRow(rootRow())).toBe(false)
+    expect(isTeammateRow(undefined)).toBe(false)
+    expect(isTeammateRow(null as unknown as undefined)).toBe(false)
+  })
 
-  it('reveals our tab exactly once, on the first sub-agent, and never again', () => {
+  it('fires only on a settled 0 → N crossing', () => {
+    expect(firstTeammateDue(0, 1)).toBe(true)
+    expect(firstTeammateDue(0, 5)).toBe(true)
+    // No teammate yet.
+    expect(firstTeammateDue(0, 0)).toBe(false)
+    // The conversation already had a team when the reader arrived: its baseline
+    // is the current count, so a later spawn is not the FIRST teammate.
+    expect(firstTeammateDue(2, 3)).toBe(false)
+    // Teammates finishing is not an invocation.
+    expect(firstTeammateDue(2, 1)).toBe(false)
+    expect(firstTeammateDue(2, 0)).toBe(false)
+    // An unsettled watch never fires.
+    expect(firstTeammateDue(undefined, 1)).toBe(false)
+  })
+
+  /* -------------------------------------------------------------- watcher */
+
+  it('reveals once on the first teammate of the on-screen conversation', () => {
     vi.useFakeTimers()
-    let feed: unknown = snapshot([])
-    const { ctx, setFeed } = fakeCtx(() => feed)
+    const h = harness({ rows: snapshot({ lead: rootRow() }), mounted: 'lead' })
     const { service, openTab } = fakeService()
 
-    const stop = watchForFirstTeam(ctx, service)
-    // First read only ARMS the baseline.
-    vi.advanceTimersByTime(2000)
-    expect(openTab, 'arming the baseline must not reveal').not.toHaveBeenCalled()
+    const stop = watchForFirstTeam(h.ctx, service)
+    // Arming the baseline (0) must not reveal.
+    expect(openTab).not.toHaveBeenCalled()
 
-    // The first teammate is spawned.
-    setFeed(() => snapshot([subagentRow()]))
-    vi.advanceTimersByTime(2000)
+    spawnFirstTeammate(h, 'lead')
+    vi.advanceTimersByTime(500)
     expect(openTab).toHaveBeenCalledTimes(1)
-    expect(openTab).toHaveBeenCalledWith({ type: TAB_TYPE_ID, title: expect.any(String), reveal: true })
+    expect(openTab).toHaveBeenCalledWith(
+      { type: TAB_TYPE_ID, title: expect.any(String), reveal: true },
+      { sessionId: 'lead' },
+    )
 
     // The team grows and shrinks for a long while: nothing more may happen.
-    setFeed(() => snapshot([subagentRow(), subagentRow('lead2')]))
-    vi.advanceTimersByTime(2000)
-    setFeed(() => snapshot([subagentRow()]))
-    vi.advanceTimersByTime(2000)
-    setFeed(() => snapshot([]))
-    vi.advanceTimersByTime(2000)
-    setFeed(() => snapshot([subagentRow()]))
+    h.setRows(snapshot({ lead: rootRow(), a: teammateRow('lead'), b: teammateRow('lead') }))
+    h.emitList()
     vi.advanceTimersByTime(10_000)
-    expect(openTab, 'a second invocation must not re-reveal (or re-take focus)').toHaveBeenCalledTimes(1)
+    h.setRows(snapshot({ lead: rootRow() }))
+    h.emitList()
+    vi.advanceTimersByTime(10_000)
+    expect(openTab, 'a second teammate must not re-reveal (or re-take focus)').toHaveBeenCalledTimes(1)
 
     stop()
   })
 
-  it('does not reveal for a team that already existed before the plugin loaded', () => {
+  it('never fires for a teammate spawned in ANOTHER conversation (the v0.3.3 defect)', () => {
     vi.useFakeTimers()
-    let feed: unknown = snapshot([subagentRow(), subagentRow('p2')])
-    const { ctx, setFeed } = fakeCtx(() => feed)
+    // The page opens with history: other conversations already have subagents,
+    // so a GLOBAL 0 → N counter would be stuck at N > 0 forever.
+    let rows = snapshot({
+      lead: rootRow(),
+      'old-a': teammateRow('other'),
+      'old-b': teammateRow('another'),
+    })
+    const h = harness({ mounted: 'lead' })
+    h.setRows(rows)
     const { service, openTab } = fakeService()
 
-    const stop = watchForFirstTeam(ctx, service)
+    const stop = watchForFirstTeam(h.ctx, service)
+    vi.advanceTimersByTime(2000)
+    expect(openTab).not.toHaveBeenCalled()
+
+    // A foreign conversation spawns another teammate: still not our first.
+    rows = snapshot({
+      lead: rootRow(),
+      'old-a': teammateRow('other'),
+      'old-b': teammateRow('another'),
+      'old-c': teammateRow('other'),
+    })
+    h.setRows(rows)
+    h.emitList()
+    vi.advanceTimersByTime(2000)
+    expect(openTab, 'a teammate of another conversation must not reveal this board').not.toHaveBeenCalled()
+
+    // Our conversation spawns its first teammate: now it fires.
+    rows = snapshot({
+      lead: rootRow(),
+      'old-a': teammateRow('other'),
+      'old-b': teammateRow('another'),
+      mine: teammateRow('lead'),
+    })
+    h.setRows(rows)
+    h.emitList()
+    vi.advanceTimersByTime(500)
+    expect(openTab).toHaveBeenCalledTimes(1)
+
+    stop()
+  })
+
+  it('does not reveal for a conversation that already had a team', () => {
+    vi.useFakeTimers()
+    const h = harness({
+      rows: snapshot({ lead: rootRow(), a: teammateRow('lead'), b: teammateRow('lead') }),
+      mounted: 'lead',
+    })
+    const { service, openTab } = fakeService()
+
+    const stop = watchForFirstTeam(h.ctx, service)
     vi.advanceTimersByTime(2000) // arms the baseline at 2
-    setFeed(() => snapshot([subagentRow(), subagentRow('p2'), subagentRow('p3')]))
+    h.setRows(snapshot({ lead: rootRow(), a: teammateRow('lead'), b: teammateRow('lead'), c: teammateRow('lead') }))
+    h.emitList()
     vi.advanceTimersByTime(10_000)
     expect(openTab, 'a reload with an existing team must not steal the view').not.toHaveBeenCalled()
     stop()
   })
 
+  it('waits for the seat row to be published before arming anything', () => {
+    vi.useFakeTimers()
+    const h = harness({ rows: snapshot({}), mounted: 'lead' })
+    const { service, openTab } = fakeService()
+
+    const stop = watchForFirstTeam(h.ctx, service)
+    vi.advanceTimersByTime(5000)
+    expect(openTab, 'a hydrating list is not an empty conversation').not.toHaveBeenCalled()
+
+    // The conversation row lands: now the baseline is armed at 0.
+    h.setRows(snapshot({ lead: rootRow() }))
+    h.emitList()
+    spawnFirstTeammate(h, 'lead')
+    vi.advanceTimersByTime(500)
+    expect(openTab).toHaveBeenCalledTimes(1)
+    expect(openTab).toHaveBeenCalledWith(
+      { type: TAB_TYPE_ID, title: expect.any(String), reveal: true },
+      { sessionId: 'lead' },
+    )
+    stop()
+  })
+
+  it('re-arms the baseline for the conversation the reader switches to', () => {
+    vi.useFakeTimers()
+    // Conversation `a` already has a team, so it is quiet.
+    const h = harness({
+      rows: snapshot({ a: rootRow(), 'a-child': teammateRow('a') }),
+      mounted: 'a',
+    })
+    const { service, openTab } = fakeService()
+
+    const stop = watchForFirstTeam(h.ctx, service)
+    vi.advanceTimersByTime(2000)
+    expect(openTab).not.toHaveBeenCalled()
+
+    // The reader starts a fresh conversation `b`: armed at 0.
+    h.setRows(snapshot({ a: rootRow(), 'a-child': teammateRow('a'), b: rootRow() }))
+    h.setMounted('b')
+    h.emitMounted()
+    expect(openTab).not.toHaveBeenCalled()
+
+    // `b` spawns its first teammate: it fires, scoped to `b`.
+    h.setRows(snapshot({
+      a: rootRow(),
+      'a-child': teammateRow('a'),
+      b: rootRow(),
+      'b-child': teammateRow('b'),
+    }))
+    h.emitList()
+    vi.advanceTimersByTime(500)
+    expect(openTab).toHaveBeenCalledTimes(1)
+    expect(openTab).toHaveBeenCalledWith(
+      { type: TAB_TYPE_ID, title: expect.any(String), reveal: true },
+      { sessionId: 'b' },
+    )
+    stop()
+  })
+
+  it('falls back to the store session when the host has no right column', () => {
+    vi.useFakeTimers()
+    // No sidebarRight service at all: the better-sidebar store names the seat.
+    const h = harness({ rows: snapshot({ lead: rootRow() }), right: false })
+    const { service, openTab } = fakeService({ getSnapshot: () => ({ sessionId: 'lead' }) })
+
+    const stop = watchForFirstTeam(h.ctx, service)
+    spawnFirstTeammate(h, 'lead')
+    h.emitList()
+    vi.advanceTimersByTime(500)
+    expect(openTab).toHaveBeenCalledTimes(1)
+    stop()
+  })
+
+  it('does not reveal on a teammate\'s own seat', () => {
+    vi.useFakeTimers()
+    const h = harness({
+      rows: snapshot({ lead: rootRow(), child: teammateRow('lead') }),
+      mounted: 'child',
+    })
+    const { service, openTab } = fakeService()
+
+    const stop = watchForFirstTeam(h.ctx, service)
+    // The teammate session spawns its own subagent: that is not a team board.
+    h.setRows(snapshot({ lead: rootRow(), child: teammateRow('lead'), grandchild: teammateRow('child') }))
+    h.emitList()
+    vi.advanceTimersByTime(5000)
+    expect(openTab).not.toHaveBeenCalled()
+    stop()
+  })
+
+  it('focuses the page and expands a collapsed column', () => {
+    vi.useFakeTimers()
+    const h = harness({ rows: snapshot({ lead: rootRow() }), mounted: 'lead', expanded: false })
+    const { service, openTab } = fakeService()
+
+    const stop = watchForFirstTeam(h.ctx, service)
+    spawnFirstTeammate(h, 'lead')
+    vi.advanceTimersByTime(500)
+    expect(openTab).toHaveBeenCalledWith(
+      { type: TAB_TYPE_ID, title: expect.any(String), reveal: true },
+      { sessionId: 'lead' },
+    )
+    expect(h.toggles(), 'a collapsed column is expanded for a focused open').toBe(1)
+    stop()
+  })
+
+  it('parks the page on a narrow viewport instead of taking the screen', () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('window', { innerWidth: 600 })
+    const h = harness({ rows: snapshot({ lead: rootRow() }), mounted: 'lead', expanded: false })
+    const { service, openTab } = fakeService()
+
+    const stop = watchForFirstTeam(h.ctx, service)
+    spawnFirstTeammate(h, 'lead')
+    vi.advanceTimersByTime(500)
+    expect(openTab).toHaveBeenCalledWith(
+      { type: TAB_TYPE_ID, title: expect.any(String), reveal: false },
+      { sessionId: 'lead' },
+    )
+    expect(h.toggles(), 'the fullscreen column is never force-opened').toBe(0)
+    stop()
+  })
+
+  it('honours the user disabling our tab type in the side-card prefs', () => {
+    vi.useFakeTimers()
+    const h = harness({ rows: snapshot({ lead: rootRow() }), mounted: 'lead' })
+    const { service, openTab } = fakeService({ isTabEnabled: (id: string) => id !== TAB_TYPE_ID })
+
+    const stop = watchForFirstTeam(h.ctx, service)
+    spawnFirstTeammate(h, 'lead')
+    vi.advanceTimersByTime(500)
+    expect(openTab, 'a disabled tab type is not opened behind the user\'s back').not.toHaveBeenCalled()
+    stop()
+  })
+
   it('is a silent no-op when the service has no openTab (older runtime)', () => {
     vi.useFakeTimers()
-    const { ctx, setFeed } = fakeCtx(() => snapshot([]))
+    const h = harness({ rows: snapshot({ lead: rootRow() }), mounted: 'lead' })
     // A service with `registerTab` but no reveal capability at all.
     const { service } = fakeService()
     delete (service as { openTab?: unknown }).openTab
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
 
-    const stop = watchForFirstTeam(ctx, service)
-    setFeed(() => snapshot([subagentRow()]))
+    const stop = watchForFirstTeam(h.ctx, service)
+    spawnFirstTeammate(h, 'lead')
     vi.advanceTimersByTime(20_000)
     expect(warn, 'no console noise on a missing capability').not.toHaveBeenCalled()
     stop()
@@ -161,30 +459,30 @@ describe('auto-reveal: the first sub-agent / team invocation', () => {
 
   it('swallows a throwing implementation and a throwing sessions feed', () => {
     vi.useFakeTimers()
-    let feed: unknown = snapshot([])
-    const { ctx, setFeed } = fakeCtx(() => feed)
+    const h = harness({ rows: snapshot({ lead: rootRow() }), mounted: 'lead' })
     const openTab = vi.fn(() => {
       throw new Error('foreign service')
     })
     const service = { registerTab: () => () => {}, openTab } as unknown as BetterSidebarTabService
 
-    const stop = watchForFirstTeam(ctx, service)
-    vi.advanceTimersByTime(2000)
-    setFeed(() => snapshot([subagentRow()]))
-    // Must not throw out of the timer.
-    expect(() => vi.advanceTimersByTime(2000)).not.toThrow()
+    const stop = watchForFirstTeam(h.ctx, service)
+    spawnFirstTeammate(h, 'lead')
+    expect(() => vi.advanceTimersByTime(500)).not.toThrow()
     expect(openTab).toHaveBeenCalledTimes(1)
     stop()
 
     // A sessions service that throws on read is equally harmless.
     const hostile = {
-      get: () => ({
-        list: {
-          getSnapshot: () => {
-            throw new Error('nope')
+      get: (name: string) => {
+        if (name !== 'sessions') return undefined
+        return {
+          list: {
+            getSnapshot: () => {
+              throw new Error('nope')
+            },
           },
-        },
-      }),
+        }
+      },
     } as never
     const { service: service2, openTab: openTab2 } = fakeService()
     const stop2 = watchForFirstTeam(hostile, service2)
@@ -193,36 +491,38 @@ describe('auto-reveal: the first sub-agent / team invocation', () => {
     stop2()
   })
 
-  it('honours the user disabling our tab type in the side-card prefs', () => {
+  it('the heartbeat covers a host that publishes no subscription', () => {
     vi.useFakeTimers()
-    let feed: unknown = snapshot([])
-    const { ctx, setFeed } = fakeCtx(() => feed)
-    const { service, openTab } = fakeService({ isTabEnabled: (id: string) => id !== TAB_TYPE_ID })
+    const h = harness({ rows: snapshot({ lead: rootRow() }), mounted: 'lead', subscribe: false })
+    const { service, openTab } = fakeService()
 
-    const stop = watchForFirstTeam(ctx, service)
-    vi.advanceTimersByTime(2000)
-    setFeed(() => snapshot([subagentRow()]))
-    vi.advanceTimersByTime(2000)
-    expect(openTab, 'a disabled tab type is not opened behind the user\'s back').not.toHaveBeenCalled()
+    const stop = watchForFirstTeam(h.ctx, service)
+    // The install-time pass already armed the baseline at 0.
+    spawnFirstTeammate(h, 'lead')
+    // No feed to notify us: the 2 s heartbeat re-reads the snapshot.
+    vi.advanceTimersByTime(2000) // sees the new teammate → arms the 500 ms re-check
+    vi.advanceTimersByTime(500)
+    expect(openTab).toHaveBeenCalledTimes(1)
     stop()
   })
 
-  it('stops its timer when the fiber disposes', () => {
+  it('detaches every feed and timer when the fiber disposes', () => {
     vi.useFakeTimers()
-    const setSpy = vi.spyOn(globalThis, 'setInterval')
-    const clearSpy = vi.spyOn(globalThis, 'clearInterval')
-    const { ctx } = fakeCtx(() => snapshot([]))
-    const { service } = fakeService()
+    const h = harness({ rows: snapshot({ lead: rootRow() }), mounted: 'lead' })
+    const { service, openTab } = fakeService()
 
-    const stop = watchForFirstTeam(ctx, service)
-    expect(setSpy).toHaveBeenCalledTimes(1)
+    const stop = watchForFirstTeam(h.ctx, service)
+    expect(h.listenerCount(), 'both feeds are subscribed').toBeGreaterThan(0)
     stop()
-    expect(clearSpy).toHaveBeenCalled()
+    expect(h.listenerCount(), 'dispose detaches the subscriptions').toBe(0)
     // Idempotent: a second dispose is not an error.
     expect(() => stop()).not.toThrow()
+    spawnFirstTeammate(h, 'lead')
+    vi.advanceTimersByTime(10_000)
+    expect(openTab, 'a disposed watcher must never open').not.toHaveBeenCalled()
   })
 
-  /* ------------------------------------------------------ source guards */
+  /* -------------------------------------------------------- source guards */
 
   it('detects the capability by method presence and never by version', () => {
     // The documented rule (service.ts:651-657) is that `features` only grows and
@@ -232,17 +532,17 @@ describe('auto-reveal: the first sub-agent / team invocation', () => {
     const code = SOURCE.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
     expect(code).not.toMatch(/desktopVersion|version\s*[<>]=?\s*['"\d]|0\.2\.\d+-rc/)
     expect(code).toContain("typeof openTab !== 'function'")
-    // The reveal is exactly one invocation, and it asks for the focus.
+    // The reveal is exactly one invocation, and it asks for the FOCUS on a wide
+    // viewport (the parked narrow open is the same call with `reveal: false`).
     expect(code.match(/openTab\.call\s*\(/g)?.length, 'one reveal call site').toBe(1)
-    expect(code).toContain('reveal: true')
-    // And it must be idempotent by construction, not by luck: the watch marks
-    // itself done before calling, then stops.
-    expect(code).toContain('done = true')
-    expect(code).toContain('stop()')
+    expect(code).toContain('reveal: wide')
+    // Idempotent by construction, not by luck: latch the conversation, then open.
+    expect(code).toContain('revealed.add')
+    expect(code).toMatch(/const wide = typeof window === 'undefined' \? true : window\.innerWidth/)
   })
 
   it('uses the same tab id it registers', () => {
     expect(TAB_TYPE_ID).toBe('dsh-task-gantt:board')
-    expect(SOURCE).toContain("type: TAB_TYPE_ID")
+    expect(SOURCE).toContain('type: TAB_TYPE_ID')
   })
 })

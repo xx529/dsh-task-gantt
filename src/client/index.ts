@@ -124,75 +124,109 @@ function readTabService(ctx: Context): BetterSidebarTabService | undefined {
 }
 
 /* ------------------------------------------------------------------------- *
- * The one-time reveal on the first sub-agent / team invocation.
+ * The one-time reveal on the conversation's first teammate.
  *
- * WHAT THE BUILT-IN DOES (the effect the user is asking us to copy), quoted
- * from the installed `dsh-better-sidebar@0.25.0`:
+ * WHAT THE READER ASKED FOR (2026-11-10): `dsh-trace-inspect` already pops the
+ * right column out on a conversation's first turn; the task Gantt must follow
+ * on that SAME conversation's first teammate — as one more tab in the column
+ * that is already open, with the focus on it. A conversation that already had
+ * a team keeps whatever layout the reader chose, and a teammate's own seat is
+ * never mistaken for a team board.
  *
- * - the signal is a **0 → N** transition in the count of DIRECT sub-agent
- *   sessions — `detectNewDirectSubagent` in `src/client/subagent-detect.ts:47-56`
- *   (`directSubagentCount(prev) === 0 && directSubagentCount(next) > 0`),
- *   where a direct sub-agent row is `origin === 'subagent'` (`:26-36`);
- * - it is armed from a session-list effect and re-checked after a
- *   **500 ms** debounce (`AUTO_OPEN_DEBOUNCE_MS`, `src/client/sidebar/use-host-feeds.ts:31`,
- *   used at `:258`), gated on the `autoOpenSubagent` pref, on a narrow-viewport
- *   opt-out, and on `isTabEnabled('subagent') !== false` (`:259-262`);
- * - the action is `activateTasksPage` (`:97`) →
- *   **`ctx.get('betterSidebar')` then `openTab({ type: 'subagent', title: … })`**
- *   (`:130`), or the same call with **`reveal: false`** (`:117`) when the reader
- *   is already looking at another page, so the open lands in the background.
+ * WHY THE PREVIOUS TRIGGER MISSED. Up to v0.3.3 this watched a GLOBAL 0 → N
+ * crossing of every `origin: 'subagent'` row in the client session list and
+ * latched once per page load. On a machine that keeps completed subagent
+ * sessions in the list — the Agent Teams workflow does — the very first read
+ * already counted N > 0, so the crossing could never happen again: the tab
+ * stayed shut for the rest of the page load. When it did fire, the crossing
+ * could belong to ANY conversation while the open was scoped to the session on
+ * screen, whose board might show no team at all.
  *
- * THE API WE USE is that same one. `BetterSidebarService.openTab(seed, scope?)`
- * is declared at `src/client/service.ts:639`; `OpenTabSeed` (`:447-492`) takes
- * `type` (the registered tab id), `title`, and **`reveal?: boolean`** —
- * "Whether the open may FOCUS what it opens (`target: 'right'` only) … Defaults
- * to true. A background activation passes `false` so the reader's page survives"
- * (`:483-491`). The service also publishes a monotonic capability list,
- * `features: readonly string[]` (`:651-657`, `'targetedOpen'` among them), and
- * states "Features are never removed — consumers gate new API usage on
- * membership" — so capability is detected by METHOD PRESENCE, never by version.
+ * THE RULE NOW, mirroring the built-in this project is compared against
+ * (`detectNewDirectSubagent`, `dsh-better-sidebar/src/client/subagent-detect.ts`):
  *
- * WHY THIS IS NOT IN `src/host/**` (and could not be): `betterSidebar` is a
- * CLIENT service — `dsh-better-sidebar/src/client/index.tsx:171`
- * `ctx.provide('betterSidebar', service)`. The host half cannot see it; a host
- * Inspect query for that service key answers "no catalogued Service named
- * betterSidebar". The host's only outbound channel in this area is
- * better-sidebar's `agent-opens` WebSocket push, and that carries
- * `kind: 'file' | 'folder' | 'url'` only (`src/agent-opens.ts:135`), never "open
- * tab X". So the reveal has to be one client-side `openTab` call.
+ * - count only the DIRECT subagent children of the seat session on screen
+ *   (`parentId === seat`), minus Side Chat threads — they ride the subagent
+ *   origin with a `Side: ` title but are not teammates;
+ * - arm the baseline PER CONVERSATION, and only once the list publishes that
+ *   seat's own row: an unknown row is not "empty", it is not settled, so a
+ *   hydrating list can never be armed at 0 and then "discover" old history;
+ * - a settled baseline of 0 that later turns positive is the first teammate.
+ *   The re-check is debounced 500 ms — a Side Chat thread's `Side: ` title
+ *   lands one frame after its origin row, exactly the race the built-in
+ *   documents (`AUTO_OPEN_DEBOUNCE_MS`, `sidebar/use-host-feeds.ts`).
+ *
+ * WHERE "the session on screen" COMES FROM. The session list carries no
+ * `current` id. DSH's native right column publishes it as
+ * `ctx.sidebarRight.mounted` — "the sanctioned feed for which session's seat is
+ * on screen" (`dsh-better-sidebar/src/context-types.ts:545`); a host without
+ * that face degrades to the better-sidebar store's `sessionId`. A PRESENT
+ * `mounted` face is authoritative even while it reports "no session": falling
+ * back to the store there would arm a conversation nobody is looking at.
+ *
+ * THE OPEN is better-sidebar's own targeted open, the same call its built-in
+ * subagent page makes (`activateTasksPage`): `openTab({ type, title, reveal },
+ * { sessionId })`. `reveal` focuses the page, `scope` lands it in THAT
+ * conversation's layout, and our descriptor's `single: true` focuses an
+ * already-open page instead of duplicating it. On a wide viewport the host
+ * expands the column; on a NARROW one it draws the column fullscreen, so the
+ * page is parked (`reveal: false`) instead of taking the conversation away.
+ *
+ * ONCE per conversation: the revealed session id is latched, so a later close
+ * sticks and a reload of the same conversation stays quiet. The trigger rides
+ * the session-list / mounted / store observables, with a 2 s heartbeat that
+ * covers hosts publishing no subscription and a late-mounted right column.
  * ------------------------------------------------------------------------- */
 
 /** The cordis service name of DSH's own client-side Sessions store. */
 const SESSIONS_SERVICE = 'sessions'
 
-/**
- * How often the one-shot watch reads the session list.
- *
- * Far below the time a teammate takes to spawn, and a snapshot read is cheap.
- * The timer stops for good on the first reveal.
- */
-const FIRST_TEAM_POLL_MS = 2000
+/** The cordis service name of DSH's native right-column controller. */
+const RIGHT_COLUMN_SERVICE = 'sidebarRight'
 
 /** Effect label shown in cordis diagnostics. */
-const FIRST_TEAM_EFFECT_LABEL = 'dsh-task-gantt: reveal on first team'
+const FIRST_TEAM_EFFECT_LABEL = 'dsh-task-gantt: reveal on first teammate'
+
+/** The 500 ms recheck the built-in uses (`sidebar/use-host-feeds.ts`). */
+const AUTO_OPEN_DEBOUNCE_MS = 500
+
+/** Narrow-viewport bracket shared with the sidebar ecosystem (`innerWidth < 768`). */
+const AUTO_OPEN_MIN_WIDTH = 768
+
+/** Heartbeat for hosts that publish no subscription (snapshot read only). */
+const AUTO_OPEN_HEARTBEAT_MS = 2000
+
+/** Side Chat threads ride the subagent origin but are not teammates. */
+const SIDE_THREAD_TITLE_PREFIX = 'Side: '
 
 /**
- * One row of `sessions.list.getSnapshot().byId`, structurally.
- *
- * Mirrors `SidebarSessionSummary` in better-sidebar's `src/context-types.ts:140-150`:
- * `origin?: 'subagent'` is the durable origin, `parentId?: string` the durable
- * parent. That is the exact feed better-sidebar's own auto-open reads.
+ * One row of `sessions.list.getSnapshot().byId`, structurally — only the fields
+ * this module reads. Mirrors `SidebarSessionSummary` in better-sidebar's
+ * `src/context-types.ts`: `origin` is the durable origin, `parentId` the
+ * durable direct parent (both published on subagent children).
  */
 interface SessionSummaryLike {
   origin?: unknown
   parentId?: unknown
+  displayTitle?: unknown
 }
 
-/** The slice of DSH's client `sessions` service this shell reads. */
+/** The client `sessions` service face this module needs. */
 interface SessionsFace {
   list?: {
     getSnapshot?: () => { byId?: Record<string, SessionSummaryLike | undefined> } | undefined
+    subscribe?: (listener: () => void) => () => void
   }
+}
+
+/** The DSH native right-column controller (`ctx.get('sidebarRight')`). */
+interface RightColumnFace {
+  mounted?: {
+    getSnapshot?: () => unknown
+    subscribe?: (listener: () => void) => () => void
+  }
+  isExpanded?: () => boolean
+  toggleExpanded?: () => void
 }
 
 /**
@@ -203,116 +237,273 @@ interface SessionsFace {
 interface TabRevealFace {
   openTab?(seed: { type: string; title?: string; reveal?: boolean }, scope?: { sessionId: string }): void
   isTabEnabled?(id: string): boolean
-  /** Monotonic capability list (service.ts:651-657); `'targetedOpen'` since v0.12.0. */
-  features?: readonly string[]
+  getSnapshot?(): { sessionId?: string | undefined } | undefined
+  subscribeState?(listener: () => void): () => void
 }
 
 /**
- * Count the sub-agent sessions in one session-list snapshot.
- *
- * Total: `undefined`, `null`, a missing `byId`, foreign rows and non-object rows
- * all read as whatever they contain, never as an exception.
+ * The rows of one session-list snapshot, or `undefined` when the list is not
+ * published yet. Total: any foreign value reads as "unknown", never throws.
  *
  * @param snapshot - `sessions.list.getSnapshot()`, or anything else.
- * @returns the number of rows whose `origin` is `'subagent'`.
+ * @returns the `byId` record, or `undefined` when it is not one.
  */
-export function countSubagentSessions(snapshot: unknown): number {
-  if (snapshot === null || typeof snapshot !== 'object') return 0
+export function sessionRowsOf(snapshot: unknown): Record<string, SessionSummaryLike | undefined> | undefined {
+  if (snapshot === null || typeof snapshot !== 'object') return undefined
   const byId = (snapshot as { byId?: unknown }).byId
-  if (byId === null || typeof byId !== 'object') return 0
+  if (byId === null || typeof byId !== 'object' || Array.isArray(byId)) return undefined
+  return byId as Record<string, SessionSummaryLike | undefined>
+}
+
+/**
+ * Whether one list row is a teammate session: a durable subagent child that is
+ * not a Side Chat thread (better-sidebar's `isSideThreadSummary`, inverted).
+ *
+ * @param row - one `byId` value.
+ */
+export function isTeammateRow(row: SessionSummaryLike | undefined): boolean {
+  if (row === undefined || row === null || typeof row !== 'object') return false
+  if (row.origin !== 'subagent') return false
+  return typeof row.displayTitle !== 'string' || !row.displayTitle.startsWith(SIDE_THREAD_TITLE_PREFIX)
+}
+
+/**
+ * Count the seat session's DIRECT teammate sessions in one list snapshot — the
+ * per-conversation counterpart of the built-in's `directSubagentCount`.
+ *
+ * @param rows - {@link sessionRowsOf}'s result, or `undefined`.
+ * @param sessionId - the seat session whose direct children are counted.
+ * @returns the count (0 for an unknown list).
+ */
+export function countDirectTeammates(
+  rows: Record<string, SessionSummaryLike | undefined> | undefined,
+  sessionId: string,
+): number {
+  if (rows === undefined || rows === null || typeof rows !== 'object') return 0
   let count = 0
-  for (const summary of Object.values(byId as Record<string, unknown>)) {
-    if (summary !== null && typeof summary === 'object' && (summary as SessionSummaryLike).origin === 'subagent') {
-      count += 1
-    }
+  for (const row of Object.values(rows)) {
+    if (row === undefined || row === null || typeof row !== 'object') continue
+    if (row.parentId !== sessionId) continue
+    if (!isTeammateRow(row)) continue
+    count += 1
   }
   return count
 }
 
 /**
- * The built-in's signal, as a pure predicate: a **0 → N** crossing.
+ * The trigger, as a pure predicate: a settled baseline of 0 that has become
+ * positive is the conversation's first teammate. A baseline that started above
+ * 0 never fires — the conversation already had a team when the reader arrived.
  *
- * A page that already has sub-agents when the plugin loads must not reveal (its
- * baseline is armed at the current count), and growing from N to N+1 is a later
- * invocation, not the first one. Mirrors `detectNewDirectSubagent`
- * (`dsh-better-sidebar/src/client/subagent-detect.ts:47-56`).
- *
- * @param previous - the count observed on the previous read.
- * @param next - the count observed now.
- * @returns `true` only for the 0 → positive transition.
+ * @param baseline - the seat's direct-teammate count when it was armed.
+ * @param live - the seat's direct-teammate count now.
+ * @returns `true` only for the 0 → positive crossing of a settled baseline.
  */
-export function isFirstSubagentTransition(previous: number, next: number): boolean {
-  return previous === 0 && next > 0
+export function firstTeammateDue(baseline: number | undefined, live: number): boolean {
+  return baseline === 0 && live > 0
 }
 
 /**
- * Reveal our tab exactly ONCE, on the first sub-agent / team invocation.
+ * Reveal our tab exactly ONCE, on the conversation's first teammate.
  *
- * Idempotent by construction: the watch stops itself on the first reveal, and
- * the 0 → N predicate can only be satisfied once per armed baseline. A second
- * invocation therefore never re-opens the tab and never moves focus again.
+ * Idempotent by construction: the revealed conversation is latched, the
+ * baseline can only cross 0 → N once per session, and a session switch re-arms
+ * the baseline for the conversation the reader moved to.
  *
- * Silent when the capability is absent — an older runtime with no `openTab`, a
- * missing `sessions` service, a foreign service shape, or a throwing
- * implementation all leave the tab registered and reachable from the + menu,
- * with nothing logged.
+ * Silent when the capability is absent: an older runtime with no `openTab`, a
+ * foreign service shape, a throwing feed or a throwing implementation all leave
+ * the tab registered and reachable from the + menu, with nothing logged and
+ * nothing escaping a timer.
  *
- * @param ctx - the client cordis context; read lazily on every poll.
+ * @param ctx - the client cordis context; services are read lazily per signal.
  * @param service - the probed better-sidebar service.
- * @returns a disposer that stops the watch (bound to the fiber by `ctx.effect`).
+ * @returns a disposer that detaches every subscription and pending timer.
  */
 export function watchForFirstTeam(ctx: Context, service: BetterSidebarTabService): () => void {
   const reveal = service as TabRevealFace
   // Capability, not version: the method's PRESENCE is the capability, and the
-  // documented rule is that `features` only ever grows. No version is compared
-  // anywhere in this file. Bound to a local so the narrowing survives into the
-  // timer closure.
+  // documented rule (service.ts:651-657) is that `features` only ever grows.
+  // Bound to a local so the narrowing survives into the timer closures.
   const openTab = reveal.openTab
   if (typeof openTab !== 'function') return () => {}
 
-  let timer: ReturnType<typeof setInterval> | undefined
-  const stop = (): void => {
-    if (timer !== undefined) clearInterval(timer)
+  let disposed = false
+  /** The seat session this watch is currently about. */
+  let watched: string | undefined
+  /** The seat's direct-teammate count at arm time (`undefined` = not settled). */
+  let baseline: number | undefined
+  /** Debounce of the first-teammate re-check. */
+  let timer: ReturnType<typeof setTimeout> | undefined
+  /** Conversations already revealed in this page load (the once-per-session latch). */
+  const revealed = new Set<string>()
+
+  /** The right-column controller, read lazily so a late mount is picked up. */
+  const readRight = (): RightColumnFace | undefined => {
+    try {
+      const value = ctx.get(RIGHT_COLUMN_SERVICE)
+      return value !== null && typeof value === 'object' ? (value as RightColumnFace) : undefined
+    } catch {
+      return undefined
+    }
+  }
+
+  /** The seat session: the native column's mounted seat, else the store's. */
+  const onScreenSession = (): string | undefined => {
+    const mountedFace = readRight()?.mounted
+    if (mountedFace !== undefined && typeof mountedFace.getSnapshot === 'function') {
+      try {
+        const mounted = mountedFace.getSnapshot()
+        return typeof mounted === 'string' && mounted.length > 0 ? mounted : undefined
+      } catch {
+        return undefined
+      }
+    }
+    try {
+      const id = reveal.getSnapshot?.()?.sessionId
+      return typeof id === 'string' && id.length > 0 ? id : undefined
+    } catch {
+      return undefined
+    }
+  }
+
+  /** The published session rows, or `undefined` when the list is not readable. */
+  const readRows = (): Record<string, SessionSummaryLike | undefined> | undefined => {
+    try {
+      const sessions = ctx.get(SESSIONS_SERVICE) as SessionsFace | undefined
+      return sessionRowsOf(sessions?.list?.getSnapshot?.())
+    } catch {
+      return undefined
+    }
+  }
+
+  const clearPending = (): void => {
+    if (timer !== undefined) clearTimeout(timer)
     timer = undefined
   }
 
-  let previous: number | undefined
-  let done = false
-  const tick = (): void => {
-    if (done) return
-    let next: number
+  /** Open the page in `sessionId`'s right column and focus it (once). */
+  const revealNow = (sessionId: string): void => {
+    if (disposed || revealed.has(sessionId)) return
+    revealed.add(sessionId)
+    clearPending()
+    // The user's own side-card prefs win: a disabled tab type is never opened
+    // behind their back (`openTab` would refuse it anyway, silently).
     try {
-      const sessions = ctx.get(SESSIONS_SERVICE) as SessionsFace | undefined
-      next = countSubagentSessions(sessions?.list?.getSnapshot?.())
+      if (reveal.isTabEnabled?.(TAB_TYPE_ID) === false) return
     } catch {
-      // A foreign service that throws on read must not break the fiber.
-      return
+      // a foreign isTabEnabled must not block the reveal
     }
-    if (previous === undefined) {
-      // Arm the baseline on the first read: a page load that already has a team
-      // is not "the first invocation" and must not steal the view.
-      previous = next
-      return
-    }
-    const first = isFirstSubagentTransition(previous, next)
-    previous = next
-    if (!first) return
-
-    done = true
-    stop()
-    // The user's own side-card prefs win. `openTab` refuses a disabled type
-    // anyway, so asking first keeps this from being a silent disappointment.
-    if (reveal.isTabEnabled?.(TAB_TYPE_ID) === false) return
+    // A narrow host draws that column fullscreen: park the page so the
+    // conversation stays on screen.
+    const wide = typeof window === 'undefined' ? true : window.innerWidth >= AUTO_OPEN_MIN_WIDTH
     try {
-      openTab.call(service, { type: TAB_TYPE_ID, title: t('tabTitle'), reveal: true })
+      openTab.call(service, { type: TAB_TYPE_ID, title: t('tabTitle'), reveal: wide }, { sessionId })
     } catch {
       // Never let a foreign implementation take the plugin down; the tab stays
       // reachable from the + menu.
+      return
+    }
+    // Fallback for a host whose open did not expand the column itself: read
+    // then toggle, so an already-expanded column is never closed. A narrow
+    // viewport is left alone on purpose (see above).
+    try {
+      const right = readRight()
+      if (wide && right?.isExpanded?.() === false) right.toggleExpanded?.()
+    } catch {
+      // an absent/unknown column face is fine — the native open already asked
     }
   }
 
-  timer = setInterval(tick, FIRST_TEAM_POLL_MS)
-  return stop
+  /** The debounced re-check: only a settled baseline of 0 may reveal. */
+  const confirm = (sessionId: string): void => {
+    timer = undefined
+    if (disposed || watched !== sessionId || revealed.has(sessionId)) return
+    const rows = readRows()
+    if (rows === undefined) return
+    if (firstTeammateDue(baseline, countDirectTeammates(rows, sessionId))) revealNow(sessionId)
+  }
+
+  /** One evaluation pass over the current seat and the latest list snapshot. */
+  const reconcile = (): void => {
+    if (disposed) return
+    const sessionId = onScreenSession()
+    if (sessionId !== watched) {
+      // A session switch voids the previous conversation's baseline and debounce.
+      watched = sessionId
+      baseline = undefined
+      clearPending()
+    }
+    if (sessionId === undefined || revealed.has(sessionId)) return
+    const rows = readRows()
+    if (rows === undefined) return
+    const seat = rows[sessionId]
+    // The list has not published this conversation's own row yet: not settled.
+    if (seat === undefined || seat === null || typeof seat !== 'object') return
+    // A teammate's OWN seat is not a team board: only a root conversation is.
+    if (seat.origin === 'subagent') return
+    const live = countDirectTeammates(rows, sessionId)
+    if (baseline === undefined) {
+      // First settled read for this conversation: this is its baseline.
+      baseline = live
+      return
+    }
+    if (!firstTeammateDue(baseline, live)) return
+    if (timer !== undefined) return
+    timer = setTimeout(() => confirm(sessionId), AUTO_OPEN_DEBOUNCE_MS)
+  }
+
+  // Follow every signal that can change the answer. Each subscription is
+  // best-effort (`this` preserved): a face without one is covered by the
+  // heartbeat below.
+  const disposers: Array<() => void> = []
+  const track = (owner: unknown, method: string): void => {
+    if (owner === null || typeof owner !== 'object') return
+    const candidate = (owner as Record<string, unknown>)[method]
+    if (typeof candidate !== 'function') return
+    try {
+      const release = (candidate as (listener: () => void) => () => void).call(owner, () => reconcile())
+      if (typeof release === 'function') disposers.push(release)
+    } catch {
+      // a foreign observable that refuses a listener: the heartbeat covers it
+    }
+  }
+  track(readRight()?.mounted, 'subscribe')
+  try {
+    const sessions = ctx.get(SESSIONS_SERVICE) as SessionsFace | undefined
+    track(sessions?.list, 'subscribe')
+  } catch {
+    // a sessions service that throws on read: the heartbeat covers it
+  }
+  track(reveal, 'subscribeState')
+
+  // Also picks up a right column / sessions store that mounts after this
+  // effect ran, and a host that publishes no subscription at all.
+  const heartbeat = setInterval(reconcile, AUTO_OPEN_HEARTBEAT_MS)
+  // A Node-hosted run (the mount harness) must still be able to exit; browser
+  // timers are numbers and skip this.
+  if (heartbeat !== null && typeof heartbeat === 'object' && typeof (heartbeat as { unref?: unknown }).unref === 'function') {
+    try {
+      (heartbeat as { unref(): void }).unref()
+    } catch {
+      // not a Node timer
+    }
+  }
+
+  // First pass: a page can load with the conversation already on screen.
+  reconcile()
+
+  return () => {
+    disposed = true
+    clearPending()
+    clearInterval(heartbeat)
+    for (const release of disposers) {
+      try {
+        release()
+      } catch {
+        // disposers are best-effort
+      }
+    }
+  }
 }
 
 /**
