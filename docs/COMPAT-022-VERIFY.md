@@ -1,5 +1,8 @@
 # DSH 0.2.2-rc.1 适配提交 —— 独立验证报告（verifier）
 
+> **历史报告**：本文针对 DSH `0.2.2-rc.1`。后续 `0.2.2-rc.2` 的复核与修复见
+> [`docs/COMPAT-022-RC2.md`](COMPAT-022-RC2.md)。
+
 > 独立验证，不采信 Lead 与两份审计文档的自述。本文件所有结论均来自本机实跑：
 > 仓库 `/Users/lzx/Documents/GitHub/dsh-task-gantt`、真实 `~/.dsh/sessions/**/session.v4.jsonl.zstd`（只读）、
 > 运行中实例 `http://127.0.0.1:60392`（只读 API）、`/Applications/DeepSeek Harness.app/Contents/Resources/app.asar`（0.2.2-rc.1）。

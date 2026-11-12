@@ -1,5 +1,8 @@
 # DSH 0.2.2-rc.1 会话事件契约取证（host 半 · fold.ts / timeline.ts）
 
+> **历史报告**：本文针对 DSH `0.2.2-rc.1`。后续 `0.2.2-rc.2` 的复核与修复见
+> [`docs/COMPAT-022-RC2.md`](COMPAT-022-RC2.md)。
+
 > 只读取证报告。审计对象：`dsh-task-gantt` 的 host 半如何读 DSH 0.2.2-rc.1 的会话事件日志。
 > 审计方式：本机真实 `~/.dsh/sessions/**/session.v4.jsonl.zstd`（只读）+ 运行中 0.2.2-rc.1 实例的插件只读 API（`POST /dsh-task-gantt/api/timeline`）+ 0.2.2-rc.1 `app.asar` 解包代码。
 > 分析脚本全部在 `/tmp/events-audit/`（`01-inventory.mts` … `14-settled-check.mts`、`quick.py`、`peek.py`）；**未修改** `src/**`、`lib/**`、`tests/**`、`package.json`。
