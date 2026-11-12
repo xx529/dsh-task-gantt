@@ -14,8 +14,12 @@
  *    That is the level this implementation reaches; level 2 (`tool/call`
  *    scanning) is used only to attribute a transition to the teammate that
  *    performed it, and to fill a gap in a damaged log.
- * 2. **The live `agentTeams` projection** — authoritative *current* roster and
- *    board state (status, owner, readiness). It carries no timestamps.
+ * 2. **The live `agentTeams` projection** — authoritative *current* board state
+ *    (status, owner, readiness). It carries no timestamps. DSH 0.2.2-rc.2
+ *    removed `listMembers`/`tryMembership` (teammates are subagents now), so
+ *    the roster comes from `subagent/catalog` v3 and each agent's own session;
+ *    the board's `ownerId` is used as the lane key when `ownerName` is a
+ *    subagent path.
  * 3. **Each member's own session log** — activity spans (turn/step bands).
  *
  * Degradation is total and honest, never an exception:
@@ -72,7 +76,7 @@ import {
 // Structural faces of the host services this module consumes.
 // --------------------------------------------------------------------------
 
-/** `TeamMemberView` as `agentTeams.listMembers` returns it (all fields untrusted). */
+/** `TeamMemberView` as the pre-0.2.2-rc.2 `agentTeams.listMembers` returned it (all fields untrusted). */
 interface TeamMemberViewLike {
   id?: unknown
   name?: unknown
@@ -92,6 +96,8 @@ interface TeamTaskViewLike {
   subject?: unknown
   description?: unknown
   status?: unknown
+  /** The owning session id (published with the view since 0.2.2). */
+  ownerId?: unknown
   ownerName?: unknown
   blockedBy?: unknown
   writeScopes?: unknown
@@ -109,7 +115,12 @@ interface TeamMembershipLike {
 /** The host `agentTeams` service face. */
 interface AgentTeamsLike {
   tryMembership?(agent: unknown): TeamMembershipLike | undefined
-  listMembers(agent: unknown): TeamMemberViewLike[]
+  /**
+   * Optional: DSH 0.2.2-rc.2 removed it together with the team roster, because
+   * teammates are now subagents and the roster comes from `subagent/catalog`.
+   * Probe before calling; the log/journal path is the fallback.
+   */
+  listMembers?(agent: unknown): TeamMemberViewLike[]
   listTasks(agent: unknown): TeamTaskViewLike[]
 }
 
@@ -167,9 +178,10 @@ function reason(error: unknown): string {
 /**
  * Resolve the team's root (Lead) session id for the session the panel is in.
  *
- * 1. `agentTeams.tryMembership(liveAgent)` — authoritative, and the exact live
- *    Agent instance is required (`ctx.agents.get(id)`), because the service
- *    verifies object identity before answering.
+ * 1. `agentTeams.tryMembership(liveAgent)` — authoritative on 0.2.1/rc.1, and
+ *    the exact live Agent instance is required (`ctx.agents.get(id)`), because
+ *    the service verifies object identity before answering. DSH 0.2.2-rc.2
+ *    removed this method, so the probe is optional and falls through silently.
  * 2. Walk `parentSession` upward through the stored session headers.
  * 3. Give up and treat the session as its own implicit root (the Team layer
  *    models every session as an implicit-root team, so this is not a lie).
@@ -332,6 +344,11 @@ function teammateDraftFromJournal(member: FoldedTeamMember): LaneDraft {
 interface TaskDraft extends Omit<TimelineTask, 'laneId'> {
   /** Board owner name (`'lead'` for Lead-owned tasks); never sent on the wire. */
   ownerName?: string
+  /**
+   * The board's owner session id. 0.2.2-rc.2 publishes it next to `ownerName`,
+   * whose value is now a subagent name/path — the id is the reliable lane key.
+   */
+  ownerSessionId?: string
 }
 
 /** Read a `TeamTaskView` into a draft carrying the board's current state. */
@@ -355,10 +372,17 @@ function draftFromView(view: TeamTaskViewLike): TaskDraft | undefined {
     writeScopeWarnings: textArray(view.writeScopeWarnings),
     history: [],
   }
-  const owner = text(view.ownerName)
-  if (owner !== undefined) {
-    draft.owner = owner
-    draft.ownerName = owner
+  const ownerId = text(view.ownerId)
+  const ownerName = text(view.ownerName)
+  // rc.2 publishes both. Keep the display name on `owner` (the frozen wire
+  // field) but retain the id for lane mapping: `ownerName` is a subagent
+  // name/path there, which need not appear in the journal's name index.
+  if (ownerId !== undefined) draft.ownerSessionId = ownerId
+  if (ownerName !== undefined) {
+    draft.owner = ownerName
+    draft.ownerName = ownerName
+  } else if (ownerId !== undefined) {
+    draft.owner = ownerId
   }
   return draft
 }
@@ -496,7 +520,7 @@ function messageSpansFrom(
     // The receiver. A mailbox record names it (`targetId`); an INJECTED message does
     // not, because it is only ever written into the RECEIVER's log — so the receiving
     // side is the session that carried the event. That fallback is the ONLY one in use
-    // on DSH 0.2.2-rc.1, which stopped writing mailbox events entirely.
+    // on DSH 0.2.2, which stopped writing mailbox events entirely.
     const to = record.injected === true ? lookup(fold.sessionId, undefined) : lookup(record.targetId, undefined)
     if (to !== undefined) span.to = to
     if (record.preview !== undefined) span.preview = record.preview
@@ -729,10 +753,16 @@ async function deriveTimeline(ctx: Context, sessionId: string, generatedAt: numb
     if (rootAgent === undefined) {
       notes.push(`no live agent for root session "${rootSessionId}"; the roster and board fall back to the session log`)
     } else {
-      try {
-        memberViews = teams.listMembers(rootAgent) ?? []
-      } catch (error) {
-        notes.push(`agentTeams.listMembers failed: ${reason(error)}`)
+      // 0.2.2-rc.2 removed `listMembers`: teammates are subagents, and the
+      // durable `subagent/catalog` rows (plus the live agents of direct
+      // children) carry the roster. Probing keeps 0.2.1/rc.1 working and makes
+      // the rc.2 absence silent instead of reporting a fake failure.
+      if (typeof teams.listMembers === 'function') {
+        try {
+          memberViews = teams.listMembers(rootAgent) ?? []
+        } catch (error) {
+          notes.push(`agentTeams.listMembers failed: ${reason(error)}`)
+        }
       }
       try {
         taskViews = teams.listTasks(rootAgent) ?? []
@@ -914,6 +944,7 @@ async function deriveTimeline(ctx: Context, sessionId: string, generatedAt: numb
       existing.writeScopes = fromBoard.writeScopes
       existing.ready = fromBoard.ready
       existing.writeScopeWarnings = fromBoard.writeScopeWarnings
+      if (fromBoard.ownerSessionId !== undefined) existing.ownerSessionId = fromBoard.ownerSessionId
       if (fromBoard.owner !== undefined) {
         existing.owner = fromBoard.owner
         existing.ownerName = fromBoard.owner
@@ -1257,8 +1288,16 @@ async function deriveTimeline(ctx: Context, sessionId: string, generatedAt: numb
   }
 
   // ---- 8. task → lane assignment ------------------------------------------
-  /** The lane a task belongs to: board owner, else its last actor, else unassigned. */
+  /** The lane a task belongs to: board owner id/name, else its last actor, else unassigned. */
   const laneIdFor = (draft: TaskDraft): string => {
+    // 0.2.2-rc.2: the board names the owning subagent, and its `ownerName` is
+    // the subagent path/name rather than the journal's member name. The
+    // published `ownerId` is therefore tried first — it is the exact lane key.
+    const ownerId = draft.ownerSessionId
+    if (ownerId !== undefined) {
+      if (ownerId === rootSessionId) return 'lead'
+      if (laneIds.has(ownerId)) return ownerId
+    }
     const owner = draft.ownerName
     if (owner !== undefined) {
       if (owner === 'lead') return 'lead'
@@ -1266,6 +1305,12 @@ async function deriveTimeline(ctx: Context, sessionId: string, generatedAt: numb
       if (byName !== undefined) return byName
       if (draft.owner === rootSessionId) return 'lead'
       return 'unassigned'
+    }
+    // A log-only snapshot carries `ownerId` on `owner`; use it as the lane key
+    // when the task predates the live board.
+    if (draft.owner !== undefined) {
+      if (draft.owner === rootSessionId) return 'lead'
+      if (laneIds.has(draft.owner)) return draft.owner
     }
     const last = draft.history[draft.history.length - 1]
     if (last !== undefined) {

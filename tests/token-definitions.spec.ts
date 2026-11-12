@@ -15,11 +15,10 @@
  *    `#ebeef2` and scores **1.16:1** on a light panel (Lead's live measurement).
  *    Legal CSS, drawn, unreadable.
  *
- * SOURCE OF TRUTH: `tests/fixtures/dsw-theme-tokens.json` (`_count: 419`), a
- * snapshot of what `@deepseek-ai/dsh-client-ui-theme/lib/client.js` DEFINES
- * inside `app.asar` (DSH 0.2.2-rc.1; the 0.2.0-rc.2 snapshot had 408 — the
- * 0.2.2 theme added 12 tokens and removed
- * `--dsw-specific-sidebar-nav-item-hover`, which this plugin never used). Not a
+ * SOURCE OF TRUTH: `tests/fixtures/dsw-theme-tokens.json` (`_count: 455`), a
+ * snapshot of what `@deepseek-ai/dsh-client-ui-theme/lib/client.js` DEFINES in
+ * the installed host (DSH 0.2.2-rc.2; rc.1 had 419, 0.2.0-rc.2 had 408 — rc.2
+ * added 36 sidebar-glass/chart/json-tree tokens and removed none). Not a
  * consumer bundle: better-sidebar
  * never references `--dsw-alias-state-idle-primary`, yet it is defined — see
  * `docs/VALIDATION.md` §5 F8. Regenerate after a host upgrade (§7 of that doc).

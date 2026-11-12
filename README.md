@@ -63,7 +63,7 @@ this README does not restate untested claims as results.
 
 | Requirement | Value |
 |---|---|
-| DSH | `0.2.2-rc.1` (validated on 0.2.2-rc.1 and 0.2.1; developed against 0.2.0-rc.2) |
+| DSH | `0.2.2-rc.2` (validated on 0.2.2-rc.2, 0.2.2-rc.1 and 0.2.1; developed against 0.2.0-rc.2) |
 | dsh-better-sidebar | `>= 0.4.0` (the release that introduced the `ctx.betterSidebar` registry service) |
 | Node | `>= 20` for this plugin — DSH 0.2.2 itself requires Node >= 24.9 |
 | Profile | any browser-backed DSH Web profile |

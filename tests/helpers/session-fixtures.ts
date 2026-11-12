@@ -100,13 +100,31 @@ export function teamMemberEvent(options: { seq: number; time: number; id: string
   }
 }
 
-/** `subagent/catalog` — `{childCreatedAt, childId, label, mode, version}`. */
-export function subagentCatalogEvent(options: { seq: number; time: number; childId: string; childCreatedAt: number }): RawSessionEvent {
+/** `subagent/catalog` — `{childCreatedAt, childId, label, mode, version}`.
+ *  DSH 0.2.2-rc.2's v3 adds the short sibling `name`; the options let a test
+ *  build either era without inventing fields the old logs did not carry. */
+export function subagentCatalogEvent(options: {
+  seq: number
+  time: number
+  childId: string
+  childCreatedAt: number
+  version?: number
+  name?: string
+  label?: string
+  mode?: string
+}): RawSessionEvent {
   return {
     type: 'subagent/catalog',
     seq: options.seq,
     time: options.time,
-    data: { version: 1, childId: options.childId, childCreatedAt: options.childCreatedAt, label: 'teammate', mode: 'async' },
+    data: {
+      version: options.version ?? 1,
+      childId: options.childId,
+      childCreatedAt: options.childCreatedAt,
+      label: options.label ?? 'teammate',
+      mode: options.mode ?? 'async',
+      ...(options.name === undefined ? {} : { name: options.name }),
+    },
   }
 }
 

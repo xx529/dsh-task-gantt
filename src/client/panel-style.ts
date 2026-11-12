@@ -23,8 +23,8 @@
  * host's left-navigation token and must not be consumed here.
  *
  * Token EXISTENCE is checked against the host theme's own definition list —
- * `tests/fixtures/dsw-theme-tokens.json` (419 names, snapshotted from
- * `@deepseek-ai/dsh-client-ui-theme` inside app.asar, DSH 0.2.2-rc.1) — never
+ * `tests/fixtures/dsw-theme-tokens.json` (455 names, snapshotted from
+ * `@deepseek-ai/dsh-client-ui-theme` in the installed host, DSH 0.2.2-rc.2) — never
  * against "some other plugin writes this name". That weaker check is how
  * `--dsw-font-mono`
  * survived review here: better-sidebar-shaped code writes plausible names that
@@ -169,7 +169,7 @@ export const PANEL_CSS = `
    font-family rather than the font: shorthand — a shorthand would reset the
    panel's inherited size/line-height. The family is --ds-font-family-code, the
    host's own code stack ("SF Mono", "JetBrains Mono", ... Menlo, monospace).
-   Do NOT use --dsw-font-mono: it is not defined by the host theme (419 tokens in
+   Do NOT use --dsw-font-mono: it is not defined by the host theme (455 tokens in
    tests/fixtures/dsw-theme-tokens.json), and a var() naming an undefined custom
    property makes the WHOLE declaration invalid at computed-value time — the
    family would silently not apply AND the shorthand would additionally reset

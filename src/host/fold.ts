@@ -539,7 +539,7 @@ const USER_SOURCE_KIND = 'user'
  * `team/message/queued` pair still exists (601 each), so both forms must be read and
  * merged — see {@link foldMessageRecords}.
  *
- * DSH 0.2.2-rc.1 writes **only** this form. Measured on 2026-11-08 over 117 logs written
+ * DSH 0.2.2 (rc.1 and rc.2) writes **only** this form. Measured on 2026-11-08 over 117 logs written
  * after the upgrade: `team/message/queued` / `team/message/delivered` = 0 occurrences
  * (the last mailbox event anywhere in the store is 2026-10-21), while the real Lead log
  * `session-d4d2e505…` of workspace `dsh-htdot-bridge` carries 32 `agent-message` relay
@@ -746,7 +746,7 @@ export interface FoldedMessageRecord {
    * DSH 0.2.1 delivers a team/agent message as a `user/message` whose
    * `data.source.kind` is `team-message` or `agent-message`; the mailbox events still
    * exist for older sessions, so both forms are read and merged (see
-   * {@link foldMessageRecords}). DSH 0.2.2-rc.1 writes **only** the injection — every
+   * {@link foldMessageRecords}). DSH 0.2.2 (rc.1 and rc.2) writes **only** the injection — every
    * exchange on a post-upgrade log is this form. An injected record knows only ONE
    * instant, so it sets both `queuedAt` and `deliveredAt` to it, and its receiver is
    * the session whose log carried the event — which is why the caller fills `to` from
@@ -792,7 +792,7 @@ export interface MessageFoldDiagnostics {
   /**
    * Injected exchanges dropped because the same message id was already covered by a
    * `team/message/queued` record — the 0.2.1 duplicate. Counted so the merge is visible
-   * rather than silent. This is 0 on DSH 0.2.2-rc.1 logs: there is no mailbox any more,
+   * rather than silent. This is 0 on DSH 0.2.2 logs: there is no mailbox any more,
    * so `injectedExchanges - injectedDuplicates` is exactly the number of records.
    */
   injectedDuplicates: number
@@ -972,7 +972,7 @@ export function foldMessageRecords(events: readonly unknown[]): FoldedMessages {
       if (sourceKind !== USER_SOURCE_KIND) {
         if (sourceKind !== undefined) diagnostics.injectedUserMessages += 1
         // DSH 0.2.1 delivers a teammate/agent message as an injected user/message, and
-        // DSH 0.2.2-rc.1 delivers it this way and no other way.
+        // DSH 0.2.2 (rc.1 and rc.2) delivers it this way and no other way.
         // Before this branch existed these were counted and thrown away, which is why
         // every exchange arrow vanished after the upgrade.
         if (sourceKind !== undefined && INJECTED_MESSAGE_KINDS.has(sourceKind) && source !== undefined) {
@@ -1591,19 +1591,36 @@ export function foldTeamEvents(events: readonly unknown[], sessionId: string): F
       const childId = asText(data.childId)
       const childCreatedAt = asFiniteNumber(data.childCreatedAt)
       if (childId === undefined || childCreatedAt === undefined) continue
+      // DSH 0.2.2-rc.2's catalog v3 adds `name` — the short name unique among
+      // the parent's children ("events-auditor"). It is the identity the rc.2
+      // task board publishes as `ownerName`, so it must be indexed even when no
+      // `team/member` row ever arrives (rc.2 creates teammates as subagents and
+      // stops writing that event).
+      const siblingName = asText(data.name)
       // The member row may not have been journaled yet — remember it anyway.
       const existing = team.memberById.get(childId)
       if (existing !== undefined) {
         existing.childCreatedAt ??= childCreatedAt
+        if (siblingName !== undefined) {
+          if (!team.memberIdByName.has(siblingName)) team.memberIdByName.set(siblingName, childId)
+          if (existing.nameIsFallback === true) {
+            existing.name = siblingName
+            delete existing.nameIsFallback
+          }
+        }
         continue
       }
       // THE NAME. `catalog.label` is the human task name the parent gave this child
       // ("Map codebase concerns"), and on the real logs it equals the dispatching
       // `tool/call`'s `arguments.description`. Using the child session id here is what
-      // made every sub-agent lane read `4b877229-…` in the panel.
+      // made every sub-agent lane read `4b877229-…` in the panel. On rc.2 the
+      // short `name` is the better label and the one the board uses for ownership.
       const label = asText(data.label)
       const description = descriptionByChildId.get(childId)
-      const name = label ?? description
+      const name = siblingName ?? label ?? description
+      if (siblingName !== undefined && !team.memberIdByName.has(siblingName)) {
+        team.memberIdByName.set(siblingName, childId)
+      }
       const placeholder: FoldedTeamMember = {
         id: childId,
         name: name ?? childId,

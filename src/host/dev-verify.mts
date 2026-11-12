@@ -10,7 +10,7 @@
  *
  * Both delivery eras must pass: DSH 0.2.1 wrote the `team/message/queued` +
  * `team/message/delivered` mailbox pair *and* the injected `user/message` form,
- * while DSH 0.2.2-rc.1 writes **only** the injected form (measured: 0 mailbox
+ * while DSH 0.2.2 (rc.1 and rc.2) writes **only** the injected form (measured: 0 mailbox
  * events after 2026-10-21 across 117 post-upgrade logs). A queue-only assertion
  * therefore fails on every 0.2.2 workspace even though the arrows are drawn
  * correctly; the accounting below is deliberately era-neutral.
@@ -859,7 +859,7 @@ console.log('\n=== question markers vs the 9px thinning (real logs) ===')
 // ---- injected delivery form over the REAL logs -----------------------------
 // DSH 0.2.1 delivers a team/agent message as an injected `user/message`
 // (`source.kind` of `team-message` or `agent-message`) *in addition to* the mailbox
-// pair; DSH 0.2.2-rc.1 delivers ONLY this form. Before the 0.2.1 fix those were
+// pair; DSH 0.2.2 delivers ONLY this form. Before the 0.2.1 fix those were
 // counted and thrown away, so every exchange arrow disappeared. This section locks
 // the merge on real data: every form folded, no message drawn twice, and at least
 // one real session actually producing an exchange span.
@@ -894,7 +894,7 @@ console.log(
 )
 console.log(`  logs carrying an injected exchange: ${injectedLogs}`)
 if (queuedSeen === 0 && injectedKept > 0) {
-  console.log('  era: injection-only — DSH 0.2.2-rc.1 no longer writes team/message/* (expected)')
+  console.log('  era: injection-only — DSH 0.2.2 no longer writes team/message/* (expected)')
 }
 assert(duplicateIds === 0, `no log folds the same message id twice (offenders: ${duplicateIds})`)
 assert(

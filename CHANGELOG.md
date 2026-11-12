@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.3.5 — 2026-11-12
+
+**适配 DSH 0.2.2-rc.2：`agentTeams.listMembers` 被删、成员改由 `subagent/catalog` v3 承担；任务改用 `ownerId` 落道**
+
+运行版本实测：桌面 app 与全局 CLI 都是 `0.2.2-rc.2`（`/Applications/DeepSeek Harness.app` 的
+`dsh/package.json` 与 `~/.nvm/.../@deepseek-ai/dsh/package.json` 一致）。逐包对比 rc.1/rc.2
+后，真正影响本插件的是 **agent-team 服务的成员接口**：
+
+- rc.2 的 `TeamService` 只剩 `isEnabled / setEnabled / createTask / getTask / listTasks /
+  updateTask`；`listMembers` 与 `tryMembership` 都不存在了（teammates 现在是 subagents）。
+  旧代码在真实 rc.2 团队会话上每次请求都会写一条
+  `agentTeams.listMembers failed: teams.listMembers is not a function`，这正是本轮要修的
+  未适配点。
+- rc.2 的 `subagent/catalog` 升到 v3，新增短名 `name`（同级唯一）；`TeamTaskView` 同时带
+  `ownerId` 与 `ownerName`，而 `ownerName` 是 subagent 的名称/路径，不再是旧
+  `team/member` 的名字。
+- rc.2 新增 `team/mode` 事件；仍**不写** `team/message/queued|delivered`，团队消息继续只以
+  注入的 `user/message` 出现。
+
+修复：
+
+- `src/host/timeline.ts`：`listMembers` 改为可选探测——存在才调用，rc.2 缺席时静默走
+  “`subagent/catalog` + 每个 agent 自己的日志 + 运行时子会话”这条名册路径；不再输出假失败
+  备注。`tryMembership` 原本就是可选探测，注释同步 rc.2。
+- `src/host/fold.ts`：catalog v3 的 `name` 作为泳道显示名，并登记为 `name → session id`
+  别名；`team/member` 先到时仍以它为准，后到的 `name` 只补别名。
+- `src/host/timeline.ts`：任务读 `ownerId`，落道优先用它（`ownerName` 是 subagent 路径时
+  也能落到正确泳道）；`ownerName` 的路径末段作为兼容别名。修掉 rc.2 下“任务明明有负责人
+  却掉进 `unassigned`”的潜在回归。
+- `tests/fixtures/dsw-theme-tokens.json`：按 rc.2 重生成 **455** 个 token（rc.1 为 419，
+  新增 36 个侧栏玻璃/图表/JSON tree token，无删除）；README 兼容版本更新为 rc.2。
+- 新增 `tests/host-rc2.spec.ts`（6 条）：catalog v3 名称/别名、`team/mode` 被忽略、
+  `listMembers` 缺席时不报错、`ownerId` 落道、旧宿主仍走 `listMembers`。
+
+回归：`pnpm run check` 全绿（46 files / 961 passed / 1 skipped）；真机自检
+`node --experimental-strip-types src/host/dev-verify.mts` → `ALL CHECKS PASSED`；对运行中
+rc.2 实例 `POST /dsh-task-gantt/api/timeline` 仍返回真实泳道（当前会话 1 lane / 50 spans，
+rc.2 时代的 792532d9 仍 4 lanes）。0.2.1 / rc.1 的日志路径由现有测试与 `--root` 旧库复验
+覆盖，没有行为回退。
+
 ## 0.3.4 — 2026-11-10
 
 **首个 teammate 出现时自动弹出「任务甘特图」页签（修 v0.3.3 触发失效）**

@@ -1,10 +1,10 @@
 /**
- * DSH 0.2.2-rc.1 delivery drift: the mailbox is GONE, only the injection remains.
+ * DSH 0.2.2 (rc.1 and rc.2) delivery drift: the mailbox is GONE, only the injection remains.
  *
  * ## What changed (and what did not)
  *
  * 0.2.1 wrote a team message twice: the `team/message/queued` + `team/message/delivered`
- * journal pair, and an injected `user/message` in the RECEIVER's log. 0.2.2-rc.1 writes
+ * journal pair, and an injected `user/message` in the RECEIVER's log. 0.2.2 writes
  * **only** the injection.
  *
  * Measured on this machine (2026-11-08) over 117 session logs written after the upgrade:
