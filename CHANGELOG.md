@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.3.6 — 2026-11-13
+
+**修两个体验问题：非团队会话不再弹红色「团队故障」；自动弹出更抗赛跑，并抢回被别的插件拿走的焦点**
+
+1. **红色「团队故障」不是错误。** rc.2 的 `agentTeams.listTasks` 对未开启 Agent Teams 的会话会抛
+   `enable Agent Teams for this Session before using the task board`；旧代码把这个状态写进了
+   `TimelineResponse.failure`，面板就画成红色错误条。现在先用可选探测的
+   `agentTeams.isEnabled(rootAgent)` 判断：明确为 `false` 时不读任务板、不写 `failure`，只走
+   “从日志重建任务”的正常降级。真实团队会话仍会在读板失败时显示错误条。
+2. **自动弹出更稳。** 三处：
+   - `sidebarRight.mounted` 在右侧栏重挂载/列表刷新时会短暂变成 `undefined`；旧代码把它当成
+     切换会话并清空 baseline，于是这期间出现的第一个 teammate 会被误当成“已有团队”。现在
+     瞬时 `undefined` 直接忽略，baseline 保留。
+   - 一段对话**第一次看到时已经有 teammate 在运行**（切到正在跑团队的对话、插件晚挂载），
+     现在也会弹一次；全是 idle 的历史团队仍然不打扰读者的布局。
+   - 另一个同事件自动弹出的插件（better-sidebar 的「任务管理」、trace-inspect）可能在我们的
+     `openTab` 之后拿走焦点。现在 800ms 后检查原生 `sidebarRight.active()`：不是我们的页签
+     才再次 `openTab({reveal:true})` 把它聚焦；一次对话仍然只弹一次，不会重复建页签。
+
+回归：`pnpm run test` 46 files / 966 passed / 1 skipped；新增 4 条自动弹出用例
+（瞬时缺口、首次看到即运行、焦点被抢、自己已聚焦不重复）和 1 条非团队会话
+`failure === undefined` 用例。`pnpm run check` 与真机 `dev-verify` 全绿。
+
 ## 0.3.5 — 2026-11-12
 
 **适配 DSH 0.2.2-rc.2：`agentTeams.listMembers` 被删、成员改由 `subagent/catalog` v3 承担；任务改用 `ownerId` 落道**

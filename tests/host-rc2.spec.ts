@@ -42,7 +42,7 @@ function rc2RootEvents(): RawSessionEvent[] {
 }
 
 /** The rc.2 `agentTeams` face: the board remains, the member roster is gone. */
-function rc2Context(options: { withListMembers?: boolean; ownerName?: string } = {}): Context {
+function rc2Context(options: { withListMembers?: boolean; ownerName?: string; teamEnabled?: boolean } = {}): Context {
   const rootEvents = rc2RootEvents()
   const memberEvents = teammateSpans()
   const rootAgent = {
@@ -62,7 +62,15 @@ function rc2Context(options: { withListMembers?: boolean; ownerName?: string } =
     list: () => [rootAgent, memberAgent],
   }
   const teams = {
-    listTasks: () => [
+    ...(options.teamEnabled === false
+      ? {
+          isEnabled: () => false,
+          // The real rc.2 TeamService refuses an unselected conversation.
+          listTasks: () => {
+            throw new Error('enable Agent Teams for this Session before using the task board')
+          },
+        }
+      : { listTasks: () => [
       {
         id: 'task-1',
         revision: 1,
@@ -76,7 +84,7 @@ function rc2Context(options: { withListMembers?: boolean; ownerName?: string } =
         ready: false,
         writeScopeWarnings: [],
       },
-    ],
+    ] }),
     ...(options.withListMembers === true
       ? {
           listMembers: () => [
@@ -134,6 +142,14 @@ describe('rc.2 board: ownerId is the lane key', () => {
     assertTimeline(value)
     expect(value.notes.join('\n')).not.toMatch(/listMembers/)
     expect(value.lanes.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('does not paint the normal “Agent Teams is off” refusal as a team failure', async () => {
+    const value = await buildTimeline(rc2Context({ teamEnabled: false }), ROOT)
+    assertTimeline(value)
+    expect(value.failure, 'a disabled Team selection is a state, not a board failure').toBeUndefined()
+    expect(value.notes.join('\n')).not.toMatch(/listTasks failed/)
+    expect(value.lanes.map((lane) => lane.name)).toContain('researcher')
   })
 
   it('still uses listMembers when the older host provides it', async () => {

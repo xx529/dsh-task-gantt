@@ -83,6 +83,7 @@ function harness(
     subscribe?: boolean
     expanded?: boolean
     right?: boolean
+    activeKind?: string
   } = {},
 ): Harness {
   let rows: unknown = options.rows ?? { byId: {} }
@@ -113,6 +114,7 @@ function harness(
             getSnapshot: () => mounted,
             ...(useSubscribe ? { subscribe: subscribeTo(mountedListeners) } : {}),
           },
+          ...(options.activeKind === undefined ? {} : { active: () => ({ kind: options.activeKind }) }),
           isExpanded: () => expanded,
           toggleExpanded: () => { toggleCount += 1; expanded = true },
         }
@@ -523,6 +525,68 @@ describe('auto-reveal: the conversation\'s first teammate', () => {
   })
 
   /* -------------------------------------------------------- source guards */
+
+  it('keeps the armed baseline across a transient “no session” gap', () => {
+    vi.useFakeTimers()
+    const seat = 'session-a'
+    const h = harness({ mounted: seat, rows: snapshot({ [seat]: rootRow() }) })
+    const { service, openTab } = fakeService()
+    const stop = watchForFirstTeam(h.ctx, service)
+    // First pass arms the baseline at 0.
+    expect(openTab).not.toHaveBeenCalled()
+    // The column remounts (or the list refreshes): mounted is briefly undefined.
+    h.setMounted(undefined)
+    h.emitMounted()
+    // The teammate appears during that gap.
+    h.setRows(snapshot({ [seat]: rootRow(), child: teammateRow(seat) }))
+    h.emitList()
+    // The seat comes back; the baseline must still be 0 → this is the first teammate.
+    h.setMounted(seat)
+    h.emitMounted()
+    vi.advanceTimersByTime(1_000)
+    expect(openTab, 'a transient gap must not turn the first teammate into a baseline').toHaveBeenCalledTimes(1)
+    stop()
+  })
+
+  it('opens once when a conversation is first seen with a RUNNING teammate', () => {
+    vi.useFakeTimers()
+    const seat = 'session-a'
+    const h = harness({
+      mounted: seat,
+      rows: snapshot({ [seat]: rootRow(), child: teammateRow(seat, { running: true }) }),
+    })
+    const { service, openTab } = fakeService()
+    watchForFirstTeam(h.ctx, service)
+    vi.advanceTimersByTime(1_000)
+    expect(openTab, 'an active team appearing now is still the first teammate').toHaveBeenCalledTimes(1)
+  })
+
+  it('re-focuses the Gantt tab when another auto-open wins the seat', () => {
+    vi.useFakeTimers()
+    const seat = 'session-a'
+    const h = harness({ mounted: seat, rows: snapshot({ [seat]: rootRow() }), activeKind: 'other-tab' })
+    const { service, openTab } = fakeService()
+    const stop = watchForFirstTeam(h.ctx, service)
+    spawnFirstTeammate(h, seat)
+    vi.advanceTimersByTime(600) // first open already happened
+    expect(openTab).toHaveBeenCalledTimes(1)
+    vi.advanceTimersByTime(800) // the 800 ms focus pass
+    expect(openTab, 'the focus pass must re-open the same tab').toHaveBeenCalledTimes(2)
+    expect(openTab.mock.calls[1]?.[0]).toMatchObject({ type: TAB_TYPE_ID, reveal: true })
+    stop()
+  })
+
+  it('does not re-open when the Gantt tab already owns the seat', () => {
+    vi.useFakeTimers()
+    const seat = 'session-a'
+    const h = harness({ mounted: seat, rows: snapshot({ [seat]: rootRow() }), activeKind: TAB_TYPE_ID })
+    const { service, openTab } = fakeService()
+    const stop = watchForFirstTeam(h.ctx, service)
+    spawnFirstTeammate(h, seat)
+    vi.advanceTimersByTime(1_500)
+    expect(openTab).toHaveBeenCalledTimes(1)
+    stop()
+  })
 
   it('detects the capability by method presence and never by version', () => {
     // The documented rule (service.ts:651-657) is that `features` only grows and

@@ -209,6 +209,8 @@ interface SessionSummaryLike {
   origin?: unknown
   parentId?: unknown
   displayTitle?: unknown
+  /** Whether this session's agent is running (better-sidebar's summary hint). */
+  running?: unknown
 }
 
 /** The client `sessions` service face this module needs. */
@@ -225,6 +227,8 @@ interface RightColumnFace {
     getSnapshot?: () => unknown
     subscribe?: (listener: () => void) => () => void
   }
+  /** The native column's active tab (kind is the tab type). */
+  active?: () => { kind?: unknown } | undefined
   isExpanded?: () => boolean
   toggleExpanded?: () => void
 }
@@ -291,6 +295,33 @@ export function countDirectTeammates(
 }
 
 /**
+ * Whether any direct teammate of one conversation is running right now.
+ *
+ * Used only on the FIRST settled read of a conversation: a conversation first
+ * seen while a teammate is already running is one where the team is appearing
+ * now (the watcher mounted late, or the reader just switched to an active
+ * team), so the reveal is still welcome. An old conversation whose teammates
+ * are all idle stays quiet.
+ *
+ * @param rows - the session-list `byId` record, or `undefined`.
+ * @param sessionId - the seat session.
+ * @returns `true` when at least one direct teammate row reports running.
+ */
+export function anyDirectTeammateRunning(
+  rows: Record<string, SessionSummaryLike | undefined> | undefined,
+  sessionId: string,
+): boolean {
+  if (rows === undefined || rows === null || typeof rows !== 'object') return false
+  for (const row of Object.values(rows)) {
+    if (row === undefined || row === null || typeof row !== 'object') continue
+    if (row.parentId !== sessionId) continue
+    if (!isTeammateRow(row)) continue
+    if (row.running === true) return true
+  }
+  return false
+}
+
+/**
  * The trigger, as a pure predicate: a settled baseline of 0 that has become
  * positive is the conversation's first teammate. A baseline that started above
  * 0 never fires — the conversation already had a team when the reader arrived.
@@ -334,6 +365,8 @@ export function watchForFirstTeam(ctx: Context, service: BetterSidebarTabService
   let baseline: number | undefined
   /** Debounce of the first-teammate re-check. */
   let timer: ReturnType<typeof setTimeout> | undefined
+  /** Second focus pass, after another plugin's auto-open may have won the seat. */
+  let focusTimer: ReturnType<typeof setTimeout> | undefined
   /** Conversations already revealed in this page load (the once-per-session latch). */
   const revealed = new Set<string>()
 
@@ -379,6 +412,8 @@ export function watchForFirstTeam(ctx: Context, service: BetterSidebarTabService
   const clearPending = (): void => {
     if (timer !== undefined) clearTimeout(timer)
     timer = undefined
+    if (focusTimer !== undefined) clearTimeout(focusTimer)
+    focusTimer = undefined
   }
 
   /** Open the page in `sessionId`'s right column and focus it (once). */
@@ -396,12 +431,41 @@ export function watchForFirstTeam(ctx: Context, service: BetterSidebarTabService
     // A narrow host draws that column fullscreen: park the page so the
     // conversation stays on screen.
     const wide = typeof window === 'undefined' ? true : window.innerWidth >= AUTO_OPEN_MIN_WIDTH
+    const seed = { type: TAB_TYPE_ID, title: t('tabTitle'), reveal: wide }
+    const open = (request: { type: string; title: string; reveal: boolean }): void => {
+      openTab.call(service, request, { sessionId })
+    }
     try {
-      openTab.call(service, { type: TAB_TYPE_ID, title: t('tabTitle'), reveal: wide }, { sessionId })
+      open(seed)
     } catch {
       // Never let a foreign implementation take the plugin down; the tab stays
       // reachable from the + menu.
       return
+    }
+    // Another plugin that reacts to the same teammate (better-sidebar's own
+    // task page, trace-inspect) can open its tab right after ours and take the
+    // focus. Once the burst settles, re-open ONLY when the native column's
+    // active tab is not ours: openTab on an already-open tab focuses it instead
+    // of duplicating it (`single: true`). Skipped on a narrow host (taking the
+    // focus there is unwanted) and on hosts without an `active` probe.
+    const rightFace = readRight()
+    if (wide && typeof rightFace?.active === 'function') {
+      focusTimer = setTimeout(() => {
+        focusTimer = undefined
+        if (disposed || !revealed.has(sessionId)) return
+        let activeKind: unknown
+        try {
+          activeKind = readRight()?.active?.()?.kind
+        } catch {
+          activeKind = undefined
+        }
+        if (activeKind === TAB_TYPE_ID) return
+        try {
+          open({ ...seed, reveal: true })
+        } catch {
+          // best-effort
+        }
+      }, 800)
     }
     // Fallback for a host whose open did not expand the column itself: read
     // then toggle, so an already-expanded column is never closed. A narrow
@@ -427,13 +491,17 @@ export function watchForFirstTeam(ctx: Context, service: BetterSidebarTabService
   const reconcile = (): void => {
     if (disposed) return
     const sessionId = onScreenSession()
+    // A transient gap (the column remounting, a list refresh) is not a session
+    // switch: keeping the armed baseline is what stops a teammate that appears
+    // during that gap from being mistaken for the conversation's baseline.
+    if (sessionId === undefined) return
     if (sessionId !== watched) {
-      // A session switch voids the previous conversation's baseline and debounce.
+      // A real session switch voids the previous conversation's baseline.
       watched = sessionId
       baseline = undefined
       clearPending()
     }
-    if (sessionId === undefined || revealed.has(sessionId)) return
+    if (revealed.has(sessionId)) return
     const rows = readRows()
     if (rows === undefined) return
     const seat = rows[sessionId]
@@ -443,8 +511,12 @@ export function watchForFirstTeam(ctx: Context, service: BetterSidebarTabService
     if (seat.origin === 'subagent') return
     const live = countDirectTeammates(rows, sessionId)
     if (baseline === undefined) {
-      // First settled read for this conversation: this is its baseline.
+      // First settled read for this conversation: this is its baseline. A team
+      // that is already RUNNING at that instant is appearing now (late mount /
+      // just-switched active team), so open once; an idle historical team stays
+      // quiet and keeps the reader's layout.
       baseline = live
+      if (live > 0 && anyDirectTeammateRunning(rows, sessionId)) revealNow(sessionId)
       return
     }
     if (!firstTeammateDue(baseline, live)) return

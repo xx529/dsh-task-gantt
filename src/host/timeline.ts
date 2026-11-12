@@ -121,6 +121,12 @@ interface AgentTeamsLike {
    * Probe before calling; the log/journal path is the fallback.
    */
   listMembers?(agent: unknown): TeamMemberViewLike[]
+  /**
+   * Whether Team mode is selected for the caller's tree. Optional so an older
+   * host still works. A `false` answer means `listTasks` would throw the
+   * expected "enable Agent Teams …" refusal — a state, not a board failure.
+   */
+  isEnabled?(agent: unknown): boolean
   listTasks(agent: unknown): TeamTaskViewLike[]
 }
 
@@ -764,13 +770,26 @@ async function deriveTimeline(ctx: Context, sessionId: string, generatedAt: numb
           notes.push(`agentTeams.listMembers failed: ${reason(error)}`)
         }
       }
-      try {
-        taskViews = teams.listTasks(rootAgent) ?? []
-        boardRead = true
-      } catch (error) {
-        // The Team journal throws the projection's own failure string here.
-        failure = reason(error)
-        notes.push(`agentTeams.listTasks failed: ${failure}`)
+      // A conversation with Team mode OFF is normal, not a board failure:
+      // `listTasks` refuses it with "enable Agent Teams …", which the panel
+      // would otherwise paint as a red 团队故障 bar. Probe the state first.
+      let teamSelected: boolean | undefined
+      if (typeof teams.isEnabled === 'function') {
+        try {
+          teamSelected = teams.isEnabled(rootAgent)
+        } catch {
+          // a foreign/broken probe must not block the board read
+        }
+      }
+      if (teamSelected !== false) {
+        try {
+          taskViews = teams.listTasks(rootAgent) ?? []
+          boardRead = true
+        } catch (error) {
+          // The Team journal throws the projection's own failure string here.
+          failure = reason(error)
+          notes.push(`agentTeams.listTasks failed: ${failure}`)
+        }
       }
     }
   }

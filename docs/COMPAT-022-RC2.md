@@ -90,3 +90,27 @@ node --experimental-strip-types src/host/dev-verify.mts   # ALL CHECKS PASSED
    的契约夹具锁定；下一次真实团队跑完，`dev-verify` 会自动选中最新团队并复验。
 3. `team/mode` 被**有意忽略**：禁用团队模式不清除历史任务/成员，甘特图继续如实展示历史；
    这不影响当前状态（任务板本身仍由 `agentTeams.listTasks` 提供）。
+
+## 7. 0.3.6 追加修复（2026-11-13）
+
+0.3.4/0.3.5 的真实 UI 反馈暴露了两个体验问题，已在 0.3.6 修复并实测：
+
+1. **非团队会话的红色「团队故障」条**：rc.2 的 `agentTeams.listTasks` 对未开启 Agent Teams 的
+   会话抛 `enable Agent Teams for this Session before using the task board`，旧代码把这条状态
+   写进了 `TimelineResponse.failure`，客户端就画成红色错误条。0.3.6 先用可选探测的
+   `agentTeams.isEnabled(rootAgent)`：明确 `false` 时**不读任务板、不写 failure**，只走
+   “从日志重建任务”的正常降级。真实团队会话读板失败仍会显示错误条。
+2. **自动弹出抗赛跑 + 抢回焦点**：
+   - `sidebarRight.mounted` 在右侧栏重挂载/列表刷新时会短暂 `undefined`；旧代码把它当会话切换
+     清空 baseline，期间出现的第一个 teammate 被误判为“已有团队”。现在瞬时 `undefined` 忽略。
+   - 一段对话第一次看到时已经有 teammate 在运行（切到正在跑团队的对话、插件晚挂载）也会弹一次；
+     全是 idle 的历史团队仍然不动。
+   - 800ms 后检查原生 `sidebarRight.active()`：不是我们的页签才再次
+     `openTab({reveal:true})`，把被 better-sidebar「任务管理」/trace-inspect 抢走的焦点拿回来；
+     同一次弹出不会重复建页签。
+
+**实测（独立 `rc2-test` profile，非桌面 profile）**：全新会话里让 agent 调一次 `subagent`，
+右侧栏自动打开且 **`任务甘特图` 页签为 selected**；同一非团队会话的甘特面板
+**没有红色故障条**（2 lanes / 0 tasks，footer `v0.3.6`）。该测试实例的 better-sidebar
+「任务管理」页仍会报 `teamMembersOf: Cannot read properties of undefined (reading 'map')`，
+这是 better-sidebar 自己的 View 错误，不是本插件抛出的；甘特页签和面板本身正常渲染。
